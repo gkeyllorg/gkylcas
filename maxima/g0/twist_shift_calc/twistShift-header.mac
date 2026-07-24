@@ -1,6 +1,6 @@
 /* Create header file for CartFieldInterpolate updater. */
 
-fh : openw("~/max-out/gkyl_bc_twistshift_gyrokinetic_kernels.h")$
+fh : openw("~/max-out/gkyl_twistshift_dg_gyrokinetic_kernels.h")$
 
 polyOrderMax : 1$
 
