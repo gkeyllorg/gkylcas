@@ -22,6 +22,10 @@
                                       remaining-variable order (v > 1 only)
      vel_sparse_idx [NS]              indices of bV fns depending on <= 1 velocity
                                       variable (the sparse-Hamiltonian support)
+   plus, per surface, the phase-factor tables (ph_v<d>/ph_x<d>, see
+   writePhaseFactorTables) for the producers and the projection tables
+   (prj_v<d>/prj_x<d>, see writeConsumerProjTables) for the from-flux
+   surf/boundary_surf consumers.
    Flat node layout matches the alpha_quad/lax convention: gaussOrd ordering,
    last variable fastest; producers/consumers index n = i*NVn + j. */
 load("new_vlasov/nodal-lax-emit");
@@ -112,6 +116,144 @@ emitTabIntArray(fh, name, vals) := block([k],
   printf(fh, "GKYL_CU_D __attribute__((unused)) static const int ~a[~a] = { ~%", name, length(vals)),
   for k : 1 thru length(vals) do printf(fh, "  ~a, ~%", vals[k]),
   printf(fh, "}; ~%")
+)$
+
+emitTabDoubleArray(fh, name, vals) := block([k],
+  printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a[~a] = { ~%", name, length(vals)),
+  for k : 1 thru length(vals) do printf(fh, "  ~a, ~%", float(expand(vals[k]))),
+  printf(fh, "}; ~%")
+)$
+
+/* Projection tables for the from-flux surface-update CONSUMERS
+   (vlasov_(boundary_)(ho_)surf{x,y,z,vx,vy,vz}): the nodal flux is projected
+   onto the p=polyOrder surface basis and applied to the volume increment as
+
+     g[k]   = sum_i Cw[i*NA + kamap[k]] * (sum_j Vw[j*NMV + kbmap[k]] * Fhat[i*NI + j])
+     out[m] += dv1*(out_cl[m']*g_l[k] + out_cr[m']*g_r[k])   (m in mode-group of k)
+
+   Cw/Vw are quadrature-weight-folded shape evaluations: because the flux
+   nodes are Gauss-Legendre nodes, w_i*chi_a(node_i) IS the exact inner
+   product <chi_a, cardinal_i> of the shape with the nodal (cardinal)
+   interpolation basis (per variable deg(chi) <= p and deg(cardinal) =
+   nPts-1, within the 2*nPts-1 GL exactness), so the table path computes
+   exactly the projection of the nodal interpolant the unrolled kernels
+   computed, factored over the outer (x) inner tensor-product node set.
+
+   The out maps encode the identity bP_m|_{normal=+/-1} = c * bSurfP_{s(m)}
+   (each volume basis fn restricts to a multiple of exactly ONE surface
+   basis fn; asserted exactly at generation time), with the surface-mode
+   coefficient coef_k and the increment signs folded in:
+     out_cl[.] =  <bSurfP_s, bP_m|_{-1}> * coef_s   (left-interface increment)
+     out_cr[.] = -<bSurfP_s, bP_m|_{+1}> * coef_s   (right-interface increment)
+   Boundary kernels reuse them: edge==-1 (skin evaluated at +1) uses out_cr,
+   edge==+1 (skin evaluated at -1) uses out_cl. The CSR grouping
+   (out_off/out_mode, ordered by surface mode k) makes distinct k write
+   DISJOINT out coefficients: one GPU thread per surface mode needs no
+   atomics. Returns [NK, NA, NMV, NO, NI]. */
+writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars, nPts) := block(
+  [surfVars, NP, NK, factOuter, factInner, fact, chiShapes, psiShapes, coefL,
+   kamap, kbmap, NA, NMV, nodesO, wO, nodesI, wI, NO, NI, ow, refn, i, j, a, b,
+   d, k, m, q, s, sub, restL, restR, coeffsL, coeffsR, nzL, nzR, smode, clm,
+   crm, byK, offL, modeL, clL, crL, wsum],
+  surfVars : append(outerVars, innerVars),
+  NP : length(bP), NK : length(bSurfP),
+  /* laxFactorizeBasis needs nonempty var lists; a fresh dummy symbol makes
+     the degenerate factor exactly 1 (shape normalization divides it out). */
+  factOuter : if length(outerVars) = 0 then [prjdummy] else outerVars,
+  factInner : if length(innerVars) = 0 then [prjdummy] else innerVars,
+  fact : laxFactorizeBasis(bSurfP, factOuter, factInner),
+  chiShapes : fact[1], psiShapes : fact[2], coefL : fact[3],
+  kamap : fact[4], kbmap : fact[5],
+  NA : length(chiShapes), NMV : length(psiShapes),
+  /* Nodes and weights; gaussOrdWeight must reproduce gaussOrd's node
+     ordering (the Fhat flat layout) exactly. */
+  if length(outerVars) = 0 then (nodesO : [1], wO : [1]) else (
+    ow : gaussOrdWeight(nPts, length(outerVars)),
+    nodesO : ow[1], wO : ow[2],
+    refn : gaussOrd(nPts, length(outerVars)),
+    for i : 1 thru length(refn) do
+      for d : 1 thru length(outerVars) do
+        if abs(float(refn[i][d] - nodesO[i][d])) > 1.0e-14 then
+          error("writeConsumerProjTables: gaussOrdWeight/gaussOrd outer node order mismatch"),
+    wsum : float(apply("+", wO)),
+    if abs(wsum - float(2^length(outerVars))) > 1.0e-12 then
+      error("writeConsumerProjTables: outer weight sum mismatch")
+  ),
+  if length(innerVars) = 0 then (nodesI : [1], wI : [1]) else (
+    ow : gaussOrdWeight(nPts, length(innerVars)),
+    nodesI : ow[1], wI : ow[2],
+    refn : gaussOrd(nPts, length(innerVars)),
+    for i : 1 thru length(refn) do
+      for d : 1 thru length(innerVars) do
+        if abs(float(refn[i][d] - nodesI[i][d])) > 1.0e-14 then
+          error("writeConsumerProjTables: gaussOrdWeight/gaussOrd inner node order mismatch"),
+    wsum : float(apply("+", wI)),
+    if abs(wsum - float(2^length(innerVars))) > 1.0e-12 then
+      error("writeConsumerProjTables: inner weight sum mismatch")
+  ),
+  NO : length(nodesO), NI : length(nodesI),
+  printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a_Cw[~a] = { ~%", prefix, NO*NA),
+  for i : 1 thru NO do (
+    sub : if listp(nodesO[i])
+          then makelist(outerVars[d] = nodesO[i][d], d, 1, length(outerVars))
+          else [],
+    for a : 1 thru NA do
+      printf(fh, "  ~a, ~%", float(expand(wO[i]*subst(sub, chiShapes[a]))))
+  ),
+  printf(fh, "}; ~%"),
+  printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a_Vw[~a] = { ~%", prefix, NI*NMV),
+  for j : 1 thru NI do (
+    sub : if listp(nodesI[j])
+          then makelist(innerVars[d] = nodesI[j][d], d, 1, length(innerVars))
+          else [],
+    for b : 1 thru NMV do
+      printf(fh, "  ~a, ~%", float(expand(wI[j]*subst(sub, psiShapes[b]))))
+  ),
+  printf(fh, "}; ~%"),
+  emitTabIntArray(fh, sconcat(prefix, "_kamap"), kamap),
+  emitTabIntArray(fh, sconcat(prefix, "_kbmap"), kbmap),
+  /* Volume-increment maps: restriction of each bP_m to the two edges. */
+  smode : makelist(0, m, 1, NP),
+  clm : makelist(0, m, 1, NP),
+  crm : makelist(0, m, 1, NP),
+  for m : 1 thru NP do (
+    restL : subst(normalVar = -1, bP[m]),
+    restR : subst(normalVar =  1, bP[m]),
+    coeffsL : map(lambda([q], radcan(ratsimp(q))), calcInnerProdList(surfVars, 1, bSurfP, restL)),
+    coeffsR : map(lambda([q], radcan(ratsimp(q))), calcInnerProdList(surfVars, 1, bSurfP, restR)),
+    nzL : sublist_indices(coeffsL, lambda([q], q # 0)),
+    nzR : sublist_indices(coeffsR, lambda([q], q # 0)),
+    if length(nzL) # 1 or length(nzR) # 1 or nzL[1] # nzR[1] then
+      error("writeConsumerProjTables: volume mode does not restrict to a single surface mode, m =", m),
+    s : nzL[1],
+    if radcan(ratsimp(restL - coeffsL[s]*bSurfP[s])) # 0 then
+      error("writeConsumerProjTables: left restriction residual nonzero, m =", m),
+    if radcan(ratsimp(restR - coeffsR[s]*bSurfP[s])) # 0 then
+      error("writeConsumerProjTables: right restriction residual nonzero, m =", m),
+    smode[m] : s,
+    clm[m] : coeffsL[s]*coefL[s],
+    crm[m] : -coeffsR[s]*coefL[s]
+  ),
+  byK : makelist([], k, 1, NK),
+  for m : 1 thru NP do byK[smode[m]] : endcons(m, byK[smode[m]]),
+  offL : [0], modeL : [], clL : [], crL : [],
+  for k : 1 thru NK do (
+    if length(byK[k]) = 0 then
+      error("writeConsumerProjTables: surface mode with empty mode group, k =", k),
+    for m in byK[k] do (
+      modeL : endcons(m-1, modeL),
+      clL : endcons(clm[m], clL),
+      crL : endcons(crm[m], crL)
+    ),
+    offL : endcons(length(modeL), offL)
+  ),
+  if length(modeL) # NP then
+    error("writeConsumerProjTables: CSR mode count mismatch"),
+  emitTabIntArray(fh, sconcat(prefix, "_out_off"), offL),
+  emitTabIntArray(fh, sconcat(prefix, "_out_mode"), modeL),
+  emitTabDoubleArray(fh, sconcat(prefix, "_out_cl"), clL),
+  emitTabDoubleArray(fh, sconcat(prefix, "_out_cr"), crL),
+  [NK, NA, NMV, NO, NI]
 )$
 
 /* Phase-factor tables for one surface (prefix e.g. vst_<tag>_ph_v0):
@@ -231,7 +373,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
      hamil_phase producers). CmD only where the -grad_x(H) producer exists
      (dir <= min(c,v)). A gkyl_vlasov_surf_meta instance accompanies each
      surface's tables for the host-side launch logic. */
-  for d : 1 thru vdim do block([sz],
+  for d : 1 thru vdim do block([sz, szp],
     vv : varsV[d],
     svv : delete(vv, varsV),
     nodes_vel : if vdim > 1 then gaussOrd(nPts, vdim-1) else [1],
@@ -239,7 +381,15 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
       varsC, vv, svv, nodes_conf, nodes_vel,
       if d <= min(cdim, vdim) then varsC[d] else false, varsV, varsC),
     printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_v~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
-      tag, d-1, length(bP), sz[1], sz[2], length(nodes_conf), length(nodes_vel), length(sparseIdx), (d-1)*length(nodes_conf)*length(nodes_vel))
+      tag, d-1, length(bP), sz[1], sz[2], length(nodes_conf), length(nodes_vel), length(sparseIdx), (d-1)*length(nodes_conf)*length(nodes_vel)),
+    /* From-flux consumer projection tables for this velocity-direction
+       surface (vlasov_(boundary_)(ho_)surfv* kernels). Surface bases stay
+       p=polyOrder in the ho variant; only the node set widens. */
+    szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_v", d-1), bP,
+      basisFromVars(basisFun, delete(vv, varsP), polyOrder),
+      varsC, vv, svv, nPts),
+    printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
+      tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
   ),
 
   /* Configuration-direction surface tables (triad/phase conf-flux: lax +
@@ -249,7 +399,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
     for k : 1 thru vdim do
       emitTabMatrix(fh, sconcat("vst_", tag, "_vel_vol_dv", k-1),
         makelist(diff(bV[b], varsV[k]), b, 1, length(bV)), varsV, nodes_vvol),
-    for d : 1 thru cdim do (
+    for d : 1 thru cdim do block([szp],
       cv : varsC[d],
       surfCVars : delete(cv, varsC),
       nodes_crem : if cdim > 1 then gaussOrd(nPts, cdim-1) else [1],
@@ -260,7 +410,14 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
       sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_x", d-1), bP,
         surfCVars, cv, varsV, nodes_crem, nodes_vvol, false, varsV, false),
       printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_x~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
-        tag, d-1, length(bP), sz[1], sz[2], length(nodes_crem), length(nodes_vvol), length(sparseIdx), (d-1)*length(nodes_crem)*length(nodes_vvol))
+        tag, d-1, length(bP), sz[1], sz[2], length(nodes_crem), length(nodes_vvol), length(sparseIdx), (d-1)*length(nodes_crem)*length(nodes_vvol)),
+      /* From-flux consumer projection tables for this configuration-direction
+         surface (vlasov_(boundary_)(ho_)surf{x,y,z} stream kernels). */
+      szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_x", d-1), bP,
+        basisFromVars(basisFun, delete(cv, varsP), polyOrder),
+        surfCVars, cv, varsV, nPts),
+      printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_x~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
+        tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
     )
   )
 )$

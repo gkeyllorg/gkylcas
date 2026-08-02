@@ -25,6 +25,7 @@ load("out-scripts");
 load("utilities")$
 load("nodal_operations/nodal_functions")$
 load("new_vlasov/vlasov-basis");
+load("new_vlasov/surf-eval-tables");
 load(stringproc)$
 fpprec : 24$
 
@@ -216,124 +217,87 @@ calcHamilVelSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_r
 )$  
 
 
-/* Velocity-space surface update from pre-computed flux. */
+/* Velocity-space surface update from the pre-computed nodal flux, as loops
+   over the shared consumer projection tables (vst_<tag>_prj_v<d>_*, see
+   writeConsumerProjTables in surf-eval-tables.mac). The nodal flux is
+   projected onto the p=polyOrder surface basis ONE SURFACE MODE AT A TIME:
+   mode k's projection g = <bSurfP_k, F_nodal>/coef_k factorizes over the
+   conf (x) vel tensor-product node set into the Cw/Vw table contractions
+   (Cw/Vw are quadrature-weight-folded shape evaluations, exactly the inner
+   products with the nodal cardinal basis by Gauss-Legendre exactness), and
+   the volume increment follows from the restriction identity
+   bP_m|_{vv=+/-1} = c*bSurfP_{s(m)} through the CSR out maps (increment
+   signs and coef_k folded into out_cl/out_cr at table generation, where all
+   of these identities are asserted exactly). This replaces the unrolled
+   two-stage G1/Ghat emission: no scratch buffers, no duplicated left/right
+   matrices, and distinct modes write DISJOINT out coefficients, so a
+   per-mode GPU launch needs no atomics.
+
+   PAIRING CONVENTION (mirrors the producers): BOTH callable forms are
+   emitted into the same .c file -- the per-mode `_mode` function (one
+   surface mode's work, declared in gkyl_vlasov_surf_node_kernels.h for the
+   GPU per-mode launcher) and the original-ABI wrapper looping it with
+   literal bounds so the compiler inlines and hoists (the production CPU
+   path). Never hand-edit one form in isolation; regenerate the file. */
 calcVelSurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP, vid,vv, surfVars,surfVVars,
-   bSurf,NSurf, nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,
-   surfNodes, num_nodes_conf,num_nodes_vel,numNodes,Fhat_l_nodal_c,
-   Fhat_r_nodal_c,Fhat_l_nodal_list,Fhat_r_nodal_list,
-   Fhat_l_nodal_e,Fhat_r_nodal_e,Ghat_e,
-   bSurfP,bVelSurfP,NVelP,G1_l_c,G1_r_c,FvelNode_l_e,FvelNode_r_e,
-   G1_list,Fhat_hyb_e,Ghat_d,incr_l,incr_r],
+   bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,
+   surfNodes, num_nodes_conf,num_nodes_vel,numNodes,
+   bSurfP,NK,fact,NA,NMV,tag,pre,off],
 
-  [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
-  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
   vid : vidx(cdim,vdim),
-  printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
-  printf(fh, "~%"),
-
-  /* Surface contribution is defined as integral(phi^- Fhat) over the surface. */
-  vv : varsV[dir], 
+  vv : varsV[dir],
   surfVars : delete(vv,varsP), /* Surface variables at constant vv surface. */
-  surfVVars : delete(vv,varsV), 
+  surfVVars : delete(vv,varsV),
   [bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes] : loadVlasovVelSurfBasis(cdim, vdim, basisFun, polyOrder, surfVars, surfVVars, varsC, useHigherOrder),
-  NSurf : length(bSurf), 
-  num_nodes_conf : length(nodes_conf), 
-  num_nodes_vel : length(nodes_vel), 
-  numNodes : length(surfNodes), 
+  num_nodes_conf : length(nodes_conf),
+  num_nodes_vel : length(nodes_vel),
+  numNodes : length(surfNodes),
 
-  printf(fh, "  const double *Fhat_l_nodal_c = &Fhat_l_nodal[~a]; ~%", (dir-1)*numNodes),
-  printf(fh, "  const double *Fhat_r_nodal_c = &Fhat_r_nodal[~a]; ~%", (dir-1)*numNodes),
+  /* Sizes must reproduce the table generator's (deterministic: same
+     factorization/dedup path on the same p=polyOrder surface basis). */
+  bSurfP : basisFromVars(basisFun, surfVars, polyOrder),
+  NK : length(bSurfP),
+  fact : laxFactorizeBasis(bSurfP,
+    varsC,
+    if length(surfVVars) = 0 then [prjdummy] else surfVVars),
+  NA : length(fact[1]),
+  NMV : length(fact[2]),
+  tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
+  pre : sconcat("vst_", tag, "_prj_v", dir-1),
+  off : (dir-1)*numNodes,
 
-  Fhat_l_nodal_list : makelist(Fhat_l_nodal_c[i], i, 0, numNodes-1), 
-  Fhat_r_nodal_list : makelist(Fhat_r_nodal_c[i], i, 0, numNodes-1), 
-  Fhat_l_nodal_e : 0, 
-  Fhat_r_nodal_e : 0, 
-  for i : 1 thru num_nodes_conf do (
-    for j : 1 thru num_nodes_vel do (
-      Fhat_l_nodal_e : Fhat_l_nodal_e + Fhat_l_nodal_list[j + (i-1)*num_nodes_vel]*basisNodalVel[j]*basisNodalConf[i],
-      Fhat_r_nodal_e : Fhat_r_nodal_e + Fhat_r_nodal_list[j + (i-1)*num_nodes_vel]*basisNodalVel[j]*basisNodalConf[i]
-    )
-  ),
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
-  /* The nodal flux expansion is the interface: compute the modal-coefficient
-     update directly from it (the nodal-to-modal map folded into one step).
-     Whenever the velocity-transverse part of the surface is nontrivial
-     (vdim > 1), the fused nodal->increment matrix is beaten -- by 3-10x in
-     generated code size, catastrophically so at large node counts (256
-     nodes at 2x3v p=2 ho produced 2MB+ kernels) -- by a SUM-FACTORIZED
-     two-stage projection that exploits the conf (x) vel tensor-product
-     structure of the node set:
-       stage 1: at each configuration node, contract the velocity-surface
-                nodes onto the p=polyOrder velocity surface basis (G1);
-       stage 2: contract the configuration nodes onto the p=polyOrder
-                surface basis (Ghat), then apply the standard increment.
-     This is exactly lossless for the surface update: the integrands factor
-     (Fubini), the test functions bP restricted to the surface span exactly
-     the p=polyOrder surface basis, and their velocity factors lie in the
-     p=polyOrder velocity surface basis, so all discarded content is
-     annihilated by the inner products either way. Note bSurf from the
-     loader is the ENRICHED (p+1) basis in ho mode; the p=polyOrder bases
-     are rebuilt here -- projecting onto the enriched basis would generate
-     provably-dead code. */
-  if (vdim > 1) then (
-    bSurfP : basisFromVars(basisFun, surfVars, polyOrder),
-    bVelSurfP : basisFromVars(basisFun, surfVVars, polyOrder),
-    NVelP : length(bVelSurfP),
-    /* Stage 1 (per side): velocity contraction at each configuration node. */
-    G1_l_c : [],
-    G1_r_c : [],
-    for i : 1 thru num_nodes_conf do (
-      FvelNode_l_e : 0,
-      FvelNode_r_e : 0,
-      for j : 1 thru num_nodes_vel do (
-        FvelNode_l_e : FvelNode_l_e + Fhat_l_nodal_list[j + (i-1)*num_nodes_vel]*basisNodalVel[j],
-        FvelNode_r_e : FvelNode_r_e + Fhat_r_nodal_list[j + (i-1)*num_nodes_vel]*basisNodalVel[j]
-      ),
-      G1_l_c : append(G1_l_c, calcInnerProdList(surfVVars, 1, bVelSurfP, FvelNode_l_e)),
-      G1_r_c : append(G1_r_c, calcInnerProdList(surfVVars, 1, bVelSurfP, FvelNode_r_e))
-    ),
-    /* Stage 2: configuration contraction onto the surface basis, fully
-       sequential to minimize scratch (GPU local-memory/occupancy): a single
-       G1 and a single Ghat are each written twice --
-         G1 <- left,  Ghat <- M G1, out += incr_l(Ghat),
-         G1 <- right, Ghat <- M G1, out += incr_r(Ghat).
-       The conf-contraction map M is the same for both sides, so it is
-       computed symbolically once. The output is +=-accumulated, so the two
-       increment passes are exact. */
-    G1_list : makelist(G1[k], k, 0, num_nodes_conf*NVelP-1),
-    Fhat_hyb_e : 0,
-    for i : 1 thru num_nodes_conf do (
-      for n : 1 thru NVelP do (
-        Fhat_hyb_e : Fhat_hyb_e + G1_list[n + (i-1)*NVelP]*bVelSurfP[n]*basisNodalConf[i]
-      )
-    ),
-    Ghat_d : calcInnerProdList(surfVars, 1, bSurfP, Fhat_hyb_e),
-    Ghat_e : doExpand1(Ghat, bSurfP),
-    printf(fh, "  double G1[~a] = {0.0}; ~%", num_nodes_conf*NVelP),
-    printf(fh, "  double Ghat[~a] = {0.0}; ~%", length(bSurfP)),
-    writeCExprs1(G1, G1_l_c),
-    writeCExprs1(Ghat, Ghat_d),
-    incr_l : calcInnerProdList(surfVars, 1, subst(vv=-1.0, bP), Ghat_e),
-    writeCIncrExprsCollect1lhsc(out, dv11[dir]*incr_l),
-    printf(fh, "~%"),
-    writeCExprs1(G1, G1_r_c),
-    writeCExprs1(Ghat, Ghat_d),
-    incr_r : calcInnerProdList(surfVars, -1, subst(vv=1.0, bP), Ghat_e),
-    writeCIncrExprsCollect1lhsc(out, dv11[dir]*incr_r)
-  )
-  else (
-    incr_l : calcInnerProdList(surfVars, 1, subst(vv=-1.0, bP), Fhat_l_nodal_e),
-    incr_r : calcInnerProdList(surfVars, -1, subst(vv=1.0, bP), Fhat_r_nodal_e),
-    writeCIncrExprsCollect1lhsc(out, dv11[dir]*incr_l + dv11[dir]*incr_r)
-  ),
-  printf(fh, "~%"),
+  printf(fh, "GKYL_CU_DH void ~a_mode(int k, double dv1~a,
+  const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
+  printf(fh, "  const int a = ~a_kamap[k]; ~%", pre),
+  printf(fh, "  const int b = ~a_kbmap[k]; ~%", pre),
+  printf(fh, "  double g_l = 0.0; ~%"),
+  printf(fh, "  double g_r = 0.0; ~%"),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
+  printf(fh, "    double t_l = 0.0; ~%"),
+  printf(fh, "    double t_r = 0.0; ~%"),
+  printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", num_nodes_vel),
+  printf(fh, "      t_l += ~a_Vw[j*~a + b]*Fhat_l_nodal[~a + i*~a + j]; ~%", pre, NMV, off, num_nodes_vel),
+  printf(fh, "      t_r += ~a_Vw[j*~a + b]*Fhat_r_nodal[~a + i*~a + j]; ~%", pre, NMV, off, num_nodes_vel),
+  printf(fh, "    } ~%"),
+  printf(fh, "    g_l += ~a_Cw[i*~a + a]*t_l; ~%", pre, NA),
+  printf(fh, "    g_r += ~a_Cw[i*~a + a]*t_r; ~%", pre, NA),
+  printf(fh, "  } ~%"),
+  printf(fh, "  for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
+  printf(fh, "    out[~a_out_mode[q]] += dv1~a*(~a_out_cl[q]*g_l + ~a_out_cr[q]*g_r); ~%", pre, dir-1, pre, pre),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%~%"),
 
-  /* Stable time step obtained from flux computation at nodes earlier. */
-  printf(fh, "  return 0.0;~%"), 
-  printf(fh, "~%"),
-
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
+  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NK),
+  printf(fh, "    ~a_mode(k, dv1~a, Fhat_l_nodal, Fhat_r_nodal, out); ~%", funcNm, dir-1),
+  printf(fh, "  } ~%"),
+  printf(fh, "  return 0.0;~%"),
   printf(fh, "} ~%")
-)$    
+)$
