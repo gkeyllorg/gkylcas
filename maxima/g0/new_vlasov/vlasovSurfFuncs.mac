@@ -216,29 +216,29 @@ calcHamilVelSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_r
   printf(fh, "} ~%")
 )$  
 
-
 /* Velocity-space surface update from the pre-computed nodal flux, as loops
    over the shared consumer projection tables (vst_<tag>_prj_v<d>_*, see
-   writeConsumerProjTables in surf-eval-tables.mac). The nodal flux is
-   projected onto the p=polyOrder surface basis ONE SURFACE MODE AT A TIME:
-   mode k's projection g = <bSurfP_k, F_nodal>/coef_k factorizes over the
-   conf (x) vel tensor-product node set into the Cw/Vw table contractions
-   (Cw/Vw are quadrature-weight-folded shape evaluations, exactly the inner
-   products with the nodal cardinal basis by Gauss-Legendre exactness), and
-   the volume increment follows from the restriction identity
-   bP_m|_{vv=+/-1} = c*bSurfP_{s(m)} through the CSR out maps (increment
-   signs and coef_k folded into out_cl/out_cr at table generation, where all
-   of these identities are asserted exactly). This replaces the unrolled
-   two-stage G1/Ghat emission: no scratch buffers, no duplicated left/right
-   matrices, and distinct modes write DISJOINT out coefficients, so a
-   per-mode GPU launch needs no atomics.
+   writeConsumerProjTables in surf-eval-tables.mac). Mode k's projection
+   g = <bSurfP_k, F_nodal>/coef_k factorizes over the conf (x) vel
+   tensor-product node set into the Cw/Vw table contractions
+   (quadrature-weight-folded shape evaluations, exactly the inner products
+   with the nodal cardinal basis by Gauss-Legendre exactness), and the
+   volume increments follow from the restriction identity
+   bP_m|_{vv=+/-1} = c*bSurfP_{s(m)} (signs and coef folded into the
+   coefficient tables at generation time, where all identities are asserted
+   exactly). No G1/Ghat scratch, no duplicated left/right matrices.
 
-   PAIRING CONVENTION (mirrors the producers): BOTH callable forms are
-   emitted into the same .c file -- the per-mode `_mode` function (one
-   surface mode's work, declared in gkyl_vlasov_surf_node_kernels.h for the
-   GPU per-mode launcher) and the original-ABI wrapper looping it with
-   literal bounds so the compiler inlines and hoists (the production CPU
-   path). Never hand-edit one form in isolation; regenerate the file. */
+   TWO FRAMINGS of the same tables are emitted into each .c file:
+   - the WRAPPER (original ABI, production CPU path) loops SURFACE modes k
+     and scatters through the CSR out maps -- flop-minimal (each projection
+     computed once; per-volume-mode recompute measured 1.5-5.8x slower in
+     hyper_dg on CPU);
+   - the `_mode(m, ...)` function (declared in
+     gkyl_vlasov_surf_node_kernels.h) does ONE VOLUME MODE's work via the
+     transposed pm_ maps: thread m owns out[m] exclusively, in every
+     direction, so a (cells x np) GPU launch needs no atomics or barriers.
+   Both use emitPrjProjection, so the projections cannot drift apart.
+   Never hand-edit one form in isolation; regenerate the file. */
 calcVelSurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP, vid,vv, surfVars,surfVVars,
    bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,
@@ -271,32 +271,22 @@ calcVelSurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
-  printf(fh, "GKYL_CU_DH void ~a_mode(int k, double dv1~a,
+  /* Per-volume-mode form (GPU): thread m owns out[m]. */
+  printf(fh, "GKYL_CU_DH void ~a_mode(int m, double dv1~a,
   const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
-  printf(fh, "  const int a = ~a_kamap[k]; ~%", pre),
-  printf(fh, "  const int b = ~a_kbmap[k]; ~%", pre),
-  printf(fh, "  double g_l = 0.0; ~%"),
-  printf(fh, "  double g_r = 0.0; ~%"),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
-  printf(fh, "    double t_l = 0.0; ~%"),
-  printf(fh, "    double t_r = 0.0; ~%"),
-  printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", num_nodes_vel),
-  printf(fh, "      t_l += ~a_Vw[j*~a + b]*Fhat_l_nodal[~a + i*~a + j]; ~%", pre, NMV, off, num_nodes_vel),
-  printf(fh, "      t_r += ~a_Vw[j*~a + b]*Fhat_r_nodal[~a + i*~a + j]; ~%", pre, NMV, off, num_nodes_vel),
-  printf(fh, "    } ~%"),
-  printf(fh, "    g_l += ~a_Cw[i*~a + a]*t_l; ~%", pre, NA),
-  printf(fh, "    g_r += ~a_Cw[i*~a + a]*t_r; ~%", pre, NA),
-  printf(fh, "  } ~%"),
-  printf(fh, "  for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
-  printf(fh, "    out[~a_out_mode[q]] += dv1~a*(~a_out_cl[q]*g_l + ~a_out_cr[q]*g_r); ~%", pre, dir-1, pre, pre),
-  printf(fh, "  } ~%"),
+  emitPrjProjection(fh, pre, "pm_a", "pm_b", "m", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
+  printf(fh, "  out[m] += dv1~a*(~a_pm_cl[m]*g_l + ~a_pm_cr[m]*g_r); ~%", dir-1, pre, pre),
   printf(fh, "} ~%~%"),
 
+  /* Surface-mode CSR form (CPU): each projection computed once. */
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
   const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
   printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
   printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NK),
-  printf(fh, "    ~a_mode(k, dv1~a, Fhat_l_nodal, Fhat_r_nodal, out); ~%", funcNm, dir-1),
+  emitPrjProjection(fh, pre, "kamap", "kbmap", "k", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
+  printf(fh, "  for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
+  printf(fh, "    out[~a_out_mode[q]] += dv1~a*(~a_out_cl[q]*g_l + ~a_out_cr[q]*g_r); ~%", pre, dir-1, pre, pre),
+  printf(fh, "  } ~%"),
   printf(fh, "  } ~%"),
   printf(fh, "  return 0.0;~%"),
   printf(fh, "} ~%")

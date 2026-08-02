@@ -193,22 +193,15 @@ calcHamilVelBoundarySurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder,
 
   printf(fh, "} ~%")
 )$  
-
 /* Velocity-space boundary surface update from the pre-computed nodal flux,
    as loops over the shared consumer projection tables (vst_<tag>_prj_v<d>_*,
    see writeConsumerProjTables in surf-eval-tables.mac). One-sided version of
-   calcVelSurf in vlasovSurfFuncs.mac (see the full derivation there): the
-   skin cell sees a single interface, selected by `edge` --
-   edge == -1 is the LEFT domain boundary (skin cell evaluated at vv=+1, the
-   right-interface coefficients out_cr), edge == +1 the RIGHT boundary (skin
-   at vv=-1, out_cl). Distinct surface modes write DISJOINT out coefficients
-   (per-mode GPU launch needs no atomics).
-
-   PAIRING CONVENTION (mirrors the producers): BOTH callable forms are
-   emitted into the same .c file -- the per-mode `_mode` function (declared
-   in gkyl_vlasov_surf_node_kernels.h) and the original-ABI wrapper looping
-   it with literal bounds (the production CPU path). Never hand-edit one
-   form in isolation; regenerate the file. */
+   calcVelSurf in vlasovSurfFuncs.mac (see the full derivation and the
+   two-framings pairing convention there). The skin cell sees a single
+   interface, selected by `edge` -- edge == -1 is the LEFT domain boundary
+   (skin cell evaluated at vv=+1, the right-interface coefficients),
+   edge == +1 the RIGHT boundary (skin at vv=-1, the left-interface
+   coefficients). Never hand-edit one form in isolation; regenerate. */
 calcVelBoundarySurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP, vid,vv, surfVars,surfVVars,
    bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,
@@ -241,18 +234,23 @@ calcVelBoundarySurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherO
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
-  printf(fh, "GKYL_CU_DH void ~a_mode(int k, int edge, double dv1~a,
+  /* Per-volume-mode form (GPU): thread m owns out[m]. */
+  printf(fh, "GKYL_CU_DH void ~a_mode(int m, int edge, double dv1~a,
   const double *flux, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
-  printf(fh, "  const int a = ~a_kamap[k]; ~%", pre),
-  printf(fh, "  const int b = ~a_kbmap[k]; ~%", pre),
-  printf(fh, "  double g = 0.0; ~%"),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
-  printf(fh, "    double t = 0.0; ~%"),
-  printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", num_nodes_vel),
-  printf(fh, "      t += ~a_Vw[j*~a + b]*flux[~a + i*~a + j]; ~%", pre, NMV, off, num_nodes_vel),
-  printf(fh, "    } ~%"),
-  printf(fh, "    g += ~a_Cw[i*~a + a]*t; ~%", pre, NA),
+  emitPrjProjection(fh, pre, "pm_a", "pm_b", "m", NA, NMV, num_nodes_conf, num_nodes_vel, off, "flux", false),
+  printf(fh, "  if (edge == -1) { ~%"),
+  printf(fh, "    out[m] += dv1~a*~a_pm_cr[m]*g; ~%", dir-1, pre),
+  printf(fh, "  } else { ~%"),
+  printf(fh, "    out[m] += dv1~a*~a_pm_cl[m]*g; ~%", dir-1, pre),
   printf(fh, "  } ~%"),
+  printf(fh, "} ~%~%"),
+
+  /* Surface-mode CSR form (CPU): each projection computed once. */
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const int edge, const double *flux, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
+  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NK),
+  emitPrjProjection(fh, pre, "kamap", "kbmap", "k", NA, NMV, num_nodes_conf, num_nodes_vel, off, "flux", false),
   printf(fh, "  if (edge == -1) { ~%"),
   printf(fh, "    for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
   printf(fh, "      out[~a_out_mode[q]] += dv1~a*~a_out_cr[q]*g; ~%", pre, dir-1, pre),
@@ -262,13 +260,6 @@ calcVelBoundarySurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherO
   printf(fh, "      out[~a_out_mode[q]] += dv1~a*~a_out_cl[q]*g; ~%", pre, dir-1, pre),
   printf(fh, "    } ~%"),
   printf(fh, "  } ~%"),
-  printf(fh, "} ~%~%"),
-
-  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const int edge, const double *flux, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
-  printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
-  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NK),
-  printf(fh, "    ~a_mode(k, edge, dv1~a, flux, out); ~%", funcNm, dir-1),
   printf(fh, "  } ~%"),
   printf(fh, "  return 0.0;~%"),
   printf(fh, "} ~%")

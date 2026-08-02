@@ -253,7 +253,57 @@ writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars,
   emitTabIntArray(fh, sconcat(prefix, "_out_mode"), modeL),
   emitTabDoubleArray(fh, sconcat(prefix, "_out_cl"), clL),
   emitTabDoubleArray(fh, sconcat(prefix, "_out_cr"), crL),
+  /* Transposed per-VOLUME-mode maps (the volume-mode-ownership framing of
+     the GPU `_mode` functions): thread m owns out[m] exclusively across the
+     whole update -- pm_a/pm_b are the Cw/Vw shape columns of m's surface
+     mode s(m), pm_cl/pm_cr its increment coefficients (the CSR out_cl/out_cr
+     values reindexed by m). Volume modes sharing a surface mode recompute
+     the same projection; on GPU that removes every write conflict (no other
+     thread ever touches out[m], in any direction), but on CPU the redundant
+     recompute plus the lost cross-iteration sharing measured 1.5-5.8x
+     slower in hyper_dg -- so the CPU wrappers loop the CSR arrays above
+     (flop-minimal surface-mode framing, disjoint mode groups per
+     direction) and only the GPU launch composes the pm_ maps. */
+  emitTabIntArray(fh, sconcat(prefix, "_pm_a"), makelist(kamap[smode[m]], m, 1, NP)),
+  emitTabIntArray(fh, sconcat(prefix, "_pm_b"), makelist(kbmap[smode[m]], m, 1, NP)),
+  emitTabDoubleArray(fh, sconcat(prefix, "_pm_cl"), makelist(clm[m], m, 1, NP)),
+  emitTabDoubleArray(fh, sconcat(prefix, "_pm_cr"), makelist(crm[m], m, 1, NP)),
   [NK, NA, NMV, NO, NI]
+)$
+
+/* Emit the factorized projection of the nodal flux for one surface mode,
+   whose (a,b) shape columns come from map arrays aname/bname at index
+   expression idx ("k" via kamap/kbmap in the wrapper's CSR loop, "m" via
+   pm_a/pm_b in the per-volume-mode GPU function): declares a, b and
+   g_l/g_r (two-sided; fluxR # false) or g (one-sided), with the
+   outer (i) x inner (j) contraction loops over Cw/Vw. Shared by all four
+   consumer kernel emitters so the two framings cannot drift apart. */
+emitPrjProjection(fh, pre, aname, bname, idx, NA, NMV, NO, NI, off, fluxL, fluxR) := (
+  printf(fh, "  const int a = ~a_~a[~a]; ~%", pre, aname, idx),
+  printf(fh, "  const int b = ~a_~a[~a]; ~%", pre, bname, idx),
+  if (fluxR = false) then (
+    printf(fh, "  double g = 0.0; ~%"),
+    printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
+    printf(fh, "    double t = 0.0; ~%"),
+    printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
+    printf(fh, "      t += ~a_Vw[j*~a + b]*~a[~a + i*~a + j]; ~%", pre, NMV, fluxL, off, NI),
+    printf(fh, "    } ~%"),
+    printf(fh, "    g += ~a_Cw[i*~a + a]*t; ~%", pre, NA),
+    printf(fh, "  } ~%")
+  ) else (
+    printf(fh, "  double g_l = 0.0; ~%"),
+    printf(fh, "  double g_r = 0.0; ~%"),
+    printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
+    printf(fh, "    double t_l = 0.0; ~%"),
+    printf(fh, "    double t_r = 0.0; ~%"),
+    printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
+    printf(fh, "      t_l += ~a_Vw[j*~a + b]*~a[~a + i*~a + j]; ~%", pre, NMV, fluxL, off, NI),
+    printf(fh, "      t_r += ~a_Vw[j*~a + b]*~a[~a + i*~a + j]; ~%", pre, NMV, fluxR, off, NI),
+    printf(fh, "    } ~%"),
+    printf(fh, "    g_l += ~a_Cw[i*~a + a]*t_l; ~%", pre, NA),
+    printf(fh, "    g_r += ~a_Cw[i*~a + a]*t_r; ~%", pre, NA),
+    printf(fh, "  } ~%")
+  )
 )$
 
 /* Phase-factor tables for one surface (prefix e.g. vst_<tag>_ph_v0):

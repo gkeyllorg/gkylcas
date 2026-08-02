@@ -36,21 +36,15 @@ dv11 : [dv10, dv11, dv12]$
 cidx(cdim) := makelist(i,i,0,cdim-1)$
 vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
 
-
 /* Configuration-space surface update from the pre-computed nodal flux, as
    loops over the shared consumer projection tables (vst_<tag>_prj_x<d>_*,
    see writeConsumerProjTables in surf-eval-tables.mac). Configuration-
    direction twin of calcVelSurf in new_vlasov/vlasovSurfFuncs.mac (see the
-   full derivation there): outer factor = transverse-configuration nodes,
-   inner factor = velocity nodes, normal = the configuration direction.
-   Distinct surface modes write DISJOINT out coefficients (per-mode GPU
-   launch needs no atomics).
-
-   PAIRING CONVENTION (mirrors the producers): BOTH callable forms are
-   emitted into the same .c file -- the per-mode `_mode` function (declared
-   in gkyl_vlasov_surf_node_kernels.h) and the original-ABI wrapper looping
-   it with literal bounds (the production CPU path). Never hand-edit one
-   form in isolation; regenerate the file. */
+   full derivation and the two-framings pairing convention there): outer
+   factor = transverse-configuration nodes, inner factor = velocity nodes,
+   normal = the configuration direction. Wrapper = CSR surface-mode loop
+   (CPU); `_mode(m, ...)` = per-volume-mode (GPU, out[m] exclusively owned).
+   Never hand-edit one form in isolation; regenerate the file. */
 calcSurfStreamFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP, cid,cv, surfVars,surfCVars,
    bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,
@@ -83,32 +77,22 @@ calcSurfStreamFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOr
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
-  printf(fh, "GKYL_CU_DH void ~a_mode(int k, double dx1~a,
+  /* Per-volume-mode form (GPU): thread m owns out[m]. */
+  printf(fh, "GKYL_CU_DH void ~a_mode(int m, double dx1~a,
   const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
-  printf(fh, "  const int a = ~a_kamap[k]; ~%", pre),
-  printf(fh, "  const int b = ~a_kbmap[k]; ~%", pre),
-  printf(fh, "  double g_l = 0.0; ~%"),
-  printf(fh, "  double g_r = 0.0; ~%"),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
-  printf(fh, "    double t_l = 0.0; ~%"),
-  printf(fh, "    double t_r = 0.0; ~%"),
-  printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", num_nodes_vel),
-  printf(fh, "      t_l += ~a_Vw[j*~a + b]*Fhat_l_nodal[~a + i*~a + j]; ~%", pre, NMV, off, num_nodes_vel),
-  printf(fh, "      t_r += ~a_Vw[j*~a + b]*Fhat_r_nodal[~a + i*~a + j]; ~%", pre, NMV, off, num_nodes_vel),
-  printf(fh, "    } ~%"),
-  printf(fh, "    g_l += ~a_Cw[i*~a + a]*t_l; ~%", pre, NA),
-  printf(fh, "    g_r += ~a_Cw[i*~a + a]*t_r; ~%", pre, NA),
-  printf(fh, "  } ~%"),
-  printf(fh, "  for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
-  printf(fh, "    out[~a_out_mode[q]] += dx1~a*(~a_out_cl[q]*g_l + ~a_out_cr[q]*g_r); ~%", pre, dir-1, pre, pre),
-  printf(fh, "  } ~%"),
+  emitPrjProjection(fh, pre, "pm_a", "pm_b", "m", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
+  printf(fh, "  out[m] += dx1~a*(~a_pm_cl[m]*g_l + ~a_pm_cr[m]*g_r); ~%", dir-1, pre, pre),
   printf(fh, "} ~%~%"),
 
+  /* Surface-mode CSR form (CPU): each projection computed once. */
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
   const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
   printf(fh, "  double dx1~a = 2.0/dxv[~a]; ~%", dir-1, cid[dir]),
   printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NK),
-  printf(fh, "    ~a_mode(k, dx1~a, Fhat_l_nodal, Fhat_r_nodal, out); ~%", funcNm, dir-1),
+  emitPrjProjection(fh, pre, "kamap", "kbmap", "k", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
+  printf(fh, "  for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
+  printf(fh, "    out[~a_out_mode[q]] += dx1~a*(~a_out_cl[q]*g_l + ~a_out_cr[q]*g_r); ~%", pre, dir-1, pre, pre),
+  printf(fh, "  } ~%"),
   printf(fh, "  } ~%"),
   printf(fh, "  return 0.0;~%"),
   printf(fh, "} ~%")
