@@ -271,6 +271,22 @@ writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars,
   [NK, NA, NMV, NO, NI]
 )$
 
+/* FUTURE per-mode GPU parallelization: when true, the four consumer
+   emitters additionally write a `<name>_mode(int m, ...)` companion into
+   each kernel file -- the per-VOLUME-mode framing over the pm_ maps, in
+   which thread m owns out[m] exclusively in every direction, so a
+   (cells x np) GPU launch needs no atomics or barriers (this resolves the
+   cross-direction write collisions of surface-mode threading; nk is
+   direction-independent but np gives more threads). Kept OFF until that
+   launcher exists: the volume kernels need the same per-output-mode
+   decomposition before a per-mode hyper_dg launch is useful, and the CPU
+   path must NEVER loop the per-mode form -- the np/nk ~ 2x redundant
+   projections plus lost cross-iteration sharing measured 1.5-5.8x slower
+   in hyper_dg (2026-08). Flip to true and regenerate kernels + the
+   ms-vlasov-node-header.mac decl block when the GPU per-mode work starts;
+   the pm_ tables above are already emitted and waiting. */
+emitConsumerModeFns : false$
+
 /* Emit the factorized projection of the nodal flux for one surface mode,
    whose (a,b) shape columns come from map arrays aname/bname at index
    expression idx ("k" via kamap/kbmap in the wrapper's CSR loop, "m" via

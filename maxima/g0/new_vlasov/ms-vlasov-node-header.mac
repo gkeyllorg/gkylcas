@@ -71,15 +71,19 @@ for bInd : 1 thru 2 do (
               printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_node(int i, int j, const double *jacob_vel_surf_r, double alpha, const double *f_l, const double *f_r, double* GKYL_RESTRICT Fhat_nodal); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
               printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_cfl(const double *dxv, const double *jacob_vel_surf_l, const double *jacob_vel_surf_r, double alpha_max); ~%",
-                deco, si, vlabels[dir], c, v, bName[bInd], pi),
-              /* From-flux consumer per-mode functions (volume-mode ownership:
-                 iteration m computes its surface mode's projection and updates
-                 out[m] only; mirror ms-vlasovSurf.mac /
-                 ms-vlasovBoundarySurf.mac). */
-              printf(fh, "~avoid vlasov_~asurf~a_~ax~av_~a_p~a_mode(int m, double dv1, const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out); ~%",
+                deco, si, vlabels[dir], c, v, bName[bInd], pi)
+              /* DISABLED until the per-mode GPU launcher lands (the volume
+                 kernels need the same per-output-mode decomposition first;
+                 re-enable together with emitConsumerModeFns in
+                 surf-eval-tables.mac): the from-flux consumer per-mode decls
+                 -- volume-mode ownership, iteration m computes its surface
+                 mode's projection and updates out[m] only; mirror
+                 ms-vlasovSurf.mac and ms-vlasovBoundarySurf.mac --
+              , printf(fh, "~avoid vlasov_~asurf~a_~ax~av_~a_p~a_mode(int m, double dv1, const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
               printf(fh, "~avoid vlasov_boundary_~asurf~a_~ax~av_~a_p~a_mode(int m, int edge, double dv1, const double *flux, double* GKYL_RESTRICT out); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi)
+              */
             ),
             printf(fh, "~%")
           )
@@ -111,13 +115,16 @@ for c : 1 thru 3 do (
               printf(fh, "~adouble hamil_vel_sparse_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
                 deco, si, clabels[dir], c, v, pi),
             printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-              deco, si, clabels[dir], c, v, pi),
-            /* From-flux stream consumer per-mode functions (mirror
-               ms-triadSurf.mac / ms-triadBoundarySurf.mac). */
-            printf(fh, "~avoid vlasov_~asurf~a_~ax~av_ser_p~a_mode(int m, double dx1, const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out); ~%",
+              deco, si, clabels[dir], c, v, pi)
+            /* DISABLED until the per-mode GPU launcher lands (re-enable with
+               emitConsumerModeFns in surf-eval-tables.mac): the from-flux
+               stream consumer per-mode decls -- mirror ms-triadSurf.mac and
+               ms-triadBoundarySurf.mac --
+            , printf(fh, "~avoid vlasov_~asurf~a_~ax~av_ser_p~a_mode(int m, double dx1, const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out); ~%",
               deco, si, clabels[dir], c, v, pi),
             printf(fh, "~avoid vlasov_boundary_~asurf~a_~ax~av_ser_p~a_mode(int m, int edge, double dx1, const double *flux, double* GKYL_RESTRICT out); ~%",
               deco, si, clabels[dir], c, v, pi)
+            */
           )
         )
       ),

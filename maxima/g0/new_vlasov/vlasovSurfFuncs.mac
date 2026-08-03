@@ -271,12 +271,16 @@ calcVelSurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
-  /* Per-volume-mode form (GPU): thread m owns out[m]. */
-  printf(fh, "GKYL_CU_DH void ~a_mode(int m, double dv1~a,
+  /* Per-volume-mode form for the FUTURE (cells x np) GPU launcher: thread m
+     owns out[m] exclusively. Gated off until that work starts -- see
+     emitConsumerModeFns in surf-eval-tables.mac. */
+  if emitConsumerModeFns then (
+    printf(fh, "GKYL_CU_DH void ~a_mode(int m, double dv1~a,
   const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
-  emitPrjProjection(fh, pre, "pm_a", "pm_b", "m", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
-  printf(fh, "  out[m] += dv1~a*(~a_pm_cl[m]*g_l + ~a_pm_cr[m]*g_r); ~%", dir-1, pre, pre),
-  printf(fh, "} ~%~%"),
+    emitPrjProjection(fh, pre, "pm_a", "pm_b", "m", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
+    printf(fh, "  out[m] += dv1~a*(~a_pm_cl[m]*g_l + ~a_pm_cr[m]*g_r); ~%", dir-1, pre, pre),
+    printf(fh, "} ~%~%")
+  ),
 
   /* Surface-mode CSR form (CPU): each projection computed once. */
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
