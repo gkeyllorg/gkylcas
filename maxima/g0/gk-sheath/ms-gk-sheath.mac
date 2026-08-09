@@ -11,6 +11,8 @@ load("gk-sheath/sheath-3x2v");
 
 /* ...... USER INPUTS........ */
 
+outDir : "~/max-out/"$ /* Output directory */
+
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
 maxPolyOrder_Ser : 1$
@@ -43,7 +45,7 @@ for bInd : 1 thru length(bName) do (
   minPolyOrderB : minPolyOrder[bInd],
   maxPolyOrderB : maxPolyOrder[bInd],
   for polyOrder : minPolyOrderB thru maxPolyOrderB do (
-    fname : sconcat("~/max-out/bc_sheath_gyrokinetic_",bName[bInd],"_p",polyOrder,".c"),
+    fname : sconcat(outDir,"/bc_sheath_gyrokinetic_",bName[bInd],"_p",polyOrder,".c"),
     fh : openw(fname),
   
     printf(fh, "#include <gkyl_bc_sheath_gyrokinetic_kernels.h> ~%"),
@@ -69,7 +71,7 @@ for bInd : 1 thru length(bName) do (
 
 
 /* Create a header file for sheath kernels. */
-fh : openw("~/max-out/gkyl_bc_sheath_gyrokinetic_kernels.h")$
+fh : openw(sconcat(outDir,"/gkyl_bc_sheath_gyrokinetic_kernels.h"))$
 printf(fh, "#pragma once~%")$
 printf(fh, "~%")$
 printf(fh, "#include <gkyl_util.h>~%")$
@@ -94,7 +96,7 @@ for bInd : 1 thru length(bName) do (
       for vI : 1 thru length(vDims[cdim]) do (
         for sI : 1 thru length(edge) do (
 
-          printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_reflectedf_~a_~ax~av_~a_p~a(const double *vmap, const double q2Dm, const double *phi, const double *phiWall, const double *f, double *fRefl); ~%", edge[sI], cdim, vDims[cdim][vI], bName[bInd], polyOrder)
+          printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_reflectedf_~a_~ax~av_~a_p~a(const double *vmap, const double q2Dm, const double *phi, const double *phiWall, const double *vcut_fact, const double *f, double *fRefl); ~%", edge[sI], cdim, vDims[cdim][vI], bName[bInd], polyOrder)
 
         )
       )
