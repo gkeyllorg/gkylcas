@@ -68,7 +68,7 @@ calcHamilVelSurfForceNonCanonical(dir, fh, funcNm, cdim, vdim, basisFun, polyOrd
   laxAssertNodeOrder(surfNodes, nodes_conf, nodes_vel),
   tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
   /* Mesh maps: each derivative picks up the inverse Jacobian of ITS OWN

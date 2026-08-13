@@ -1,15 +1,30 @@
 /* surf-eval-tables.mac ------------------------------------------------------
-   Generator for the shared nodal surface-evaluation tables used by the
-   velocity-flux alpha_quad producers (E, phi, rad, B, hamil) and the
-   lax_flux_nodal kernels.
+   Generator for the shared nodal surface-evaluation tables, split into TWO
+   headers per phase-space combo, named after the updaters that call the
+   kernels using them:
 
-   One header per phase-space combo: gkyl_vlasov_surf_tables_<c>x<v>v_<b>_p<p>.h
-   containing `static const` arrays named vst_<tag>[_ho]_<item>. They are
-   header-static (per-TU copies) ON PURPOSE: GKYL_CU_DH kernels are compiled
-   for both host and device, and a header-static constant-initialized array
-   is the one storage class nvcc accepts from BOTH instantiations (an extern
-   host symbol is invisible to device code; a __device__ symbol is invisible
-   to the host copy). Arrays carry __attribute__((unused)) so kernels that
+   gkyl_vlasov_flux_surf_mod2nod_tables_<c>x<v>v_<b>_p<p>.h  (ker/flux_vlasov)
+     MODAL->NODAL: everything the vlasov_{vel,conf}_flux_surf producers
+     (E/phi/rad/B/hamil/nc_hamil alpha_quad + lax_flux_nodal) evaluate at
+     surface nodes -- conf_ev/conf_dx, vel_ev/vel_dv/vel_nodes,
+     vel_sparse_idx, vel_vol_dv, confsurf_ev, and the ph_* volume-basis
+     factor tables with their gkyl_vlasov_surf_meta instances.
+
+   gkyl_vlasov_surf_nod2mod_tables_<c>x<v>v_<b>_p<p>.h  (ker/vlasov)
+     NODAL->MODAL: the prj_* projection tables the vlasov_(boundary_)surf*
+     from-flux consumers use, with their gkyl_vlasov_prj_meta instances.
+
+   The two sets share NO arrays: producers evaluate the VOLUME basis at
+   edge-substituted nodes (ph_* shapes), consumers project onto the p-order
+   SURFACE basis (prj_* shapes, quadrature weights folded in) -- transposes
+   only in the abstract, over different bases, so the partition is exact.
+
+   All arrays are `static const` named vst_<tag>[_ho]_<item>, header-static
+   (per-TU copies) ON PURPOSE: GKYL_CU_DH kernels are compiled for both host
+   and device, and a header-static constant-initialized array is the one
+   storage class nvcc accepts from BOTH instantiations (an extern host
+   symbol is invisible to device code; a __device__ symbol is invisible to
+   the host copy). Arrays carry __attribute__((unused)) so kernels that
    reference only a subset compile warning-free.
 
    Items (nPts = p+1, +1 in the ho variant; row index = node, column = basis fn):
@@ -38,8 +53,15 @@ surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder) := block([tag],
   tag
 )$
 
+/* Producer (modal->nodal) tables include; the historical name is kept so
+   the many producer emitters need no changes. */
 surfTabInclude(fh, cdim, vdim, basisFun, polyOrder) :=
-  printf(fh, "#include <gkyl_vlasov_surf_tables_~ax~av_~a_p~a.h> ~%", cdim, vdim, basisFun, polyOrder)$
+  printf(fh, "#include <gkyl_vlasov_flux_surf_mod2nod_tables_~ax~av_~a_p~a.h> ~%", cdim, vdim, basisFun, polyOrder)$
+
+/* Consumer (nodal->modal) tables include, for the from-flux
+   vlasov_(boundary_)(ho_)surf* emitters. */
+surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder) :=
+  printf(fh, "#include <gkyl_vlasov_surf_nod2mod_tables_~ax~av_~a_p~a.h> ~%", cdim, vdim, basisFun, polyOrder)$
 
 /* Emit exprs evaluated at nodes as a flattened [length(nodes)*length(exprs)]
    static const double array (row = node, column = expr). */
@@ -447,15 +469,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
       varsC, vv, svv, nodes_conf, nodes_vel,
       if d <= min(cdim, vdim) then varsC[d] else false, varsV, varsC),
     printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_v~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
-      tag, d-1, length(bP), sz[1], sz[2], length(nodes_conf), length(nodes_vel), length(sparseIdx), (d-1)*length(nodes_conf)*length(nodes_vel)),
-    /* From-flux consumer projection tables for this velocity-direction
-       surface (vlasov_(boundary_)(ho_)surfv* kernels). Surface bases stay
-       p=polyOrder in the ho variant; only the node set widens. */
-    szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_v", d-1), bP,
-      basisFromVars(basisFun, delete(vv, varsP), polyOrder),
-      varsC, vv, svv, nPts),
-    printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
-      tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
+      tag, d-1, length(bP), sz[1], sz[2], length(nodes_conf), length(nodes_vel), length(sparseIdx), (d-1)*length(nodes_conf)*length(nodes_vel))
   ),
 
   /* Configuration-direction surface tables (triad/phase conf-flux: lax +
@@ -476,9 +490,40 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
       sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_x", d-1), bP,
         surfCVars, cv, varsV, nodes_crem, nodes_vvol, false, varsV, false),
       printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_x~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
-        tag, d-1, length(bP), sz[1], sz[2], length(nodes_crem), length(nodes_vvol), length(sparseIdx), (d-1)*length(nodes_crem)*length(nodes_vvol)),
-      /* From-flux consumer projection tables for this configuration-direction
-         surface (vlasov_(boundary_)(ho_)surf{x,y,z} stream kernels). */
+        tag, d-1, length(bP), sz[1], sz[2], length(nodes_crem), length(nodes_vvol), length(sparseIdx), (d-1)*length(nodes_crem)*length(nodes_vvol))
+    )
+  )
+)$
+
+/* Write one lo- or ho-variant nodal->modal (consumer projection) table set
+   for a combo into fh: prj_{v,x}<d> tables + gkyl_vlasov_prj_meta instances
+   for every from-flux consumer surface (velocity directions for all bases;
+   configuration directions for Serendipity, mirroring the stream-consumer
+   coverage). Surface bases stay p=polyOrder in the ho variant; only the
+   node set widens. */
+writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
+  [varsC, bC, varsV, bV, varsP, bP, nPts, nodes_conf, nodes_vel, nodes_crem,
+   nodes_vvol, d, vv, svv, cv, surfCVars, szp],
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
+  nPts : polyOrder + 1,
+  if useHigherOrder then nPts : nPts + 1,
+  nodes_conf : gaussOrd(nPts, cdim),
+  for d : 1 thru vdim do block([],
+    vv : varsV[d],
+    svv : delete(vv, varsV),
+    nodes_vel : if vdim > 1 then gaussOrd(nPts, vdim-1) else [1],
+    szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_v", d-1), bP,
+      basisFromVars(basisFun, delete(vv, varsP), polyOrder),
+      varsC, vv, svv, nPts),
+    printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
+      tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
+  ),
+  if (basisFun = "ser") then (
+    for d : 1 thru cdim do block([],
+      cv : varsC[d],
+      surfCVars : delete(cv, varsC),
+      nodes_crem : if cdim > 1 then gaussOrd(nPts, cdim-1) else [1],
+      nodes_vvol : gaussOrd(nPts, vdim),
       szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_x", d-1), bP,
         basisFromVars(basisFun, delete(cv, varsP), polyOrder),
         surfCVars, cv, varsV, nPts),
@@ -488,17 +533,21 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   )
 )$
 
-/* Write the full header for a combo: lo tables always; ho tables for ser p>1
-   (tensor kernels are generated at the higher node count under the plain
-   name, so tensor combos get a single set at nPts = p+2). */
-writeSurfTabHeader(fh, cdim, vdim, basisFun, polyOrder) := block([tag],
+/* Write the full modal->nodal (producer) header for a combo: lo tables
+   always; ho tables for ser p>1 (tensor kernels are generated at the higher
+   node count under the plain name, so tensor combos get a single set at
+   nPts = p+2). Lives in vlasov/ker/flux_vlasov next to its consumers, the
+   vlasov_{vel,conf}_flux_surf producer kernels. */
+writeFluxSurfTabHeader(fh, cdim, vdim, basisFun, polyOrder) := block([tag],
   tag : sconcat(cdim, "x", vdim, "v_", basisFun, "_p", polyOrder),
   printf(fh, "#pragma once ~%"),
-  printf(fh, "// Generated nodal surface-evaluation tables (see surf-eval-tables.mac). ~%"),
-  printf(fh, "// Header-static so both host and device instantiations of GKYL_CU_DH ~%"),
-  printf(fh, "// kernels can read them; unused arrays are elided per TU. ~%"),
+  printf(fh, "// Generated nodal surface-evaluation (MODAL->NODAL) tables for the ~%"),
+  printf(fh, "// alpha_quad producers and lax_flux_nodal kernels (see ~%"),
+  printf(fh, "// surf-eval-tables.mac). Header-static so both host and device ~%"),
+  printf(fh, "// instantiations of GKYL_CU_DH kernels can read them; unused arrays ~%"),
+  printf(fh, "// are elided per TU. ~%"),
   printf(fh, "#include <gkyl_util.h> ~%"),
-  printf(fh, "#include <gkyl_vlasov_surf_meta.h> ~%"),
+  printf(fh, "#include <gkyl_vlasov_flux_surf_mod2nod_meta.h> ~%"),
   if (basisFun = "tensor") then (
     writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, true)
   )
@@ -506,5 +555,28 @@ writeSurfTabHeader(fh, cdim, vdim, basisFun, polyOrder) := block([tag],
     writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, false),
     if (polyOrder > 1) then
       writeSurfTabVariant(fh, sconcat(tag, "_ho"), cdim, vdim, basisFun, polyOrder, true)
+  )
+)$
+
+/* Write the full nodal->modal (consumer projection) header for a combo,
+   same lo/ho variant logic. Lives in vlasov/ker/vlasov next to its
+   consumers, the vlasov_(boundary_)(ho_)surf* kernels. */
+writePrjTabHeader(fh, cdim, vdim, basisFun, polyOrder) := block([tag],
+  tag : sconcat(cdim, "x", vdim, "v_", basisFun, "_p", polyOrder),
+  printf(fh, "#pragma once ~%"),
+  printf(fh, "// Generated projection (NODAL->MODAL) tables for the from-flux ~%"),
+  printf(fh, "// vlasov_(boundary_)(ho_)surf* consumer kernels (see ~%"),
+  printf(fh, "// surf-eval-tables.mac). Header-static so both host and device ~%"),
+  printf(fh, "// instantiations of GKYL_CU_DH kernels can read them; unused arrays ~%"),
+  printf(fh, "// are elided per TU. ~%"),
+  printf(fh, "#include <gkyl_util.h> ~%"),
+  printf(fh, "#include <gkyl_vlasov_surf_nod2mod_meta.h> ~%"),
+  if (basisFun = "tensor") then (
+    writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, true)
+  )
+  else (
+    writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, false),
+    if (polyOrder > 1) then
+      writePrjTabVariant(fh, sconcat(tag, "_ho"), cdim, vdim, basisFun, polyOrder, true)
   )
 )$

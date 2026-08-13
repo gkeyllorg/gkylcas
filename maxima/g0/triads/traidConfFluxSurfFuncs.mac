@@ -45,7 +45,7 @@ calcHamilVelSurfForceFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hami
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
   NC : length(bC), 
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
   cid : cidx(cdim),
@@ -185,7 +185,7 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   sizesNA : laxFactorSizes(fact, cv),
   tabP : sconcat("vst_", surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder), "_ph_x", dir-1),
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
   /* Per-node function (Design A): one call per surface node. The stored f is

@@ -269,7 +269,7 @@ calcVelSurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   off : (dir-1)*numNodes,
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
-  surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
+  surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder),
 
   /* Per-volume-mode form for the FUTURE (cells x np) GPU launcher: thread m
      owns out[m] exclusively. Gated off until that work starts -- see

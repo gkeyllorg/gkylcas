@@ -70,7 +70,7 @@ calcHamilPhaseVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   NA : sizesNA[1], NMV : sizesNA[2],
   tabP : sconcat("vst_", surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder), "_ph_v", dir-1),
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
   cid : cidx(cdim),
   /* Node function (Design A): rebuild the j-th G column of the -1-edge
@@ -122,7 +122,7 @@ calcPhiVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherO
   numNodes : length(surfNodes),
   tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
   cid : cidx(cdim),
   /* Transform the configuration gradient of phi to the mapped grid: the force
@@ -164,7 +164,7 @@ calcEVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrd
   numNodes : length(surfNodes),
   tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
   /* Electric field/external forces are only a function of configuration
      space; the node function returns its own (i, j) contribution (Design A;
@@ -221,7 +221,7 @@ calcBHamilVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_r
     tabP : sconcat("vst_", tag, "_ph_v", dir-1)
   ),
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
   /* Transverse velocity directions entering (dH/dv x B)_dir, and the
@@ -354,7 +354,7 @@ calcRadVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherO
   numNodes : length(surfNodes),
   tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
   /* The drag force is only a function of velocity space: each cell owns its
      *lower* edge fluxes, so evaluate at (vv = -1, velocity node j). The node
@@ -435,7 +435,7 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep
     )
   ),
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
   /* Per-node function (Design A): one call per surface node. */

@@ -1,4 +1,11 @@
-/* Generate the header file for the Vlasov equation kernels. */
+/* Generate the two Vlasov kernel headers:
+   gkyl_vlasov_kernels.h (vlasov/ker/vlasov): volume, surface, boundary
+     surface, Hamiltonian/radiation-drag construction, and Jv utility
+     kernels -- everything the vlasov (hyper_dg) updater family calls.
+   gkyl_flux_vlasov_kernels.h (vlasov/ker/flux_vlasov): the alpha_quad
+     producers and lax_flux_nodal kernels the vlasov_{vel,conf}_flux_surf
+     updaters call, plus (via gkyl_vlasov_surf_node_kernels.h) their
+     per-node companions. */
 
 /* ...... USER INPUTS........ */
 
@@ -122,48 +129,48 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
        machinery and the Hamiltonian-agnostic vlasov_(boundary_)(ho_)surf*
        consumers declared above. */
     if ((bStr = "ser") and (pi = 1)) or (bStr = "tensor") then (
-      printf(fh, "~adouble lax_flux_nodal_~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~adouble lax_flux_nodal_~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_pos_l, const double *jacob_pos_c, const double *alpha_quad, 
       const double *f_l, const double *f_r, double* GKYL_RESTRICT conf_flux_surf) ; ~%", deco, cvars[si], ci, vi, bStr, pi),
-      printf(fh, "~avoid hamil_vel_dense_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+      printf(fhx, "~avoid hamil_vel_dense_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
       if (vi > 1) then (
-        printf(fh, "~avoid hamil_vel_sparse_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+        printf(fhx, "~avoid hamil_vel_sparse_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
-      printf(fh, "~avoid hamil_phase_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+      printf(fhx, "~avoid hamil_phase_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
     )
     else (
-      printf(fh, "~adouble lax_flux_nodal_~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~adouble lax_flux_nodal_~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_pos_l, const double *jacob_pos_c, const double *alpha_quad, 
       const double *f_l, const double *f_r, double* GKYL_RESTRICT conf_flux_surf) ; ~%", deco, cvars[si], ci, vi, bStr, pi),
-      printf(fh, "~adouble ho_lax_flux_nodal_~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~adouble ho_lax_flux_nodal_~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_pos_l, const double *jacob_pos_c, const double *alpha_quad, 
       const double *f_l, const double *f_r, double* GKYL_RESTRICT conf_flux_surf) ; ~%", deco, cvars[si], ci, vi, bStr, pi),
-      printf(fh, "~avoid hamil_vel_dense_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+      printf(fhx, "~avoid hamil_vel_dense_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
       if (vi > 1) then (
-        printf(fh, "~avoid hamil_vel_sparse_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+        printf(fhx, "~avoid hamil_vel_sparse_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
-      printf(fh, "~avoid hamil_vel_dense_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+      printf(fhx, "~avoid hamil_vel_dense_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
       if (vi > 1) then (
-        printf(fh, "~avoid hamil_vel_sparse_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+        printf(fhx, "~avoid hamil_vel_sparse_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
-      printf(fh, "~avoid hamil_phase_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+      printf(fhx, "~avoid hamil_phase_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
-      printf(fh, "~avoid hamil_phase_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+      printf(fhx, "~avoid hamil_phase_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
     )
@@ -171,36 +178,36 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
   for si : 1 thru vi do (
     if ((ci <= vi  and pi < 3) and not(pi = 2 and bStr = "tensor")) then (
       if ((bStr = "ser") and (pi = 1)) or (bStr = "tensor") then ( 
-        printf(fh, "~avoid nc_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+        printf(fhx, "~avoid nc_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
           const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
         if (vi > 1) then (
-          printf(fh, "~avoid nc_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+          printf(fhx, "~avoid nc_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
           const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
         ),
-        printf(fh, "~avoid nc_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+        printf(fhx, "~avoid nc_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
           const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       )
       else (
-        printf(fh, "~avoid nc_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+        printf(fhx, "~avoid nc_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
         if (vi > 1) then (
-          printf(fh, "~avoid nc_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+          printf(fhx, "~avoid nc_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
         ),
-        printf(fh, "~avoid nc_hamil_vel_dense_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+        printf(fhx, "~avoid nc_hamil_vel_dense_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
         if (vi > 1) then (
-          printf(fh, "~avoid nc_hamil_vel_sparse_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+          printf(fhx, "~avoid nc_hamil_vel_sparse_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
         ),
-        printf(fh, "~avoid nc_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+        printf(fhx, "~avoid nc_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
-        printf(fh, "~avoid nc_hamil_phase_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+        printf(fhx, "~avoid nc_hamil_phase_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       )
     ),
     if ((bStr = "ser") and (pi = 1)) or (bStr = "tensor") then ( 
-      printf(fh, "~adouble lax_flux_nodal_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~adouble lax_flux_nodal_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_vel_surf_l, const double *jacob_vel_surf_r, const double *alpha_quad, 
       const double *f_l, const double *f_r, double* GKYL_RESTRICT vel_flux_surf) ; ~%", deco, cvars[si], ci, vi, bStr, pi),
       printf(fh, "~adouble vlasov_surfv~a_~ax~av_~a_p~a(const double *w, const double *dxv,
@@ -208,29 +215,29 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
       printf(fh, "~adouble vlasov_boundary_surfv~a_~ax~av_~a_p~a(const double *w, const double *dxv,
       const int edge, const double *flux, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, vi, bStr, pi),
       if (bStr = "ser") then (
-        printf(fh, "~avoid hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
+        printf(fhx, "~avoid hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
-      printf(fh, "~avoid phi_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~avoid phi_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_pos, const double *phi, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi), 
-      printf(fh, "~avoid E_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~avoid E_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),   
-      printf(fh, "~avoid B_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
+      printf(fhx, "~avoid B_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
       const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
-      printf(fh, "~avoid B_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
+      printf(fhx, "~avoid B_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
       const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
       if (vi > 1) then (
-        printf(fh, "~avoid B_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
+        printf(fhx, "~avoid B_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
         const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
-      printf(fh, "~avoid rad_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~avoid rad_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *rad, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
     )
     else (
-      printf(fh, "~adouble lax_flux_nodal_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~adouble lax_flux_nodal_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_vel_surf_l, const double *jacob_vel_surf_r, const double *alpha_quad, 
       const double *f_l, const double *f_r, double* GKYL_RESTRICT vel_flux_surf) ; ~%", deco, cvars[si], ci, vi, bStr, pi),
-      printf(fh, "~adouble ho_lax_flux_nodal_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~adouble ho_lax_flux_nodal_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_vel_surf_l, const double *jacob_vel_surf_r, const double *alpha_quad, 
       const double *f_l, const double *f_r, double* GKYL_RESTRICT vel_flux_surf) ; ~%", deco, cvars[si], ci, vi, bStr, pi),
       printf(fh, "~adouble vlasov_surfv~a_~ax~av_~a_p~a(const double *w, const double *dxv,
@@ -242,45 +249,46 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
       printf(fh, "~adouble vlasov_boundary_ho_surfv~a_~ax~av_~a_p~a(const double *w, const double *dxv,
       const int edge, const double *flux, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, vi, bStr, pi),
       if (bStr = "ser") then (
-        printf(fh, "~avoid hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
+        printf(fhx, "~avoid hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
-      printf(fh, "~avoid phi_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~avoid phi_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_pos, const double *phi, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi), 
-      printf(fh, "~avoid E_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~avoid E_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),   
-      printf(fh, "~avoid B_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
+      printf(fhx, "~avoid B_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
       const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
-      printf(fh, "~avoid B_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
+      printf(fhx, "~avoid B_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
       const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
       if (vi > 1) then (
-        printf(fh, "~avoid B_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
+        printf(fhx, "~avoid B_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
         const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
-      printf(fh, "~avoid rad_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~avoid rad_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *rad, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi), 
       if (bStr = "ser") then (
-        printf(fh, "~avoid hamil_phase_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
+        printf(fhx, "~avoid hamil_phase_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
-      printf(fh, "~avoid phi_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~avoid phi_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_pos, const double *phi, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi), 
-      printf(fh, "~avoid E_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~avoid E_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),   
-      printf(fh, "~avoid B_ho_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
+      printf(fhx, "~avoid B_ho_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
       const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
-      printf(fh, "~avoid B_ho_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
+      printf(fhx, "~avoid B_ho_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
       const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
       if (vi > 1) then (
-        printf(fh, "~avoid B_ho_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
+        printf(fhx, "~avoid B_ho_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, const double *jacob_vel,
         const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
-      printf(fh, "~avoid rad_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
+      printf(fhx, "~avoid rad_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *rad, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
     )
   ),
 
-  printf(fh, "~%")
+  printf(fh, "~%"),
+  printf(fhx, "~%")
 )$
 
 printPrototypeHamiltonian(deco, vi, bStr, pi) := block([si],
@@ -297,18 +305,25 @@ printPrototypeRadiation(deco, vi, bStr, pi) := block([si],
   printf(fh, "~%")  
 )$
 
-/* ............ Write out the C header file ............ */
+/* ............ Write out the C header files ............ */
 fh : openw("~/max-out/gkyl_vlasov_kernels.h")$
+fhx : openw("~/max-out/gkyl_flux_vlasov_kernels.h")$
 
 printf(fh, "#pragma once~%")$
 printf(fh, "#include <math.h>~%")$
 printf(fh, "#include <gkyl_util.h>~%")$
-printf(fh, "// Declares the per-node surface kernels with C linkage so their definitions~%")$
-printf(fh, "// in the kernel .c files (compiled as C++ under nvcc) match the unmangled~%")$
-printf(fh, "// references from the dispatch code.~%")$
-printf(fh, "#include <gkyl_vlasov_surf_node_kernels.h>~%")$
 printf(fh, "EXTERN_C_BEG~%")$
 printf(fh, "~%")$
+
+printf(fhx, "#pragma once~%")$
+printf(fhx, "#include <math.h>~%")$
+printf(fhx, "#include <gkyl_util.h>~%")$
+printf(fhx, "// Declares the per-node surface kernels with C linkage so their definitions~%")$
+printf(fhx, "// in the kernel .c files (compiled as C++ under nvcc) match the unmangled~%")$
+printf(fhx, "// references from the dispatch code.~%")$
+printf(fhx, "#include <gkyl_vlasov_surf_node_kernels.h>~%")$
+printf(fhx, "EXTERN_C_BEG~%")$
+printf(fhx, "~%")$
 
 decorator : "GKYL_CU_DH "$
 for bInd : 1 thru length(bName) do (
@@ -340,4 +355,6 @@ for bInd : 1 thru length(bName) do (
 );
 printf(fh, "EXTERN_C_END ~%")$
 close(fh)$
+printf(fhx, "EXTERN_C_END ~%")$
+close(fhx)$
 /* ............ Finished writing out the C header file ............ */

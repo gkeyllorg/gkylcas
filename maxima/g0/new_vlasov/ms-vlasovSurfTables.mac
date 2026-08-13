@@ -52,10 +52,17 @@ for bInd : 1 thru length(bName) do (
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
       if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 0,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
-        fname : sconcat(tablesOutdir, "gkyl_vlasov_surf_tables_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".h"),
+        /* Modal->nodal (producer) tables, for vlasov/ker/flux_vlasov. */
+        fname : sconcat(tablesOutdir, "gkyl_vlasov_flux_surf_mod2nod_tables_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".h"),
         disp(printf(false,"tables: ~a",fname)),
         fh : openw(fname),
-        writeSurfTabHeader(fh, c, v, bName[bInd], polyOrder),
+        writeFluxSurfTabHeader(fh, c, v, bName[bInd], polyOrder),
+        close(fh),
+        /* Nodal->modal (consumer projection) tables, for vlasov/ker/vlasov. */
+        fname : sconcat(tablesOutdir, "gkyl_vlasov_surf_nod2mod_tables_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".h"),
+        disp(printf(false,"tables: ~a",fname)),
+        fh : openw(fname),
+        writePrjTabHeader(fh, c, v, bName[bInd], polyOrder),
         close(fh)
       )
     )
