@@ -43,6 +43,7 @@
    surf/boundary_surf consumers.
    Flat node layout matches the alpha_quad/lax convention: gaussOrd ordering,
    last variable fastest; producers/consumers index n = i*NVn + j. */
+load("new_vlasov/vlasov-basis");
 load("new_vlasov/nodal-lax-emit");
 
 /* Symbol tag for a combo's table set: ser ho variants carry _ho; tensor
@@ -172,7 +173,7 @@ emitTabDoubleArray(fh, name, vals) := block([k],
    (out_off/out_mode, ordered by surface mode k) makes distinct k write
    DISJOINT out coefficients: one GPU thread per surface mode needs no
    atomics. Returns [NK, NA, NMV, NO, NI]. */
-writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars, nPts) := block(
+writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars, nPtsOuter, nPtsInner) := block(
   [surfVars, NP, NK, factOuter, factInner, fact, chiShapes, psiShapes, coefL,
    kamap, kbmap, NA, NMV, nodesO, wO, nodesI, wI, NO, NI, ow, refn, i, j, a, b,
    d, k, m, q, s, sub, restL, restR, coeffsL, coeffsR, nzL, nzR, smode, clm,
@@ -190,9 +191,9 @@ writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars,
   /* Nodes and weights; gaussOrdWeight must reproduce gaussOrd's node
      ordering (the Fhat flat layout) exactly. */
   if length(outerVars) = 0 then (nodesO : [1], wO : [1]) else (
-    ow : gaussOrdWeight(nPts, length(outerVars)),
+    ow : gaussOrdWeight(nPtsOuter, length(outerVars)),
     nodesO : ow[1], wO : ow[2],
-    refn : gaussOrd(nPts, length(outerVars)),
+    refn : gaussOrd(nPtsOuter, length(outerVars)),
     for i : 1 thru length(refn) do
       for d : 1 thru length(outerVars) do
         if abs(float(refn[i][d] - nodesO[i][d])) > 1.0e-14 then
@@ -202,9 +203,9 @@ writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars,
       error("writeConsumerProjTables: outer weight sum mismatch")
   ),
   if length(innerVars) = 0 then (nodesI : [1], wI : [1]) else (
-    ow : gaussOrdWeight(nPts, length(innerVars)),
+    ow : gaussOrdWeight(nPtsInner, length(innerVars)),
     nodesI : ow[1], wI : ow[2],
-    refn : gaussOrd(nPts, length(innerVars)),
+    refn : gaussOrd(nPtsInner, length(innerVars)),
     for i : 1 thru length(refn) do
       for d : 1 thru length(innerVars) do
         if abs(float(refn[i][d] - nodesI[i][d])) > 1.0e-14 then
@@ -412,13 +413,16 @@ writePhaseFactorTables(fh, prefix, bP, outerVars, normalVar, innerVars,
 
 /* Write one lo- or ho-variant table set for a combo into fh. */
 writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
-  [varsC, bC, varsV, bV, varsP, bP, nPts, nodes_conf, nodes_vel, d, k, vv, svv,
-   sparseIdx, b],
+  [varsC, bC, varsV, bV, varsP, bP, binfo, nPtsConf, nPtsVel, nodes_conf,
+   nodes_vel, d, k, vv, svv, sparseIdx, b],
   [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
-  nPts : polyOrder + 1,
-  if useHigherOrder then nPts : nPts + 1,
+  /* Node counts per direction TYPE (anisotropic for the tensor p=1 hybrid:
+     conf 2/dim always, vel 3 lo / 4 ho; identical for ser/tensor). */
+  binfo : vlasovBasisInfo(basisFun, polyOrder, useHigherOrder),
+  nPtsConf : binfo[5],
+  nPtsVel : binfo[6],
 
-  nodes_conf : gaussOrd(nPts, cdim),
+  nodes_conf : gaussOrd(nPtsConf, cdim),
   emitTabMatrix(fh, sconcat("vst_", tag, "_conf_ev"), bC, varsC, nodes_conf),
   for d : 1 thru min(cdim, vdim) do
     emitTabMatrix(fh, sconcat("vst_", tag, "_conf_dx", d-1),
@@ -427,7 +431,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   for d : 1 thru vdim do (
     vv : varsV[d],
     svv : delete(vv, varsV),
-    nodes_vel : if vdim > 1 then gaussOrd(nPts, vdim-1) else [1],
+    nodes_vel : if vdim > 1 then gaussOrd(nPtsVel, vdim-1) else [1],
     emitTabMatrix(fh, sconcat("vst_", tag, "_vel_ev_v", d-1),
       makelist(subst(vv = -1, bV[b]), b, 1, length(bV)), svv, nodes_vel),
     if vdim > 1 then (
@@ -464,7 +468,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   for d : 1 thru vdim do block([sz, szp],
     vv : varsV[d],
     svv : delete(vv, varsV),
-    nodes_vel : if vdim > 1 then gaussOrd(nPts, vdim-1) else [1],
+    nodes_vel : if vdim > 1 then gaussOrd(nPtsVel, vdim-1) else [1],
     sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_v", d-1), bP,
       varsC, vv, svv, nodes_conf, nodes_vel,
       if d <= min(cdim, vdim) then varsC[d] else false, varsV, varsC),
@@ -475,14 +479,14 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   /* Configuration-direction surface tables (triad/phase conf-flux: lax +
      hamil_{vel_dense,vel_sparse,phase} producers). Serendipity only. */
   if (basisFun = "ser") then block([surfCVars, nodes_crem, nodes_vvol, cv, sz],
-    nodes_vvol : gaussOrd(nPts, vdim),
+    nodes_vvol : gaussOrd(nPtsVel, vdim),
     for k : 1 thru vdim do
       emitTabMatrix(fh, sconcat("vst_", tag, "_vel_vol_dv", k-1),
         makelist(diff(bV[b], varsV[k]), b, 1, length(bV)), varsV, nodes_vvol),
     for d : 1 thru cdim do block([szp],
       cv : varsC[d],
       surfCVars : delete(cv, varsC),
-      nodes_crem : if cdim > 1 then gaussOrd(nPts, cdim-1) else [1],
+      nodes_crem : if cdim > 1 then gaussOrd(nPtsConf, cdim-1) else [1],
       emitTabMatrix(fh, sconcat("vst_", tag, "_confsurf_x", d-1, "_ev_l"),
         makelist(subst(cv = 1, bC[b]), b, 1, length(bC)), surfCVars, nodes_crem),
       emitTabMatrix(fh, sconcat("vst_", tag, "_confsurf_x", d-1, "_ev_r"),
@@ -502,19 +506,20 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
    coverage). Surface bases stay p=polyOrder in the ho variant; only the
    node set widens. */
 writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
-  [varsC, bC, varsV, bV, varsP, bP, nPts, nodes_conf, nodes_vel, nodes_crem,
-   nodes_vvol, d, vv, svv, cv, surfCVars, szp],
+  [varsC, bC, varsV, bV, varsP, bP, binfo, nPtsConf, nPtsVel, nodes_conf,
+   nodes_vel, nodes_crem, nodes_vvol, d, vv, svv, cv, surfCVars, szp],
   [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
-  nPts : polyOrder + 1,
-  if useHigherOrder then nPts : nPts + 1,
-  nodes_conf : gaussOrd(nPts, cdim),
+  binfo : vlasovBasisInfo(basisFun, polyOrder, useHigherOrder),
+  nPtsConf : binfo[5],
+  nPtsVel : binfo[6],
+  nodes_conf : gaussOrd(nPtsConf, cdim),
   for d : 1 thru vdim do block([],
     vv : varsV[d],
     svv : delete(vv, varsV),
-    nodes_vel : if vdim > 1 then gaussOrd(nPts, vdim-1) else [1],
+    nodes_vel : if vdim > 1 then gaussOrd(nPtsVel, vdim-1) else [1],
     szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_v", d-1), bP,
-      basisFromVars(basisFun, delete(vv, varsP), polyOrder),
-      varsC, vv, svv, nPts),
+      basisFromVars(vlasovBtype(basisFun, polyOrder), delete(vv, varsP), polyOrder),
+      varsC, vv, svv, nPtsConf, nPtsVel),
     printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
       tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
   ),
@@ -522,11 +527,11 @@ writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := 
     for d : 1 thru cdim do block([],
       cv : varsC[d],
       surfCVars : delete(cv, varsC),
-      nodes_crem : if cdim > 1 then gaussOrd(nPts, cdim-1) else [1],
-      nodes_vvol : gaussOrd(nPts, vdim),
+      nodes_crem : if cdim > 1 then gaussOrd(nPtsConf, cdim-1) else [1],
+      nodes_vvol : gaussOrd(nPtsVel, vdim),
       szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_x", d-1), bP,
-        basisFromVars(basisFun, delete(cv, varsP), polyOrder),
-        surfCVars, cv, varsV, nPts),
+        basisFromVars(vlasovBtype(basisFun, polyOrder), delete(cv, varsP), polyOrder),
+        surfCVars, cv, varsV, nPtsConf, nPtsVel),
       printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_x~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
         tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
     )

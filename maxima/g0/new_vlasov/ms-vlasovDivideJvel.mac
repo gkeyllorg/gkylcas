@@ -60,7 +60,7 @@ for bInd : 1 thru length(bName) do (
         funcName : sconcat("vlasov_divide_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
         /* Tensor (p>1) uses the C^1 cubic map representation; Serendipity
            (and p=1) uses the C^0 piecewise linear representation. */
-        if (bName[bInd] = "tensor" and polyOrder > 1) then (
+        if (bName[bInd] = "tensor") then (
           divideJvel(fh, funcName, c, v, bName[bInd], polyOrder, "cubic")
         )
         else (
@@ -72,7 +72,7 @@ for bInd : 1 thru length(bName) do (
         fname : sconcat("~/max-out/vlasov_rescale_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
         fh : openw(fname),
         funcName : sconcat("vlasov_rescale_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-        if (bName[bInd] = "tensor" and polyOrder > 1) then (
+        if (bName[bInd] = "tensor") then (
           rescaleJvel(fh, funcName, c, v, bName[bInd], polyOrder, "cubic")
         )
         else (

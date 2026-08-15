@@ -62,7 +62,7 @@ calcSurfStreamFluxBoundary(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
 
   /* Sizes must reproduce the table generator's (deterministic: same
      factorization/dedup path on the same p=polyOrder surface basis). */
-  bSurfP : basisFromVars(basisFun, surfVars, polyOrder),
+  bSurfP : basisFromVars(vlasovBtype(basisFun, polyOrder), surfVars, polyOrder),
   NK : length(bSurfP),
   fact : laxFactorizeBasis(bSurfP,
     if length(surfCVars) = 0 then [prjdummy] else surfCVars,

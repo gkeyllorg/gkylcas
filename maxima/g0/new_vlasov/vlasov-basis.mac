@@ -1,6 +1,53 @@
 load("modal-basis");
 load("out-scripts");
 
+/* ---- The single source of truth for the basis <-> velocity-map dichotomy ----
+   ser    -> C^0 linear velocity map, piecewise-CONSTANT Jacobian ("linear")
+   tensor -> C^1 cubic velocity map, continuous piecewise-QUADRATIC Jacobian
+             ("cubic"), for ALL polyOrder: p=1 tensor is the TENSOR HYBRID
+             basis (p=1 tensor conf x p=2 tensor velocity), whose quadratic
+             velocity basis can always represent the quadratic Jacobian.
+   The position (configuration-space) map is C^0 linear REGARDLESS of basis
+   type; constant conf-Jacobian reads are always valid.
+   Node-count convention: ser/tensor keep the historical isotropic counts
+   (p+1, +1 in ho variants; tensor ho-only at p+2). HYBRID is anisotropic:
+   conf 2 nodes/dim always; vel 3 nodes/dim (lo) or 4 (ho). */
+
+/* Basis type string for basisFromVars/loaders: pure p=1 tensor is never used
+   by Vlasov generators -- tensor p=1 IS the hybrid. */
+vlasovBtype(basisFun, polyOrder) :=
+  if (basisFun = "tensor" and polyOrder = 1) then "tenhyb" else basisFun$
+
+/* Velocity-map representation from the basis alone. */
+vlasovVelMapRep(basisFun) := if (basisFun = "ser") then "linear" else "cubic"$
+
+/* Velocity-space polynomial order (hybrid: quadratic velocity basis). */
+vlasovPVel(basisFun, polyOrder) :=
+  if (basisFun = "tensor" and polyOrder = 1) then 2 else polyOrder$
+
+/* [btype, rep, pConf, pVel, nPtsConf, nPtsVel, numJacobNodes] for a combo.
+   nPts* are the surface/volume quadrature node counts per direction of each
+   type; numJacobNodes = pVel+1 is the per-direction block stride of the
+   stored velocity Jacobian (kernels read [0] only in the linear rep). */
+vlasovBasisInfo(basisFun, polyOrder, useHigherOrder) := block(
+  [btype, rep, pConf, pVel, ho, nPtsConf, nPtsVel],
+  btype : vlasovBtype(basisFun, polyOrder),
+  rep : vlasovVelMapRep(basisFun),
+  pVel : vlasovPVel(basisFun, polyOrder),
+  pConf : polyOrder,
+  if (btype = "tenhyb") then (
+    /* Anisotropic: conf p+1 = 2 always; vel 3 (lo) / 4 (ho). */
+    nPtsConf : pConf + 1,
+    nPtsVel : pVel + 1 + (if useHigherOrder then 1 else 0)
+  )
+  else (
+    ho : if (useHigherOrder and polyOrder > 1) then 1 else 0,
+    nPtsConf : polyOrder + 1 + ho,
+    nPtsVel : polyOrder + 1 + ho
+  ),
+  [btype, rep, pConf, pVel, nPtsConf, nPtsVel, pVel + 1]
+)$
+
 loadVlasovBasis(basisType, cdim, vdim, polyOrder) := block(
   [hybten, varsSubV, varsSubP],
   
@@ -220,7 +267,7 @@ loadVelLinearMapBasis() := block(
   return([bV_lin_vi, NV_lin_1D, jacobConst_vi, jacobConstSurf_vi])
 )$
 
-loadVelJacobianBasis(polyOrder) := block(
+loadVelJacobianBasis(pVelJac) := block(
   /* Load basis sets for mapping, which are p=3. */
   [varsV_1D, bV_1D] :  loadBasis(basisFun, 1, 3), 
   bV_vx : subst(x=vx, copylist(bV_1D)), 
@@ -230,16 +277,16 @@ loadVelJacobianBasis(polyOrder) := block(
   /* Since we just need a 1D basis, if we are using p=3, use the actual analytic formulae, 
      which lead to less floating point error. Otherwise, see quadrature_functions.mac so the 
      floating point evaluation of certain quadrature rules. */
-  if (polyOrder = 3) then (
+  if (pVelJac = 3) then (
     jacobNodes : matrix([-sqrt(3/7 + 2/7*sqrt(6/5))],[-sqrt(3/7 - 2/7*sqrt(6/5))],[sqrt(3/7 - 2/7*sqrt(6/5))],[sqrt(3/7 + 2/7*sqrt(6/5))])
   )
   else (
-    jacobNodes : gaussOrd(polyOrder+1, 1)
+    jacobNodes : gaussOrd(pVelJac+1, 1)
   ),
   numJacobNodes : length(jacobNodes), 
-  basisNodal_vx  : getVarsNodalBasisWithNodes("Tensor", 1, polyOrder, [vx], jacobNodes),
-  basisNodal_vy  : getVarsNodalBasisWithNodes("Tensor", 1, polyOrder, [vy], jacobNodes),
-  basisNodal_vz  : getVarsNodalBasisWithNodes("Tensor", 1, polyOrder, [vz], jacobNodes),
+  basisNodal_vx  : getVarsNodalBasisWithNodes("Tensor", 1, pVelJac, [vx], jacobNodes),
+  basisNodal_vy  : getVarsNodalBasisWithNodes("Tensor", 1, pVelJac, [vy], jacobNodes),
+  basisNodal_vz  : getVarsNodalBasisWithNodes("Tensor", 1, pVelJac, [vz], jacobNodes),
   jacobNodes_vx : [jacob_vx[0], jacob_vx[1], jacob_vx[2], jacob_vx[3]],  
   jacobNodes_vy : [jacob_vy[0], jacob_vy[1], jacob_vy[2], jacob_vy[3]],  
   jacobNodes_vz : [jacob_vz[0], jacob_vz[1], jacob_vz[2], jacob_vz[3]], 

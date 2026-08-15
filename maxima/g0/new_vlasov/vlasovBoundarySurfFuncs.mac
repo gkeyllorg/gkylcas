@@ -55,7 +55,7 @@ calcHamilVelBoundarySurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder,
    fedge_e,fskin_e,incr],
 
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
@@ -81,7 +81,7 @@ calcHamilVelBoundarySurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder,
 
   /* Surface variables to integrate over. */
   surfVars : delete(cv,varsP),
-  bSurf : basisFromVars(basisFun,surfVars,polyOrder),
+  bSurf : basisFromVars(vlasovBtype(basisFun, polyOrder),surfVars,polyOrder),
   NSurf : length(bSurf), 
 
   /* Create expansions of f_left, f_center, and f_right on volume basis. */
@@ -220,7 +220,7 @@ calcVelBoundarySurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherO
 
   /* Sizes must reproduce the table generator's (deterministic: same
      factorization/dedup path on the same p=polyOrder surface basis). */
-  bSurfP : basisFromVars(basisFun, surfVars, polyOrder),
+  bSurfP : basisFromVars(vlasovBtype(basisFun, polyOrder), surfVars, polyOrder),
   NK : length(bSurfP),
   fact : laxFactorizeBasis(bSurfP,
     varsC,

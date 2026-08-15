@@ -118,7 +118,7 @@ calcM3i(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, rep) := block(
   NV : length(bV),
   NP : length(bP),
 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder),
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)),
 
   /* dH/dv_i in physical velocity divides the per-direction Jacobian out of the
      computational derivative; the C^0 linear map Jacobian is constant. */
@@ -441,7 +441,7 @@ calcM1iVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, rep) := bloc
   NC : length(bC), 
   NP : length(bP), 
 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
 
   if (hamil_rep # "phase") then (
     printf(fh, sconcat("GKYL_CU_DH void ~a_hamil_", hamil_rep, "_M1i_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, 
@@ -495,7 +495,7 @@ calcFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, rep)
   [varsC,bC,varsV,bV,varsP,bP,hamil,fl,M],
 
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
 
   if (hamil_rep # "phase") then (
     printf(fh, sconcat("GKYL_CU_DH void ~a_hamil_", hamil_rep, "_five_moments_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, 
@@ -557,7 +557,7 @@ calcIntFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, r
   [varsC,bC,varsV,bV,varsP,bP,hamil,fl,M],
 
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
 
   if (hamil_rep # "phase") then (
     printf(fh, sconcat("GKYL_CU_DH void ~a_hamil_", hamil_rep, "_int_five_moments_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, 
@@ -615,7 +615,7 @@ calcM0ReduceVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, upper, rep) := blo
   [varsC,bC,varsV,bV,varsP,bP,hamil,fl,M],
 
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
 
   if (upper) then (
     printf(fh, "GKYL_CU_DH void ~a_M0_upper_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, 
@@ -681,9 +681,9 @@ calcM0ReduceVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, upper, rep) := blo
 )$  
 
 calcMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder, calcHamilPhase) := block([rep],
-  /* Tensor (p>1) uses the C^1 cubic map representation; Serendipity (and p=1)
-     uses the C^0 piecewise linear representation with its constant Jacobian. */
-  if (basisFun = "tensor" and polyOrder > 1) then rep : "cubic" else rep : "linear",
+  /* Serendipity -> C^0 linear map (constant Jacobian); tensor -> C^1 cubic
+     map (quadratic Jacobian) at EVERY p, including the p=1 hybrid. */
+  rep : vlasovVelMapRep(basisFun),
   printf(fh, "#include <gkyl_mom_vlasov_kernels.h> ~%"),  
   calcM0(fh, funcNm, cdim, vdim, basisFun, polyOrder), 
   /* New energy flux kernels which are formally H*dH/dv are very dense, 

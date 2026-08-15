@@ -57,7 +57,7 @@ for bInd : 1 thru length(bName) do (
           fname : sconcat("~/max-out/vlasov_hamil_vel_dense_boundary_surf", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
           fh : openw(fname),
           funcName : sconcat("vlasov_hamil_vel_dense_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-          if (bName[bInd] = "tensor" and polyOrder > 1) then (
+          if (bName[bInd] = "tensor") then (
             /* Generate mapped velocity grid kernels when utilizing the tensor basis. */
             calcHamilVelBoundarySurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_dense", "cubic")
           )
@@ -73,7 +73,7 @@ for bInd : 1 thru length(bName) do (
             fname : sconcat("~/max-out/vlasov_hamil_vel_sparse_boundary_surf", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
             fh : openw(fname),
             funcName : sconcat("vlasov_hamil_vel_sparse_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-            if (bName[bInd] = "tensor" and polyOrder > 1) then (
+            if (bName[bInd] = "tensor") then (
               calcHamilVelBoundarySurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_sparse", "cubic")
             )
             else (

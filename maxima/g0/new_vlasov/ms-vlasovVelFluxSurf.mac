@@ -96,7 +96,7 @@ for bInd : 1 thru length(bName) do (
                     fname : sconcat("~/max-out/B_",si,"hamil_", hamilRep, "_alpha_quad_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                     fh : openw(fname),
                     funcName : sconcat("B_",si,"hamil_", hamilRep, "_alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-                    if (bName[bInd] = "tensor" and polyOrder > 1) then (
+                    if (bName[bInd] = "tensor") then (
                       calcBHamilVelSurfForce(dir, fh, funcName, c, v, bName[bInd], polyOrder, hamilRep, "cubic", useHigherOrder)
                     )
                     else (
@@ -112,7 +112,7 @@ for bInd : 1 thru length(bName) do (
               funcName : sconcat("rad_",si,"alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
               calcRadVelSurfForce(dir, fh, funcName, c, v, bName[bInd], polyOrder, useHigherOrder), 
               close(fh),
-              if (bName[bInd] = "tensor" and polyOrder > 1) then (
+              if (bName[bInd] = "tensor") then (
                 fname : sconcat("~/max-out/",si,"lax_flux_nodal_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                 fh : openw(fname),
                 funcName : sconcat(si,"lax_flux_nodal_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
