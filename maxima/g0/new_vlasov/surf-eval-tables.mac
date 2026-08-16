@@ -46,11 +46,14 @@
 load("new_vlasov/vlasov-basis");
 load("new_vlasov/nodal-lax-emit");
 
-/* Symbol tag for a combo's table set: ser ho variants carry _ho; tensor
-   kernels are generated at the higher node count under the plain name. */
+/* Symbol tag for a combo's table set: ser ho variants carry _ho; tensor p>1
+   kernels are generated at the higher node count under the plain name; the
+   tensor p=1 HYBRID follows the ser convention (lo plain + _ho variant,
+   with the extra ho node in velocity directions only). */
 surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder) := block([tag],
   tag : sconcat(cdim, "x", vdim, "v_", basisFun, "_p", polyOrder),
-  if (basisFun = "ser" and useHigherOrder and polyOrder > 1) then tag : sconcat(tag, "_ho"),
+  if (useHigherOrder and (basisFun = "ser" and polyOrder > 1
+                          or basisFun = "tensor" and polyOrder = 1)) then tag : sconcat(tag, "_ho"),
   tag
 )$
 
@@ -553,12 +556,14 @@ writeFluxSurfTabHeader(fh, cdim, vdim, basisFun, polyOrder) := block([tag],
   printf(fh, "// are elided per TU. ~%"),
   printf(fh, "#include <gkyl_util.h> ~%"),
   printf(fh, "#include <gkyl_vlasov_flux_surf_mod2nod_meta.h> ~%"),
-  if (basisFun = "tensor") then (
+  if (basisFun = "tensor" and polyOrder > 1) then (
     writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, true)
   )
   else (
+    /* ser (lo + ho at p>1) and the tensor p=1 hybrid (lo conf2/vel3 +
+       ho conf2/vel4, ho in velocity directions only). */
     writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, false),
-    if (polyOrder > 1) then
+    if (polyOrder > 1 or basisFun = "tensor") then
       writeSurfTabVariant(fh, sconcat(tag, "_ho"), cdim, vdim, basisFun, polyOrder, true)
   )
 )$
@@ -576,12 +581,12 @@ writePrjTabHeader(fh, cdim, vdim, basisFun, polyOrder) := block([tag],
   printf(fh, "// are elided per TU. ~%"),
   printf(fh, "#include <gkyl_util.h> ~%"),
   printf(fh, "#include <gkyl_vlasov_surf_nod2mod_meta.h> ~%"),
-  if (basisFun = "tensor") then (
+  if (basisFun = "tensor" and polyOrder > 1) then (
     writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, true)
   )
   else (
     writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, false),
-    if (polyOrder > 1) then
+    if (polyOrder > 1 or basisFun = "tensor") then
       writePrjTabVariant(fh, sconcat(tag, "_ho"), cdim, vdim, basisFun, polyOrder, true)
   )
 )$

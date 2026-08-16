@@ -19,9 +19,9 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-/* Tensor kernels start at p=2: we do not generate or declare pure-p=1
-   tensor kernels anywhere (repo-wide convention). */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel); pure p=1 tensor
+   kernels still do not exist anywhere. */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */

@@ -229,7 +229,9 @@ calcBHamilVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_r
      block of jacob_vel_surf) for the C^0 linear map, per-node values indexed
      from j for the C^1 cubic map. */
   transK : delete(dir, makelist(k, k, 1, vdim)),
-  nPts : polyOrder + 2,
+  /* jacob_vel_surf stride: ACTIVE variant's velocity surface node count
+     (hybrid lo 3 / ho 4; ser and tensor p>=2 keep p+2). */
+  nPts : vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder),
   jdivK : ["", "", ""],
   for kk : 1 thru length(transK) do block([k],
     k : transK[kk],
@@ -408,9 +410,12 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep
      transverse block for v_k starts at (polyOrder+2)*(k-1). */
   jacDecls : [],
   hasJac : true,
+  /* Per-direction jacob_vel_surf stride = the ACTIVE variant's velocity
+     surface node count (vlasovJacSurfStride): hybrid lo 3 / ho 4; ser and
+     tensor p>=2 keep p+2. */
+  nPts : vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder),
   if (rep = "cubic") then (
-    [jacob_edge, jacob_vi_surf, jacob_surf_tot] : loadSurfVelJacobian(vdim, polyOrder, dir, nodes_vel, surfVVars, surfNodes, surfVars, true),
-    nPts : polyOrder + 2,
+    [jacob_edge, jacob_vi_surf, jacob_surf_tot] : loadSurfVelJacobian(vdim, nPts, dir, nodes_vel, surfVVars, surfNodes, surfVars, true),
     if (vdim = 1) then hasJac : false
     else if (vdim = 2) then (
       trK : first(delete(dir, [1, 2])),
@@ -426,12 +431,12 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep
     if (vdim = 1) then hasJac : false
     else if (vdim = 2) then (
       trK : first(delete(dir, [1, 2])),
-      jacDecls : [printf(false, "  const double jac = jacob_vel_surf_r[~a]; ", (polyOrder+2)*(trK-1))]
+      jacDecls : [printf(false, "  const double jac = jacob_vel_surf_r[~a]; ", nPts*(trK-1))]
     )
     else (
       trKs : delete(dir, [1, 2, 3]),
       jacDecls : [printf(false, "  const double jac = jacob_vel_surf_r[~a]*jacob_vel_surf_r[~a]; ",
-        (polyOrder+2)*(trKs[1]-1), (polyOrder+2)*(trKs[2]-1))]
+        nPts*(trKs[1]-1), nPts*(trKs[2]-1))]
     )
   ),
 
@@ -448,11 +453,11 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep
   printf(fh, "GKYL_CU_DH double ~a_cfl(const double *dxv, const double *jacob_vel_surf_l, const double *jacob_vel_surf_r, double alpha_max) ~%{ ~%", funcNm),
   printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
   if (rep = "cubic") then (
-    printf(fh, "  const double *jacob_vel_surf_~a = &jacob_vel_surf_r[~a]; ~%", vlabels[dir], (polyOrder+2)*(dir-1)),
+    printf(fh, "  const double *jacob_vel_surf_~a = &jacob_vel_surf_r[~a]; ~%", vlabels[dir], nPts*(dir-1)),
     printf(fh, "  return ~a*~a*alpha_max/(~a);~%", float(0.5*(2*polyOrder+1)), dv1[dir], float(expand(jacob_edge[dir])))
   )
   else (
-    printf(fh, "  const double jacob_vel_surf_min = fmin(jacob_vel_surf_l[~a], jacob_vel_surf_r[~a]); ~%", (polyOrder+2)*(dir-1), (polyOrder+2)*(dir-1)),
+    printf(fh, "  const double jacob_vel_surf_min = fmin(jacob_vel_surf_l[~a], jacob_vel_surf_r[~a]); ~%", nPts*(dir-1), nPts*(dir-1)),
     printf(fh, "  return ~a*~a*alpha_max/jacob_vel_surf_min;~%", float(0.5*(2*polyOrder+1)), dv1[dir])
   ),
   printf(fh, "} ~%~%"),

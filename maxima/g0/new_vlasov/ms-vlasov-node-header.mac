@@ -34,7 +34,7 @@ for bInd : 1 thru 2 do (
   for c : 1 thru (if bInd = 1 then 3 else 2) do (
     minVdimB : max(c,1), if (c = 2) then minVdimB : 1,
     for v : minVdimB thru 3 do (
-      minPolyOrderB : if bInd = 1 then 1 else 2,
+      minPolyOrderB : 1, /* tensor p=1 = hybrid */
       maxPolyOrderB : 2,
       if (v=1) then maxPolyOrderB : 3,
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
@@ -43,8 +43,8 @@ for bInd : 1 thru 2 do (
         for hoInd : 1 thru 2 do (
           useHigherOrder : is(hoInd = 2),
           si : if useHigherOrder then "ho_" else "",
-          if (not((bName[bInd] = "ser") and (pi = 1) and useHigherOrder) and not((not useHigherOrder) and (bName[bInd] = "tensor"))) then (
-            if (((bName[bInd] = "ser") and (pi = 1) and (not useHigherOrder)) or (useHigherOrder and (bName[bInd] = "tensor"))) then si : "",
+          if (not((bName[bInd] = "ser") and (pi = 1) and useHigherOrder) and not((not useHigherOrder) and (bName[bInd] = "tensor") and (pi > 1))) then (
+            if (((bName[bInd] = "ser") and (pi = 1) and (not useHigherOrder)) or (useHigherOrder and (bName[bInd] = "tensor") and (pi > 1))) then si : "",
             maxC : c, if (v < c) then maxC : v,
             for dir : 1 thru maxC do (
               printf(fh, "~adouble phi_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *jacob_pos, const double *phi); ~%",
@@ -63,8 +63,9 @@ for bInd : 1 thru 2 do (
                   deco, si, vlabels[dir], c, v, bName[bInd], pi),
                 printf(fh, "~adouble B_~ahamil_vel_sparse_alpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem); ~%",
                   deco, si, vlabels[dir], c, v, bName[bInd], pi),
-                /* Phase-space Hamiltonian magnetic force: serendipity only. */
-                if (bName[bInd] = "ser") then
+                /* Phase-space Hamiltonian magnetic force: serendipity and
+                   the tensor p=1 hybrid (no tensor p>1 representation). */
+                if (bName[bInd] = "ser" or pi = 1) then
                   printf(fh, "~adouble B_~ahamil_phase_alpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem); ~%",
                     deco, si, vlabels[dir], c, v, bName[bInd], pi)
               ),

@@ -48,6 +48,18 @@ vlasovBasisInfo(basisFun, polyOrder, useHigherOrder) := block(
   [btype, rep, pConf, pVel, nPtsConf, nPtsVel, pVel + 1]
 )$
 
+/* Per-direction stride (= node count) of the stored jacob_vel_surf blocks:
+   nodal values of the direction's 1D Jacobian at the ACTIVE variant's
+   velocity surface quadrature nodes. ser/tensor p>=2 keep the historical
+   p+2 (tensor is ho-only BY DESIGN -- p+2 points integrate the nonlinear
+   term exactly; ser kernels read only entry [0]). The hybrid has a genuine
+   lo/ho choice, so the storage follows it: 3 (lo) / 4 (ho); the C-side
+   velocity map writes the array to match the runtime choice. */
+vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder) :=
+  if (basisFun = "tensor" and polyOrder = 1)
+    then (if useHigherOrder then 4 else 3)
+    else polyOrder + 2$
+
 loadVlasovBasis(basisType, cdim, vdim, polyOrder) := block(
   [hybten, varsSubV, varsSubP],
   
@@ -154,27 +166,32 @@ hamilVelGrad(hamilS, basis, varsVel, sparse) := block([h_e],
   makelist(diff(h_e, varsVel[d]), d, 1, length(varsVel)))$
 
 loadVlasovVelSurfBasis(cdim, vdim, basisType, polyOrder, surfVars, surfVVars, varsC, useHigherOrder) := block(
-  [hybten, btype],
+  [hybten, btype, hoConf, hoVel],
   hybten : (polyOrder = 1) and (basisType = "tensor"),
   if hybten then btype : "TensorHybrid" else btype : basisType,
 
   /* Higher order is p + 2 nodal points ( p + 1 modes ) to ensure intergation has no aliasing */
   /* However, this is more expensive and aliasing errors may be tolarable, so it's left as an option to use
      nodes = p + 1 */
-  if (useHigherOrder and (polyOrder > 1)) then higherOrder : 1 else higherOrder : 0,
-  
-  bSurf : basisFromVars(btype,surfVars,polyOrder + higherOrder),
+  /* The tensor p=1 HYBRID ho variant is anisotropic: the extra node goes in
+     the VELOCITY directions only (conf stays at 2 nodes/dim; the velocity
+     basis is quadratic, so vel goes 3 -> 4). */
+  if (useHigherOrder and (polyOrder > 1)) then hoConf : 1 else hoConf : 0,
+  if (useHigherOrder and (polyOrder > 1 or hybten)) then hoVel : 1 else hoVel : 0,
+  higherOrder : hoConf,
 
-  nodes_conf : gaussOrd( polyOrder + 1 + higherOrder, cdim), 
-  basisNodalConf  : getVarsNodalBasisWithNodes("Tensor", length(varsC), polyOrder + higherOrder, varsC, nodes_conf),
+  bSurf : basisFromVars(btype,surfVars,polyOrder + hoConf),
+
+  nodes_conf : gaussOrd( polyOrder + 1 + hoConf, cdim), 
+  basisNodalConf  : getVarsNodalBasisWithNodes("Tensor", length(varsC), polyOrder + hoConf, varsC, nodes_conf),
 
   if (vdim > 1) then (
     if (hybten) then (
-      nodes_vel : gaussOrd(3 + higherOrder, vdim-1), 
-      basisNodalVel  : getVarsNodalBasisWithNodes("Tensor", length(surfVVars), 2, surfVVars, nodes_vel) 
+      nodes_vel : gaussOrd(3 + hoVel, vdim-1), 
+      basisNodalVel  : getVarsNodalBasisWithNodes("Tensor", length(surfVVars), 2 + hoVel, surfVVars, nodes_vel) 
     ) else (
-      nodes_vel : gaussOrd(polyOrder + 1 + higherOrder, vdim-1), 
-      basisNodalVel  : getVarsNodalBasisWithNodes("Tensor", length(surfVVars), polyOrder + higherOrder, surfVVars, nodes_vel) 
+      nodes_vel : gaussOrd(polyOrder + 1 + hoVel, vdim-1), 
+      basisNodalVel  : getVarsNodalBasisWithNodes("Tensor", length(surfVVars), polyOrder + hoVel, surfVVars, nodes_vel) 
     )
   )
   else (
@@ -183,15 +200,15 @@ loadVlasovVelSurfBasis(cdim, vdim, basisType, polyOrder, surfVars, surfVVars, va
   ),
 
   if (hybten) then (
-    surfNodes : gaussOrdTenHyb(2,3 + higherOrder,cdim,vdim-1)
+    surfNodes : gaussOrdTenHyb(2,3 + hoVel,cdim,vdim-1)
   ) else (
-    surfNodes : gaussOrd(polyOrder + 1 + higherOrder,length(surfVars))
+    surfNodes : gaussOrd(polyOrder + 1 + hoVel,length(surfVars))
   ),
   return([bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes])
 )$
 
 loadVlasovConfSurfBasis(cdim, vdim, basisType, polyOrder, surfVars, surfCVars, varsV, useHigherOrder) := block(
-  [hybten, btype],
+  [hybten, btype, hoConf, hoVel],
   hybten : (polyOrder = 1) and (basisType = "tensor"),
   if hybten then btype : "TensorHybrid"
   else btype : basisType,
@@ -199,13 +216,16 @@ loadVlasovConfSurfBasis(cdim, vdim, basisType, polyOrder, surfVars, surfCVars, v
   /* Higher order is p + 2 nodal points ( p + 1 modes ) to ensure intergation has no aliasing */
   /* However, this is more expensive and aliasing errors may be tolarable, so it's left as an option to use
      nodes = p + 1 */
-  if (useHigherOrder and (polyOrder > 1)) then higherOrder : 1 else higherOrder : 0,
+  /* Hybrid ho is anisotropic: extra node in VELOCITY directions only. */
+  if (useHigherOrder and (polyOrder > 1)) then hoConf : 1 else hoConf : 0,
+  if (useHigherOrder and (polyOrder > 1 or hybten)) then hoVel : 1 else hoVel : 0,
+  higherOrder : hoConf,
 
-  bSurf : basisFromVars(btype,surfVars,polyOrder + higherOrder),
+  bSurf : basisFromVars(btype,surfVars,polyOrder + hoConf),
 
   if (cdim > 1) then (
-    nodes_conf : gaussOrd(polyOrder + 1 + higherOrder , cdim - 1),
-    basisNodalConf  : getVarsNodalBasisWithNodes("Tensor", length(surfCVars), polyOrder + higherOrder, surfCVars, nodes_conf)
+    nodes_conf : gaussOrd(polyOrder + 1 + hoConf , cdim - 1),
+    basisNodalConf  : getVarsNodalBasisWithNodes("Tensor", length(surfCVars), polyOrder + hoConf, surfCVars, nodes_conf)
   ) 
   else (
     nodes_conf : [1], 
@@ -213,18 +233,18 @@ loadVlasovConfSurfBasis(cdim, vdim, basisType, polyOrder, surfVars, surfCVars, v
   ),
 
   if (hybten) then (
-    nodes_vel : gaussOrd(3 + higherOrder, vdim), 
-    basisNodalVel  : getVarsNodalBasisWithNodes("Tensor", length(varsV), 2 + higherOrder, varsV, nodes_vel) 
+    nodes_vel : gaussOrd(3 + hoVel, vdim), 
+    basisNodalVel  : getVarsNodalBasisWithNodes("Tensor", length(varsV), 2 + hoVel, varsV, nodes_vel) 
   )
   else (
-    nodes_vel : gaussOrd(polyOrder + 1 + higherOrder, vdim), 
-    basisNodalVel  : getVarsNodalBasisWithNodes("Tensor", length(varsV), polyOrder + higherOrder, varsV, nodes_vel) 
+    nodes_vel : gaussOrd(polyOrder + 1 + hoVel, vdim), 
+    basisNodalVel  : getVarsNodalBasisWithNodes("Tensor", length(varsV), polyOrder + hoVel, varsV, nodes_vel) 
   ),
 
   if (hybten) then (
-    surfNodes : gaussOrdTenHyb(2,3 + higherOrder,cdim-1,vdim)
+    surfNodes : gaussOrdTenHyb(2,3 + hoVel,cdim-1,vdim)
   ) else (
-    surfNodes : gaussOrd(polyOrder + 1 + higherOrder,length(surfVars))
+    surfNodes : gaussOrd(polyOrder + 1 + hoVel,length(surfVars))
   ),
   return([bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes])
 )$
@@ -343,11 +363,17 @@ prune(expr) := block(
    3. jacob_surf_tot (total velocity-space Jacobian at the velocity surface in direction dir, 
       e.g., jacob_vy in 2V at vx surfaces, or jacob_vy*jacob_vz in 3V at vx surfaces).
 */
-loadSurfVelJacobian(vdim, polyOrder, dir, nodes_vel, surfVVars, surfNodes, surfVars, calc_surf_jacob) := block(
-  /* Since we just need a 1D basis, if we are using p=3, use the actual analytic formulae, 
-     which lead to less floating point error. Otherwise, see quadrature_functions.mac so the 
-     floating point evaluation of certain quadrature rules. */
-  if (polyOrder = 2) then (
+loadSurfVelJacobian(vdim, nSurfPts, dir, nodes_vel, surfVVars, surfNodes, surfVars, calc_surf_jacob) := block(
+  /* nSurfPts = per-direction jacob_vel_surf node count (vlasovJacSurfStride):
+     4 (tensor p2 / hybrid ho), 5 (tensor p3), 3 (hybrid lo). Use analytic
+     node formulae where available (less floating point error). */
+  if (nSurfPts = 3) then (
+    surf_nodes_1v : matrix([-sqrt(3/5)],[0],[sqrt(3/5)]),
+    basisNodal_vx : getVarsNodalBasisWithNodes("Tensor", 1, 2, [vx], surf_nodes_1v),
+    basisNodal_vy : getVarsNodalBasisWithNodes("Tensor", 1, 2, [vy], surf_nodes_1v),
+    basisNodal_vz : getVarsNodalBasisWithNodes("Tensor", 1, 2, [vz], surf_nodes_1v)
+  )
+  else if (nSurfPts = 4) then (
     surf_nodes_1v : matrix([-sqrt(3/7 + 2/7*sqrt(6/5))],[-sqrt(3/7 - 2/7*sqrt(6/5))],[sqrt(3/7 - 2/7*sqrt(6/5))],[sqrt(3/7 + 2/7*sqrt(6/5))]), 
     basisNodal_vx : getVarsNodalBasisWithNodes("Tensor", 1, 3, [vx], surf_nodes_1v),
     basisNodal_vy : getVarsNodalBasisWithNodes("Tensor", 1, 3, [vy], surf_nodes_1v),
@@ -362,19 +388,19 @@ loadSurfVelJacobian(vdim, polyOrder, dir, nodes_vel, surfVVars, surfNodes, surfV
 
   jacob_vx_surf : [jacob_vel_surf_vx[0], jacob_vel_surf_vx[1], jacob_vel_surf_vx[2], jacob_vel_surf_vx[3], jacob_vel_surf_vx[4]], 
   jacob_vx_surf_ne : 0, 
-  for i : 1 thru (polyOrder+2) do (
+  for i : 1 thru nSurfPts do (
     jacob_vx_surf_ne : jacob_vx_surf_ne + jacob_vx_surf[i]*basisNodal_vx[i] 
   ), 
 
   jacob_vy_surf : [jacob_vel_surf_vy[0], jacob_vel_surf_vy[1], jacob_vel_surf_vy[2], jacob_vel_surf_vy[3], jacob_vel_surf_vy[4]], 
   jacob_vy_surf_ne : 0, 
-  for i : 1 thru (polyOrder+2) do (
+  for i : 1 thru nSurfPts do (
     jacob_vy_surf_ne : jacob_vy_surf_ne + jacob_vy_surf[i]*basisNodal_vy[i] 
   ), 
 
   jacob_vz_surf : [jacob_vel_surf_vz[0], jacob_vel_surf_vz[1], jacob_vel_surf_vz[2], jacob_vel_surf_vz[3], jacob_vel_surf_vz[4]], 
   jacob_vz_surf_ne : 0, 
-  for i : 1 thru (polyOrder+2) do (
+  for i : 1 thru nSurfPts do (
     jacob_vz_surf_ne : jacob_vz_surf_ne + jacob_vz_surf[i]*basisNodal_vz[i] 
   ), 
 

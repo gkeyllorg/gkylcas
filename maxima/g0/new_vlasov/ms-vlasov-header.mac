@@ -18,7 +18,8 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel). */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
@@ -50,7 +51,7 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
     printf(fh, "~avoid vlasov_hamil_vel_sparse_vol_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, 
       const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi)
   ),
-  if ((ci <= vi  and pi < 3) and not(pi = 2 and bStr = "tensor")) then (
+  if ((ci <= vi  and pi < 3) and not(bStr = "tensor")) then (
     printf(fh, "~avoid vlasov_nc_hamil_vel_dense_vol_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap,
       const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi),
     if (vi > 1) then (
@@ -106,8 +107,8 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
       const double *jacob_pos_l, const double *jacob_pos_c, const double *jacob_pos_r, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, 
       const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, vi, bStr, pi)
     ),
-    if ((ci <= vi  and pi < 3) and not(pi = 2 and bStr = "tensor")) then (
-      if ((bStr = "ser") and (pi = 1)) or (bStr = "tensor") then ( 
+    if ((ci <= vi  and pi < 3) and not(bStr = "tensor")) then (
+      if ((bStr = "ser") and (pi = 1)) or ((bStr = "tensor") and (pi > 1)) then ( 
         printf(fh, "~adouble vlasov_surf~a_~ax~av_~a_p~a(const double *w, const double *dxv,
         const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, vi, bStr, pi),
         printf(fh, "~adouble vlasov_boundary_surf~a_~ax~av_~a_p~a(const double *w, const double *dxv,
@@ -128,7 +129,7 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
        canonical-PB models stream through the configuration-space flux
        machinery and the Hamiltonian-agnostic vlasov_(boundary_)(ho_)surf*
        consumers declared above. */
-    if ((bStr = "ser") and (pi = 1)) or (bStr = "tensor") then (
+    if ((bStr = "ser") and (pi = 1)) or ((bStr = "tensor") and (pi > 1)) then (
       printf(fhx, "~adouble lax_flux_nodal_~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_pos_l, const double *jacob_pos_c, const double *alpha_quad, 
       const double *f_l, const double *f_r, double* GKYL_RESTRICT conf_flux_surf) ; ~%", deco, cvars[si], ci, vi, bStr, pi),
@@ -176,8 +177,8 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
     )
   ),
   for si : 1 thru vi do (
-    if ((ci <= vi  and pi < 3) and not(pi = 2 and bStr = "tensor")) then (
-      if ((bStr = "ser") and (pi = 1)) or (bStr = "tensor") then ( 
+    if ((ci <= vi  and pi < 3) and not(bStr = "tensor")) then (
+      if ((bStr = "ser") and (pi = 1)) or ((bStr = "tensor") and (pi > 1)) then ( 
         printf(fhx, "~avoid nc_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
           const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
         if (vi > 1) then (
@@ -206,7 +207,7 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       )
     ),
-    if ((bStr = "ser") and (pi = 1)) or (bStr = "tensor") then ( 
+    if ((bStr = "ser") and (pi = 1)) or ((bStr = "tensor") and (pi > 1)) then ( 
       printf(fhx, "~adouble lax_flux_nodal_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_vel_surf_l, const double *jacob_vel_surf_r, const double *alpha_quad, 
       const double *f_l, const double *f_r, double* GKYL_RESTRICT vel_flux_surf) ; ~%", deco, cvars[si], ci, vi, bStr, pi),

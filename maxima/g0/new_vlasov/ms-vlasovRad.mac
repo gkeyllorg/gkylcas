@@ -15,7 +15,9 @@ minVdim_Ser : 1$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel); pure p=1 tensor
+   kernels still do not exist anywhere. */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minVdim_Tensor : 1$ 
 maxVdim_Tensor : 3$

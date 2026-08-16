@@ -9,7 +9,7 @@ for v : 1 thru 3 do (
     fh : openw(fname),
     for polyOrder : 2 thru 3 do (
       funcName : sconcat("vmap_",  v, "v_p", polyOrder),
-      calcVmap(fh, funcName, v, polyOrder)
+      calcVmap(fh, funcName, v, polyOrder, polyOrder+2)
     ),
     close(fh)
   )
@@ -17,7 +17,19 @@ for v : 1 thru 3 do (
     fname : sconcat("~/max-out/vmap_", v, "v.c"),
     fh : openw(fname),
     funcName : sconcat("vmap_",  v, "v_p", 2),
-    calcVmap(fh, funcName, v, 2),
+    calcVmap(fh, funcName, v, 2, 4),
     close(fh)    
   )
 );
+
+/* Tensor p=1 hybrid LO-quadrature variants: the same C^1 cubic map and
+   quadratic Jacobian as p2 (vol 3 nodes, gauss 3^vdim), but jacob_vel_surf
+   written at 3 Gauss-Legendre nodes per direction (stride 3) to match the
+   lo hybrid kernels; the HO hybrid runtime choice reuses vmap_Nv_p2. */
+for v : 1 thru 3 do (
+  fname : sconcat("~/max-out/vmap_", v, "v_hyb_lo.c"),
+  fh : openw(fname),
+  funcName : sconcat("vmap_", v, "v_hyb_lo"),
+  calcVmap(fh, funcName, v, 2, 3),
+  close(fh)
+)$

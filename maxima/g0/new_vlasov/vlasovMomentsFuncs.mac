@@ -711,8 +711,9 @@ calcMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder, calcHamilPhase) := bloc
     calcFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse", rep),
     calcIntFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse", rep)
   ), 
-  /* Partial (threshold) M0 moments are only in the tensor kernel tables. */
-  if (basisFun = "tensor" and polyOrder > 1 and vdim = 1) then (
+  /* Partial (threshold) M0 moments: 1V only for now, but defined for every
+     basis/rep (the velocity map is folded into all bases uniformly). */
+  if (vdim = 1) then (
     calcM0ReduceVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, true, rep),
     calcM0ReduceVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, false, rep) 
   ),
