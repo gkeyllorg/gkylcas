@@ -19,11 +19,13 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
-minCdim_Tensor : 2$
-minVdim_Tensor : 3$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$
+/* Tensor p=1 IS the tensor hybrid: generate the conf-direction lax and
+   PHASE-Hamiltonian producers at p=1 only. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* see begining of v loop below though. */
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -81,8 +83,10 @@ for bInd : 1 thru length(bName) do (
 
               if not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) and not(hamil_rep = "vel_sparse" and v = 1) then (
                 if ((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = false)) then si : "",
-                /* Phase-space Hamiltonian surface component. Only generate with Serendipity basis for now. */
-                if (bName[bInd] = "ser") then (
+                /* Hamiltonian conf-flux producers: all reps for Serendipity;
+                   the tensor p=1 hybrid gets ONLY the phase rep (vel_dense/
+                   vel_sparse conf fluxes belong to the triads campaign). */
+                if (bName[bInd] = "ser" or (polyOrder = 1 and hamil_rep = "phase")) then (
                   fname : sconcat("~/max-out/hamil_", hamilLabels[vhamilInd],"_",si,"alpha_quad_", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                   fh : openw(fname),
                   funcName : sconcat("hamil_", hamilLabels[vhamilInd],"_",si,"alpha_quad_",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),

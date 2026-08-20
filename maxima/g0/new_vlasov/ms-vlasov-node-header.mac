@@ -31,14 +31,14 @@ deco : "GKYL_CU_DH "$
 /* Velocity-direction surfaces (mirror ms-vlasovVelFluxSurf.mac gates). */
 bName : ["ser","tensor"]$
 for bInd : 1 thru 2 do (
-  for c : 1 thru (if bInd = 1 then 3 else 2) do (
+  for c : 1 thru 3 do (
     minVdimB : max(c,1), if (c = 2) then minVdimB : 1,
     for v : minVdimB thru 3 do (
       minPolyOrderB : 1, /* tensor p=1 = hybrid */
       maxPolyOrderB : 2,
       if (v=1) then maxPolyOrderB : 3,
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-      if (bInd = 2 and c = 2 and v = 3) then maxPolyOrderB : 0,
+      if (bInd = 2 and c = 2 and v = 3) then maxPolyOrderB : 1,
       for pi : minPolyOrderB thru maxPolyOrderB do (
         for hoInd : 1 thru 2 do (
           useHigherOrder : is(hoInd = 2),
@@ -49,7 +49,9 @@ for bInd : 1 thru 2 do (
             for dir : 1 thru maxC do (
               printf(fh, "~adouble phi_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *jacob_pos, const double *phi); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
-              if (bName[bInd] = "ser") then
+              /* Phase-space Hamiltonian velocity flux: serendipity and the
+                 tensor p=1 hybrid (no phase rep for tensor p>1). */
+              if (bName[bInd] = "ser" or pi = 1) then
                 printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
                   deco, si, vlabels[dir], c, v, bName[bInd], pi)
             ),
@@ -95,28 +97,33 @@ for bInd : 1 thru 2 do (
 )$
 
 /* Configuration-direction surfaces (mirror ms-triadConfFluxSurf.mac gates;
-   serendipity only). */
+   serendipity plus the tensor p=1 hybrid, which gets ONLY the lax kernels
+   and the phase-Hamiltonian producers (vel_dense/vel_sparse conf producers
+   belong to the triads campaign); tensor p=1 emits both lo and ho_ forms. */
+for bInd : 1 thru 2 do (
 for c : 1 thru 3 do (
   for v : max(c,1) thru 3 do (
-    maxPolyOrderB : 2, if (c+v>5) then maxPolyOrderB : 1,
+    maxPolyOrderB : (if bInd = 1 then 2 else 1), if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
     for pi : 1 thru maxPolyOrderB do (
       for dir : 1 thru c do (
         for hoInd : 1 thru 2 do (
           useHigherOrder : is(hoInd = 2),
           si : if useHigherOrder then "ho_" else "",
-          if not((pi = 1) and useHigherOrder) then (
-            if (pi = 1) then si : "",
-            printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_ser_p~a_node(int i, int j, const double *jacob_pos_l, const double *jacob_pos_r, double alpha, const double *f_l, const double *f_r, double* GKYL_RESTRICT Fhat_nodal); ~%",
-              deco, si, clabels[dir], c, v, pi),
-            printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_ser_p~a_cfl(const double *dxv, const double *jacob_pos_l, const double *jacob_pos_r, double alpha_max); ~%",
-              deco, si, clabels[dir], c, v, pi),
-            printf(fh, "~adouble hamil_vel_dense_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-              deco, si, clabels[dir], c, v, pi),
-            if (v > 1) then
-              printf(fh, "~adouble hamil_vel_sparse_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
+          if not((bName[bInd] = "ser") and (pi = 1) and useHigherOrder) then (
+            if ((bName[bInd] = "ser") and (pi = 1)) then si : "",
+            printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_node(int i, int j, const double *jacob_pos_l, const double *jacob_pos_r, double alpha, const double *f_l, const double *f_r, double* GKYL_RESTRICT Fhat_nodal); ~%",
+              deco, si, clabels[dir], c, v, bName[bInd], pi),
+            printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_cfl(const double *dxv, const double *jacob_pos_l, const double *jacob_pos_r, double alpha_max); ~%",
+              deco, si, clabels[dir], c, v, bName[bInd], pi),
+            if (bName[bInd] = "ser") then (
+              printf(fh, "~adouble hamil_vel_dense_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
                 deco, si, clabels[dir], c, v, pi),
-            printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-              deco, si, clabels[dir], c, v, pi)
+              if (v > 1) then
+                printf(fh, "~adouble hamil_vel_sparse_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
+                  deco, si, clabels[dir], c, v, pi)
+            ),
+            printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
+              deco, si, clabels[dir], c, v, bName[bInd], pi)
             /* DISABLED until the per-mode GPU launcher lands (re-enable with
                emitConsumerModeFns in surf-eval-tables.mac): the from-flux
                stream consumer per-mode decls -- mirror ms-triadSurf.mac and
@@ -132,6 +139,7 @@ for c : 1 thru 3 do (
       printf(fh, "~%")
     )
   )
+)
 )$
 /* Triad velocity-direction Hamiltonian producers (mirror
    ms-triadVelFluxSurf.mac gates; serendipity only, vel_sparse skipped in

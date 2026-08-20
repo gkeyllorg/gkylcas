@@ -50,7 +50,9 @@ genModalToQuadKernelHyb(fh, cdim, vdim, basisName) := block(
     nodes : gaussOrdHyb(1+1, cdim, vdim)
   ) elseif basisName = "tenhyb" then (
     [varsc,basisc,varsp,basisp] : loadTensorHybridBasis(basisName, cdim, vdim),
-    nodes : gaussOrdTenHyb(2, 4, cdim, vdim)
+    /* Volume Gauss-Legendre nodes: p+1 per direction (2 conf, 3 vel), the
+       alias-free one-to-one nodal set (numNodes = num_basis). */
+    nodes : gaussOrdTenHyb(2, 3, cdim, vdim)
   ) elseif basisName = "gkhyb" then (
     [varsc,basisc,varsp,basisp,vsub] : loadGkBasis(basisName, cdim, vdim, 1),
     varsv : listify(setdifference(setify(varsp),setify(varsc))),

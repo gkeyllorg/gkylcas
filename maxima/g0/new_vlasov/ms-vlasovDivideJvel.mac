@@ -27,7 +27,7 @@ minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 2$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -54,7 +54,7 @@ for bInd : 1 thru length(bName) do (
 
       /* Skip 2x3v tensor kernels: not used by the kernel tables and very
          expensive to generate. */
-      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 0,
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating Jf/J  ",bName[bInd]," ~ax~avP~a"),c,v,polyOrder)),
         fname : sconcat("~/max-out/vlasov_divide_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),

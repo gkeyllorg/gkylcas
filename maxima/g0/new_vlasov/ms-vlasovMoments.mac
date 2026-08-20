@@ -20,7 +20,7 @@ minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 2$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -44,9 +44,10 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-      /* Skip 2x3v tensor kernels: not used by the kernel tables and very
-         expensive to generate. */
-      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 0,
+      /* Tensor 2x3v/3x3v: only the p=1 hybrid (p>1 tensor kernels at these
+         dimensionalities are unused by the kernel tables and very expensive
+         to generate). */
+      if (bName[bInd] = "tensor" and c+v >= 5) then maxPolyOrderB : 1,
       /* Vlasov moment calculators. */
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating Vlasov Moments ~ax~av ", bName[bInd]),c,v)),

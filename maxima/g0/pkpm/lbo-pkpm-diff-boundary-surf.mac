@@ -16,7 +16,7 @@ calcVlasovPKPMLBODiffBoundarySurfUpdater(fh, funcNm, cdim, vdim, basisFun, polyO
    diff_incr_re,edge_incr_le,edge_incr_re,vol_out,diff_out,edge_out],
 
   /* Load basis of dimensionality requested. */
-  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+  [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),
 
   /* Number of basis monomials. */
   NP : length(bP),  NC : length(bC),

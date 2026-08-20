@@ -337,13 +337,17 @@ loadPhaseBasis(basisType, cdim, vdim, pOrder) := block(
   btype : basisType,
   if basisType="ser" then btype : "Ser"
   elseif basisType="tensor" then btype : "Tensor"
-  elseif basisType="hyb" then btype : "Hybrid",
+  elseif basisType="hyb" then btype : "TensorHybrid",
 
   kill(varsC, varsP, basisC, basisP),
   if vdim>0 then (
     if cdim>0 then (
-      if pOrder = 1 and btype = "Ser" then /* Forcing p=1 to hybrid. */
-        modNm : sconcat("basis-precalc/basisHybrid", cdim, "x", vdim, "v")
+      /* Serendipity p=1 is the pure p=1 basis; tensor p=1 (and "hyb") is
+         the TENSOR hybrid: p=1 tensor in conf space x p=2 tensor in
+         velocity space, total-degree graded ordering. The old
+         Serendipity-flavored basisHybrid is retired. */
+      if pOrder = 1 and btype = "Tensor" then
+        modNm : sconcat("basis-precalc/basisTensorHybrid", cdim, "x", vdim, "v")
       else
         modNm : sconcat("basis-precalc/basis", btype, cdim, "x", vdim, "v")
     ) else (

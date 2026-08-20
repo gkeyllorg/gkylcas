@@ -25,7 +25,7 @@ minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 2$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -58,7 +58,7 @@ for bInd : 1 thru length(bName) do (
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
       /* Skip 2x3v tensor kernels: not used by the kernel tables and very
          expensive to generate. */
-      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 0,
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
 
         /* High-Order itegration Logic */
@@ -149,8 +149,9 @@ for bInd : 1 thru length(bName) do (
             maxC : c, /* Which directions are we generating surface kernels for? */
             if (v < c) then maxC : v, /* In 2x1v, only generate the vx surface kernel. */
             for dir : 1 thru maxC do (
-              /* Phase-space Hamiltonian surface component. Only generate with Serendipity basis for now. */
-              if (bName[bInd] = "ser") then (
+              /* Phase-space Hamiltonian surface component: Serendipity and the
+                 tensor p=1 hybrid (no phase rep for tensor p>1). */
+              if (bName[bInd] = "ser" or polyOrder = 1) then (
                 fname : sconcat("~/max-out/hamil_phase_",si,"alpha_quad_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                 fh : openw(fname),
                 funcName : sconcat("hamil_phase_",si,"alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),

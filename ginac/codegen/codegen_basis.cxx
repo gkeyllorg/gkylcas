@@ -18,6 +18,8 @@ get_basis_name(Gkyl::ModalBasisType type)
     bn = "hyb";
   else if (type == Gkyl::MODAL_GKHYB)
     bn = "gkhyb";
+  else if (type == Gkyl::MODAL_TENHYB)
+    bn = "tenhyb";
 
   return bn;
 }
@@ -548,6 +550,64 @@ gen_hyb_basis()
 }
 
 void
+gen_tenhyb_basis()
+{
+  // compute time-stamp
+  char buff[70];
+  time_t t = time(NULL);
+  struct tm curr_tm = *localtime(&t);
+  strftime(buff, sizeof buff, "%c", &curr_tm);
+
+  symbol z0("z0"), z1("z1"), z2("z2"), z3("z3"), z4("z4"), z5("z5");
+  std::vector<symbol> vars { z0, z1, z2, z3, z4, z5 };
+
+  std::ofstream header("kernels/basis/gkyl_basis_tenhyb_kernels.h", std::ofstream::out);
+  header << "// " << buff << std::endl;
+  header << "#pragma once" << std::endl;
+  header << "#include <gkyl_util.h>" << std::endl;
+  header << "EXTERN_C_BEG" << std::endl;
+
+  std::ofstream eval_file("kernels/basis/basis_eval_tenhyb.c", std::ofstream::out);
+  std::ofstream flip_file("kernels/basis/basis_flip_sign_tenhyb.c", std::ofstream::out);
+
+  eval_file << "// " << buff << std::endl;
+  eval_file << "#include <gkyl_basis_tenhyb_kernels.h>" << std::endl;
+
+  flip_file << "// " << buff << std::endl;
+  flip_file << "#include <gkyl_basis_tenhyb_kernels.h>" << std::endl;
+
+  // All dim combinations needed when one accounts for surface
+  // evaluation, and sims that are only kinetic in 1 v-space dir.
+  for (int cd=1; cd<4; ++cd) {
+    for (int vd=1; vd<4; ++vd) {
+      int dim = cd+vd;
+      int p = 1;
+      std::cout << cd << "x"<< vd << "vp" << p << " ";
+      Gkyl::ModalBasis mbasis(Gkyl::MODAL_TENHYB, dim, vd, vars, p);
+
+      // generate eval method
+      gen_eval(Gkyl::MODAL_TENHYB, header, eval_file, mbasis);
+      // generate eval_expand method
+      gen_eval_expand(Gkyl::MODAL_TENHYB, header, eval_file, mbasis);
+      gen_eval_grad_expand(Gkyl::MODAL_TENHYB, header, eval_file, mbasis);
+      // generate flip_sign methods
+      gen_flip_odd_sign(Gkyl::MODAL_TENHYB, header, flip_file, mbasis);
+      gen_flip_even_sign(Gkyl::MODAL_TENHYB, header, flip_file, mbasis);
+      // generate node_coords
+      gen_node_coords(Gkyl::MODAL_TENHYB, header, flip_file, mbasis);
+      // generate nodal to modal
+      gen_nodal_to_modal(Gkyl::MODAL_TENHYB, header, flip_file, mbasis);
+      // generate Gauss-Legendre quadrature nodal to modal
+      gen_quad_to_modal(Gkyl::MODAL_TENHYB, header, flip_file, mbasis);
+      // generate modal to Gauss-Legendre quadrature nodal
+      gen_modal_to_quad(Gkyl::MODAL_TENHYB, header, flip_file, mbasis);
+      std::cout << std::endl;
+    }
+  }
+  header << "EXTERN_C_END" << std::endl;
+}
+
+void
 gen_gkhyb_basis()
 {
   // compute time-stamp
@@ -677,15 +737,21 @@ main(int argc, char **argv)
   tm = gkyl_time_diff_now_sec(tstart);
   std::cout << "Generating of modal tensor basis took " << tm << " seconds" << std::endl;
 
-  tstart = gkyl_wall_clock();
-  gen_hyb_basis();
-  tm = gkyl_time_diff_now_sec(tstart);
-  std::cout << "Generating of modal hybrid basis took " << tm << " seconds" << std::endl;
-  
+  // The old Serendipity-flavored hybrid ("hyb") outputs are RETIRED: the C
+  // hybrid basis (gkyl_cart_modal_hybrid) is now the TENSOR hybrid, whose
+  // kernels are the "tenhyb" outputs renamed _tenhyb_ -> _hyb_ on adoption
+  // (the declarations in gkyl_basis_hyb_kernels.h are unchanged by this).
+  // gen_hyb_basis();
+
   tstart = gkyl_wall_clock();
   gen_gkhyb_basis();
   tm = gkyl_time_diff_now_sec(tstart);
   std::cout << "Generating of modal gk hybrid basis took " << tm << " seconds" << std::endl;
-  
+
+  tstart = gkyl_wall_clock();
+  gen_tenhyb_basis();
+  tm = gkyl_time_diff_now_sec(tstart);
+  std::cout << "Generating of modal tensor hybrid basis took " << tm << " seconds" << std::endl;
+
   return 1;
 }

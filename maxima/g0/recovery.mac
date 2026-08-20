@@ -1,5 +1,12 @@
 load("modal-basis") $
 
+/* The recovery equation systems can contain redundant (consistent)
+   equations; with linsolve_params : true (the Maxima default) linsolve
+   then introduces spurious %r free parameters that leak into the
+   generated kernels. The systems are fully determined, so disable the
+   parameterization and let linsolve solve them outright. */
+linsolve_params : false $
+
 load("recovery-calc/recovery-1cell") $
 load("recovery-calc/recovery-2cell") $
 load("recovery-calc/recovery-3cell") $

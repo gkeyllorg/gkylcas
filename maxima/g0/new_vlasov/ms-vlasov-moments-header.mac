@@ -57,7 +57,9 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
   if (vi > 1) then (
     printf(fh, "~avoid mom_vlasov_hamil_vel_sparse_int_five_moments_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, const double *jacob_vel, const double *hamil, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi)
   ),
-  if (bStr = "ser") then (
+  /* Phase moments: Serendipity and the tensor p=1 hybrid (no phase rep for
+     tensor p>1). */
+  if (bStr = "ser" or pi = 1) then (
     printf(fh, "~avoid mom_vlasov_hamil_phase_M1i_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, const double *jacob_vel, const double *hamil, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi),
     printf(fh, "~avoid mom_vlasov_hamil_phase_M2_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, const double *hamil, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi),
     printf(fh, "~avoid mom_vlasov_hamil_phase_five_moments_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, const double *jacob_vel, const double *hamil, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi),
