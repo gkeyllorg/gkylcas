@@ -365,7 +365,9 @@ calcHamilVolNonCanonicalAlphaPreComp(fh, funcNm, cdim, vdim, basisFun, polyOrder
        from f_no_J by 1D nodal multiplication (the magnetic-force J*f
        reconstruction pattern), and each block's bracket is contracted with
        the f-object of its (dir, partner) pair. Both pieces of every
-       antisymmetric pair dot the SAME object => H conserved exactly. ---- */
+       antisymmetric pair dot the SAME object, and the alpha kernel builds
+       both blocks of a pair from ONE projected momentum factor (see the
+       antisymmetry note in triadVolHelperFuncs.mac) => H conserved exactly. ---- */
     block([f_e, fl, fmul_ne, f_c, fJ_e, clst_J, fS_nm, i1, k1],
       [bV_vi, NV_1D, jacobNodes, numJacobNodes, jacobNodes_vi, basisNodal_vi] : loadVelJacobianBasis(vlasovPVel(bName[bInd], polyOrder)),
       for d : 1 thru vdim do printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", clabels[d], numJacobNodes*(d-1)),

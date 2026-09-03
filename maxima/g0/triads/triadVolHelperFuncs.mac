@@ -259,6 +259,30 @@ calcHamilVolNonCanonicalAlpha(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil
     bV_map_vi : bV_lin_vi
   ),
   vmapTrans : [doExpand1(vmap_vx, bV_map_vi[1]), doExpand1(vmap_vy, bV_map_vi[2]), doExpand1(vmap_vz, bV_map_vi[3])],
+  /* DISCRETE ANTISYMMETRY OF THE PRECOMPUTED-ALPHA FLOW (cubic map only).
+     The wrapper contracts each stored (projected) alpha block with the SAME
+     f-object for both pieces of a (vel_i, vel_j) pair, so energy conservation
+     reduces to
+       < dH/dv_i * P[dH/dv_j * Pi * p_m] - dH/dv_j * P[dH/dv_i * Pi * p_m], F > = 0
+     for every F in the phase basis. With the exact CUBIC momentum factor p_m
+     this fails whenever m is one of the derivative directions: the product
+     dH/dv_m * p_m is quartic in v_m and the two blocks are truncated
+     independently (residual ~ vmap_vm[3] * H coefficients; exactly zero on
+     uniform grids where that slot vanishes). The fix is to build both blocks
+     of a pair from ONE projected quantity Q_m = Pi * P2[p_m] (the cubic map
+     projected once onto the p=2 velocity basis). Then each block is
+     P[dH * Q_m], whose discarded part is a pure P3(v) component in the
+     derivative's own direction -- orthogonal to everything (F, dH, Pi) it
+     is integrated against -- so the contraction cancels identically, exactly
+     as the inline kernels do by sharing one f_dJ object. */
+  if (jacRep = "cubic") then (
+    [varsV_p2map, bV_p2map] : loadBasis("Tensor", 1, 2),
+    bV_p2map_vi : [subst(x=vx, copylist(bV_p2map)), subst(x=vy, copylist(bV_p2map)), subst(x=vz, copylist(bV_p2map))],
+    varsVmap : [vx, vy, vz],
+    vmapPair : makelist(doExpand(calcInnerProdList([varsVmap[k]], 1, bV_p2map_vi[k], vmapTrans[k]), bV_p2map_vi[k]), k, 1, 3)
+  ) else (
+    vmapPair : vmapTrans
+  ),
 
   /* for a 2*vdim space varsPFull */
   if (vdim = 3) then (
@@ -315,7 +339,9 @@ calcHamilVolNonCanonicalAlpha(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil
         It is assumed that H does not depend on these ignorable coordinates. */
 
       /* Convert to a phase space PT by mulitplying by p for the bottom right block comps */
-      if ( (dir1 > vdim) and (dir2 > vdim) ) then p_factor : vmapTrans[index_vsum] else p_factor : 1,
+      /* Momentum factor: the pair-shared projected map (see note above);
+         identical to vmapTrans for the linear (ser) map. */
+      if ( (dir1 > vdim) and (dir2 > vdim) ) then p_factor : vmapPair[index_vsum] else p_factor : 1,
 
       /* Symmetric contribution: dH/dz_dir2, so dir2's derivative factor. */
       /* J-FREE alpha (cubic): all velocity-Jacobian factors live in the
