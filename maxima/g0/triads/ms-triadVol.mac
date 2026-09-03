@@ -61,7 +61,7 @@ for bInd : 1 thru length(bName) do (
           hamil_rep : velHamil[vhamilInd],
           /* Sparse kernels are skipped (tables alias dense) only in 1V, where
              sparse and dense are identical. */
-          if not(hamil_rep = "vel_sparse" and v = 1) then (
+          if (not(hamil_rep = "vel_sparse" and v = 1) and not(hamil_rep = "phase" and c+v>=5 and polyOrder>1)) then (
             fname : sconcat("~/max-out/vlasov_nc_hamil_", hamilLabels[vhamilInd], "_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
             disp(printf(false,"Creating volume file: ~a",fname)),
             fh : openw(fname),
@@ -76,8 +76,12 @@ for bInd : 1 thru length(bName) do (
                when the Poisson tensor varies within a cell (alpha projection
                truncates; ~1e-4-1e-3 relative at p=2, machine-identical at
                p=1). Dense and phase keep the size gate (inline where
-               affordable, precomputed-alpha otherwise). */
-            if ( (hamil_rep = "vel_sparse") or ( (bName[bInd] = "ser") and not(c+v>4) and not(v = 3 and polyOrder = 2) and not(v = 3 and c = 1 and polyOrder = 2) and not(v = 2 and c = 2 and polyOrder = 2) ) ) then (
+               affordable, precomputed-alpha otherwise); at c+v>=5 sparse
+               joins them on the comps split per the policy above. */
+            /* POLICY: at 5D/6D (c+v>=5) EVERY Hamiltonian flavor takes the
+               comps split (compile time dominates; no special cases), so the
+               sparse inline-exact-bracket path is limited to c+v<5. */
+            if ( (hamil_rep = "vel_sparse" and not(c+v>4)) or ( (bName[bInd] = "ser") and not(c+v>4) and not(v = 3 and polyOrder = 2) and not(v = 3 and c = 1 and polyOrder = 2) and not(v = 2 and c = 2 and polyOrder = 2) ) ) then (
               calcHamilVolNonCanonical(fh, funcName, c, v, bName[bInd], polyOrder, hamil_rep, false)
             ) else  (
               calcHamilVolNonCanonicalAlphaPreComp(fh, funcName, c, v, bName[bInd], polyOrder, hamilLabels[vhamilInd], false)

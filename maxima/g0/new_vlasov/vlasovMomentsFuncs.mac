@@ -724,7 +724,7 @@ calcMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder, calcHamilPhase) := bloc
      runtime factors of 1.0. M2 = <H Jf> has no derivative, so no factor. */
   /* Phase moments exist for Serendipity and the tensor p=1 hybrid (no phase
      rep for tensor p>1). */
-  if ((basisFun = "ser" or polyOrder = 1) and calcHamilPhase) then (
+  if (calcHamilPhase) then (
     calcM1iVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase", rep),
     calcM2(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase"),
     calcFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase", rep),

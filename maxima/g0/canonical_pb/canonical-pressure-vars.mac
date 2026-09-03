@@ -30,7 +30,7 @@ calcCanonicalPbPressure(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   ),
 
   /* printf(fh, "#include <gkyl_euler_canonical_pb_kernels.h> ~%"), */
-  printf(fh, "#include <gkyl_canonical_pb_kernels.h>  ~%"),
+  printf(fh, "#include <gkyl_canonical_pb_vars_kernels.h>  ~%"),
   printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *h_ij_inv, const double *MEnergy, const double *v_j, const double *nv_i, double* GKYL_RESTRICT d_Jv_P) ~%{ ~%", funcNm, polyOrder),
   printf(fh, "  // h_ij_inv:         Input volume expansion of the inverse metric tensor.~%"),

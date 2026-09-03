@@ -51,7 +51,7 @@ for bInd : 1 thru 2 do (
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
               /* Phase-space Hamiltonian velocity flux: serendipity and the
                  tensor p=1 hybrid (no phase rep for tensor p>1). */
-              if (bName[bInd] = "ser" or pi = 1) then
+              if ((bName[bInd] = "ser" or bName[bInd] = "tensor") and not(c+v>=5 and pi>1)) then
                 printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
                   deco, si, vlabels[dir], c, v, bName[bInd], pi)
             ),
@@ -67,7 +67,7 @@ for bInd : 1 thru 2 do (
                   deco, si, vlabels[dir], c, v, bName[bInd], pi),
                 /* Phase-space Hamiltonian magnetic force: serendipity and
                    the tensor p=1 hybrid (no tensor p>1 representation). */
-                if (bName[bInd] = "ser" or pi = 1) then
+                if ((bName[bInd] = "ser" or bName[bInd] = "tensor") and not(c+v>=5 and pi>1)) then
                   printf(fh, "~adouble B_~ahamil_phase_alpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem); ~%",
                     deco, si, vlabels[dir], c, v, bName[bInd], pi)
               ),
@@ -122,7 +122,7 @@ for c : 1 thru 3 do (
                 printf(fh, "~adouble hamil_vel_sparse_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
                   deco, si, clabels[dir], c, v, pi)
             ),
-            printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
+            if not(c+v>=5 and pi>1) then printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi)
             /* DISABLED until the per-mode GPU launcher lands (re-enable with
                emitConsumerModeFns in surf-eval-tables.mac): the from-flux
@@ -155,7 +155,7 @@ for c : 1 thru 3 do (
           if not((pi = 1) and useHigherOrder) then (
             if (pi = 1) then si : "",
             for rep in (if v > 1 then ["vel_dense", "vel_sparse", "phase"] else ["vel_dense", "phase"]) do
-              printf(fh, "~adouble nc_hamil_~a_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int j, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
+              if not(rep = "phase" and c+v>=5 and pi>1) then printf(fh, "~adouble nc_hamil_~a_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int j, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
                 deco, rep, si, vlabels[dir], c, v, pi)
           )
         )

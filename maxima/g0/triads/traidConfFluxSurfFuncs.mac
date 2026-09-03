@@ -80,7 +80,28 @@ calcHamilVelSurfForceFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hami
   const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
   const double *poisson_tensor_conf, const double *hamil) ~%{ ~%", funcNm),
   for j : 1 thru vdim do printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", j-1, vid[j]),
-  for j : 1 thru vdim do printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a]; ~%", clabels[j], (polyOrder+2)*(j-1)),
+  /* Inverse velocity-map Jacobian of each derivative's direction: a cell
+     constant for the C^0 linear map (ser), but the C^1 cubic map (tensor) has
+     a QUADRATIC in-cell Jacobian, so it must be evaluated per velocity-volume
+     node m (lexicographic over the vel dims, last direction fastest, nJPts
+     1D Gauss nodes per direction matching the jacob_vel_surf blocks). */
+  nJPts : vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder),
+  jvinvExpr : makelist("", j, 1, vdim),
+  if (vlasovVelMapRep(basisFun) = "cubic") then (
+    for j : 1 thru vdim do block([nidx],
+      if (vdim = 1) then nidx : "m"
+      elseif (vdim = 2) then nidx : if (j = 1) then sconcat("m/", nJPts) else sconcat("m%", nJPts)
+      else nidx : if (j = 1) then sconcat("m/", nJPts*nJPts)
+        elseif (j = 2) then sconcat("m/", nJPts, "%", nJPts)
+        else sconcat("m%", nJPts),
+      jvinvExpr[j] : sconcat("(1.0/jacob_vel_surf[", nJPts*(j-1), " + ", nidx, "])")
+    )
+  ) else (
+    for j : 1 thru vdim do (
+      printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a]; ~%", clabels[j], nJPts*(j-1)),
+      jvinvExpr[j] : sconcat("jacob_v", clabels[j], "_inv")
+    )
+  ),
   for j : 1 thru vdim do
     printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", j - 1, NC*(dir-1)*vdim + NC*(j-1)),
 
@@ -108,7 +129,7 @@ calcHamilVelSurfForceFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hami
         printf(fh, "    for (int a = 0; a < ~a; ++a) dH~a += ~a_Cm[i*~a + a]*G~a[a]; ~%", NA, j-1, tabP, NA, j-1)
       ),
       printf(fh, "    return ~a; ~%",
-        simplode(makelist(sconcat("P", j-1, "*dH", j-1, "*dv1", j-1, "*jacob_v", clabels[j], "_inv"), j, 1, vdim), " + ")),
+        simplode(makelist(sconcat("P", j-1, "*dH", j-1, "*dv1", j-1, "*", jvinvExpr[j]), j, 1, vdim), " + ")),
       printf(fh, "  } ~%")
     )
   )
@@ -140,7 +161,7 @@ calcHamilVelSurfForceFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hami
           NC, j-1, tag, dir-1, elbl, NC, j-1)
       ),
       printf(fh, "    return ~a; ~%",
-        simplode(makelist(sconcat("P", j-1, "*dH_dv", j-1, "*dv1", j-1, "*jacob_v", clabels[j], "_inv"), j, 1, vdim), " + ")),
+        simplode(makelist(sconcat("P", j-1, "*dH_dv", j-1, "*dv1", j-1, "*", jvinvExpr[j]), j, 1, vdim), " + ")),
       printf(fh, "  } ~%")
     )
   ),

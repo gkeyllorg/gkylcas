@@ -11,7 +11,7 @@ load(stringproc)$
 fpprec : 24$
 
 divideJvel(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
-  [varsC,bC,varsV,bV,varsP,bP,NP,
+  [varsC,bC,varsV,bV,varsP,bP,NP,pVelJv,iN,jN,
    nodes_vel,num_nodes_vel,basisNodal_vel,
    Jf_e,Jf_n,Jf_ne,f_c],
 
@@ -21,13 +21,28 @@ divideJvel(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
   num_nodes_conf : length(nodes_conf),
   basisNodal_conf  : getVarsNodalBasisWithNodes("Tensor", cdim, polyOrder, varsC, nodes_conf),
 
-  nodes_vel : gaussOrd(polyOrder+1, vdim),
+  /* Velocity-space nodes use the VELOCITY poly order: the tensor p=1 hybrid
+     is p=2 in velocity space, so its Jacobian lives at 3 Gauss-Legendre
+     points per velocity dimension (matching jacob_vel_gauss storage), not
+     the p+1 = 2 of the configuration-space order. */
+  pVelJv : vlasovPVel(basisFun, polyOrder),
+  nodes_vel : gaussOrd(pVelJv+1, vdim),
   num_nodes_vel : length(nodes_vel),
-  basisNodal_vel  : getVarsNodalBasisWithNodes("Tensor", vdim, polyOrder, varsV, nodes_vel),
+  basisNodal_vel  : getVarsNodalBasisWithNodes("Tensor", vdim, pVelJv, varsV, nodes_vel),
 
-  nodes_phase : gaussOrd(polyOrder+1, cdim+vdim),
+  /* Mixed-order phase nodes and cardinal basis: tensor product of the
+     configuration-space and velocity-space nodal sets, velocity fastest
+     (matching the nodal index (j-1) + num_nodes_vel*(i-1) below and the
+     per-velocity-node jacob_vel_gauss indexing). */
+  nodes_phase : [],
+  basisNodal_phase : [],
+  for iN : 1 thru num_nodes_conf do (
+    for jN : 1 thru num_nodes_vel do (
+      nodes_phase : endcons(append(nodes_conf[iN], nodes_vel[jN]), nodes_phase),
+      basisNodal_phase : endcons(basisNodal_conf[iN]*basisNodal_vel[jN], basisNodal_phase)
+    )
+  ),
   num_nodes_phase : length(nodes_phase),
-  basisNodal_phase  : getVarsNodalBasisWithNodes("Tensor", cdim+vdim, polyOrder, varsP, nodes_phase),
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *jacob_vel_gauss, const double *Jf, double* GKYL_RESTRICT f_no_J) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
@@ -67,23 +82,38 @@ divideJvel(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
 )$
 
 rescaleJvel(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
-  [varsC,bC,varsV,bV,varsP,bP,NP,
+  [varsC,bC,varsV,bV,varsP,bP,NP,pVelJv,iN,jN,
    nodes_vel,num_nodes_vel,basisNodal_vel,
    f_no_J_e,f_no_J_n,Jf_ne,f_c],
 
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
   NP : length(bP), 
-  nodes_conf : gaussOrd(polyOrder+1, cdim), 
-  num_nodes_conf : length(nodes_conf), 
+  nodes_conf : gaussOrd(polyOrder+1, cdim),
+  num_nodes_conf : length(nodes_conf),
   basisNodal_conf  : getVarsNodalBasisWithNodes("Tensor", cdim, polyOrder, varsC, nodes_conf),
 
-  nodes_vel : gaussOrd(polyOrder+1, vdim), 
-  num_nodes_vel : length(nodes_vel), 
-  basisNodal_vel  : getVarsNodalBasisWithNodes("Tensor", vdim, polyOrder, varsV, nodes_vel),
+  /* Velocity-space nodes use the VELOCITY poly order: the tensor p=1 hybrid
+     is p=2 in velocity space, so its Jacobian lives at 3 Gauss-Legendre
+     points per velocity dimension (matching jacob_vel_gauss storage), not
+     the p+1 = 2 of the configuration-space order. */
+  pVelJv : vlasovPVel(basisFun, polyOrder),
+  nodes_vel : gaussOrd(pVelJv+1, vdim),
+  num_nodes_vel : length(nodes_vel),
+  basisNodal_vel  : getVarsNodalBasisWithNodes("Tensor", vdim, pVelJv, varsV, nodes_vel),
 
-  nodes_phase : gaussOrd(polyOrder+1, cdim+vdim), 
-  num_nodes_phase : length(nodes_phase), 
-  basisNodal_phase  : getVarsNodalBasisWithNodes("Tensor", cdim+vdim, polyOrder, varsP, nodes_phase),
+  /* Mixed-order phase nodes and cardinal basis: tensor product of the
+     configuration-space and velocity-space nodal sets, velocity fastest
+     (matching the nodal index (j-1) + num_nodes_vel*(i-1) below and the
+     per-velocity-node jacob_vel_gauss indexing). */
+  nodes_phase : [],
+  basisNodal_phase : [],
+  for iN : 1 thru num_nodes_conf do (
+    for jN : 1 thru num_nodes_vel do (
+      nodes_phase : endcons(append(nodes_conf[iN], nodes_vel[jN]), nodes_phase),
+      basisNodal_phase : endcons(basisNodal_conf[iN]*basisNodal_vel[jN], basisNodal_phase)
+    )
+  ),
+  num_nodes_phase : length(nodes_phase),
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *jacob_vel_gauss, const double *f_no_J, double* GKYL_RESTRICT Jf) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),

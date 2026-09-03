@@ -36,14 +36,13 @@ maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 /* Hamiltonian representations: the label is both the kernel-name segment and
    the hamil_rep passed to the generators. vel_sparse is skipped in 1V (sparse
    and dense are identical there; kernel tables alias 1V sparse to dense). */
-velHamil     : ["vel_dense", "phase"]$
+velHamil     : ["vel_dense", "vel_sparse", "phase"]$
 
 clabels : ["x","y","z"]$
 vlabels : ["vx","vy","vz"]$
-/* No sparse vol_alpha: the sparse flavor inlines the exact bracket at
-   every combo (see ms-triadVol.mac), so only dense/phase use the
-   precomputed-alpha path. */
-hamilLabels : ["vel_dense", "phase"]$
+/* Sparse vol_alpha exists only at c+v>=5: below 5D the sparse flavor
+   inlines the exact bracket (see the POLICY note in ms-triadVol.mac). */
+hamilLabels : ["vel_dense", "vel_sparse", "phase"]$
 
 /* Generate kernels of selected types. */
 for bInd : 1 thru length(bName) do (
@@ -66,12 +65,17 @@ for bInd : 1 thru length(bName) do (
           for vhamilInd : 1 thru length(velHamil) do (
             hamil_rep : velHamil[vhamilInd],
 
+            /* POLICY: sparse vol_alpha at c+v>=5 only (inline bracket below);
+               RULE: hamil_phase at c+v>=5 is p=1 only. */
+            if (not(hamil_rep = "vel_sparse" and c+v<5)
+                and not(hamil_rep = "phase" and c+v>=5 and polyOrder>1)) then (
             fname : sconcat("~/max-out/vlasov_nc_hamil_", hamilLabels[vhamilInd], "_vol_alpha_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
             disp(printf(false,"Creating volume file: ~a",fname)),
             fh : openw(fname),
             funcName : sconcat("vlasov_nc_hamil_", hamilLabels[vhamilInd], "_vol_alpha_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
             calcHamilVolNonCanonicalAlpha(fh, funcName, c, v, bName[bInd], polyOrder, hamil_rep, false),
             close(fh) 
+            )
           )
         )
       )

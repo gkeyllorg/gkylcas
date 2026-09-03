@@ -32,14 +32,17 @@ maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 velHamil     : [true, false]$
 
-/* No sparse vol_alpha: the sparse flavor inlines the exact bracket at
-   every combo (see ms-triadVol.mac), so only dense/phase use the
-   precomputed-alpha path. */
-hamilLabels : ["vel_dense", "phase"]$
+/* All flavors use the comps machinery at c+v>=5 (see ms-triadVol.mac
+   policy); the sparse flavor inlines the exact bracket below 5D, so its
+   vol_alpha declarations are 5D/6D-only. */
+hamilLabels : ["vel_dense", "vel_sparse", "phase"]$
 
 printPrototype(comp, deco, ci, vi, bStr, hStr, pi) := block([si],
   if (ci <= vi and pi < 3) then (
-    if (comp = 0) then (
+    /* Sparse vol_alpha exists only at c+v>=5 (inline bracket below);
+       RULE: hamil_phase at c+v>=5 is p=1 only. */
+    if (comp = 0 and not(hStr = "vel_sparse" and ci+vi < 5)
+        and not(hStr = "phase" and ci+vi>=5 and pi>1)) then (
       printf(fh, "~avoid vlasov_nc_hamil_~a_vol_alpha_~ax~av_~a_p~a(const double *w, const double *dxv, const int dir,
         const double *vmap, const double *jacob_pos, const double *jacob_vel,
         const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT out); ~%", deco, hStr, ci, vi, bStr, pi)
@@ -62,9 +65,9 @@ printf(fh, "// These component kernels evaluate the volume-term Galerkin contrac
 printf(fh, "// <grad(phi), alpha f> from a PRECOMPUTED modal phase-space alpha. They are ~%")$
 printf(fh, "// agnostic to the form of the Hamiltonian -- the alpha handed to them has ~%")$
 printf(fh, "// already been projected onto the dense phase basis -- hence the hamil_gen ~%")$
-printf(fh, "// naming. Only the vel_dense and phase Hamiltonian flavors use this ~%")$
-printf(fh, "// machinery: the sparse (separable) Hamiltonian always uses the inline ~%")$
-printf(fh, "// exact-bracket volume kernels and never calls these components. ~%")$
+printf(fh, "// naming. Every Hamiltonian flavor uses this machinery at 5D/6D; below ~%")$
+printf(fh, "// that the sparse (separable) Hamiltonian uses the inline exact-bracket ~%")$
+printf(fh, "// volume kernels instead. ~%")$
 printf(fh, "#include <math.h> ~%")$
 printf(fh, "#include <gkyl_util.h> ~%")$
 printf(fh, "EXTERN_C_BEG ~%")$
@@ -82,7 +85,7 @@ for bInd : 1 thru length(bName) do (
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
 
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
-        for vhamilInd : 1 thru length(velHamil) do (
+        for vhamilInd : 1 thru length(hamilLabels) do (
           if ((c+v>=4) or (v = 3) ) and ((( polyOrder > 1 and c+v < 6) or (c+v >= 5)) or (c+v = 4 and polyOrder = 2 ))then (
             [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(bName[bInd], c, v, polyOrder), 
             for component : 0 thru (length(bP)-1) do( 

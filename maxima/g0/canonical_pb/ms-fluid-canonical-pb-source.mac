@@ -41,7 +41,7 @@ for bInd : 1 thru length(bName) do (
       disp(printf(false,"Creating volume file: ~a",fname)),
 
       fh : openw(fname),
-      printf(fh, "#include <gkyl_canonical_pb_kernels.h> ~%"),
+      printf(fh, "#include <gkyl_canonical_fluid_kernels.h> ~%"),
 
       funcName : sconcat("canonical_pb_fluid_hasegawa_mima_source_", c, "x_", bName[bInd], "_p", polyOrder),
       buildFluidCanonicalPBSourceHasegawaMimaKernel(fh, funcName, c, bName[bInd], polyOrder), 
@@ -51,7 +51,7 @@ for bInd : 1 thru length(bName) do (
       disp(printf(false,"Creating volume file: ~a",fname)),
 
       fh : openw(fname),
-      printf(fh, "#include <gkyl_canonical_pb_kernels.h> ~%"),
+      printf(fh, "#include <gkyl_canonical_fluid_kernels.h> ~%"),
 
       funcName : sconcat("canonical_pb_fluid_hasegawa_wakatani_source_", c, "x_", bName[bInd], "_p", polyOrder),
       buildFluidCanonicalPBSourceHasegawaWakataniKernel(fh, funcName, c, bName[bInd], polyOrder), 
@@ -61,7 +61,7 @@ for bInd : 1 thru length(bName) do (
       disp(printf(false,"Creating volume file: ~a",fname)),
 
       fh : openw(fname),
-      printf(fh, "#include <gkyl_canonical_pb_kernels.h> ~%"),
+      printf(fh, "#include <gkyl_canonical_fluid_kernels.h> ~%"),
 
       funcName : sconcat("canonical_pb_fluid_subtract_zonal_", c, "x_", bName[bInd], "_p", polyOrder),
       buildFluidCanonicalPBSubtractZonalKernel(fh, funcName, c, bName[bInd], polyOrder), 

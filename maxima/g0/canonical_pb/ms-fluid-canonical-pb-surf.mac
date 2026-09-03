@@ -36,7 +36,7 @@ maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 clabels : ["x","y","z"]$
 
 includeSurfHeaders(fhIn, bname, c, porder, dir) := block([],
-  printf(fhIn, "#include <gkyl_canonical_pb_kernels.h>~%"),
+  printf(fhIn, "#include <gkyl_canonical_fluid_kernels.h>~%"),
   printf(fh, "#include <gkyl_basis_~a_~ax_p~a_upwind_quad_to_modal.h> ~%", bname, c, porder)
 )$
 printf(fh, "~%"),

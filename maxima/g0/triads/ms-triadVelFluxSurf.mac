@@ -61,7 +61,7 @@ for bInd : 1 thru length(bName) do (
             for vhamilInd : 1 thru length(velHamil) do (
               hamil_rep : velHamil[vhamilInd],
 
-              if not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) and not(hamil_rep = "vel_sparse" and v = 1) then (
+              if not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) and not(hamil_rep = "vel_sparse" and v = 1) and not(hamil_rep = "phase" and c+v>=5 and polyOrder>1) then (
                 if ((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = false)) then si : "",
                 /* Phase-space Hamiltonian surface component. Only generate with Serendipity basis for now. */
                 fname : sconcat("~/max-out/nc_hamil_", hamilLabels[vhamilInd],"_",si,"alpha_quad_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),

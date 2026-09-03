@@ -90,8 +90,9 @@ for bInd : 1 thru length(bName) do (
               if (v > 1) then (
                 for hrInd : 1 thru length(hamilReps) do (
                   hamilRep : hamilReps[hrInd],
-                  /* No phase-space Hamiltonian magnetic force for tensor p>1 (cubic rep). */
-                  if ((bName[bInd] = "tensor" and polyOrder > 1) and (hamilRep = "phase")) then (
+                  /* RULE: hamil_phase at c+v>=5 is p=1 only; also no
+                     phase-space Hamiltonian magnetic force for tensor p>1 (cubic rep). */
+                  if (((bName[bInd] = "tensor" and polyOrder > 1) or (c+v>=5 and polyOrder>1)) and (hamilRep = "phase")) then (
                     disp(printf(false,sconcat("Skipping B alpha ",vlabels[dir]," kernel for phase hamil ",bName[bInd]," ~ax~avP~a"),c,v,polyOrder))
                   )
                   else (
@@ -151,7 +152,7 @@ for bInd : 1 thru length(bName) do (
             for dir : 1 thru maxC do (
               /* Phase-space Hamiltonian surface component: Serendipity and the
                  tensor p=1 hybrid (no phase rep for tensor p>1). */
-              if (bName[bInd] = "ser" or polyOrder = 1) then (
+              if ((bName[bInd] = "ser" or bName[bInd] = "tensor") and not(c+v>=5 and polyOrder>1)) then (
                 fname : sconcat("~/max-out/hamil_phase_",si,"alpha_quad_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                 fh : openw(fname),
                 funcName : sconcat("hamil_phase_",si,"alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),

@@ -110,7 +110,8 @@ calcHamilVolNonCanonical(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep,
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *vmap,
-  const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
   if (hamil_rep = "phase") then (
     hamil : doExpand1(hamil, bP)
   )
@@ -142,8 +143,57 @@ calcHamilVolNonCanonical(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep,
   for dir : 1 thru cdim do (
     printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_pos[~a]; ~%", clabels[dir], (polyOrder+1)*(dir-1))
   ),
-  for dir : 1 thru vdim do (
-    printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel[~a]; ~%", clabels[dir], (polyOrder+1)*(dir-1))
+  /* Velocity-map Jacobians. The f slot carries the full Jf; each velocity
+     derivative d/dv_i folds in the inverse Jacobian of ITS OWN direction:
+     - C^0 linear map (ser): J is a per-cell constant per direction (entry 0
+       of the direction's block) -- scalar 1/J multiplication (original form).
+     - C^1 cubic map (tensor): J is quadratic in-cell -- divide NODALLY per
+       direction with a 1D transform (evaluate at the 1D Gauss-Legendre
+       Jacobian nodes of that direction, divide, project back), exactly as
+       the validated plain hamil vols do. A vel-vel bracket term applies two
+       sequential 1D divides (one per derivative direction). */
+  jacRep : vlasovVelMapRep(basisFun),
+  if (jacRep = "cubic") then (
+    [bV_vi, NV_1D, jacobNodes, numJacobNodes, jacobNodes_vi, basisNodal_vi] : loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)),
+    for dir : 1 thru vdim do (
+      printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", clabels[dir], numJacobNodes*(dir-1))
+    ),
+    clst_J : append(makelist(arraymake(jacob_vx,[i-1]), i, 1, numJacobNodes),
+                    makelist(arraymake(jacob_vy,[i-1]), i, 1, numJacobNodes),
+                    makelist(arraymake(jacob_vz,[i-1]), i, 1, numJacobNodes)),
+    /* Emit the single-direction divided distributions f_dJv<d> once each;
+       vel-vel pairs reuse them with one extra 1D divide. */
+    fDiv1_e : makelist(0, k, 1, vdim),
+    for d : 1 thru vdim do block([fl_v, fl_ne, f_c, symNm],
+      symNm : eval_string(sconcat("f_dJv", d-1)),
+      printf(fh, "  double f_dJv~a[~a] = {0.0}; ~%", d-1, NP),
+      fl_v : evAtNodes(f_e, jacobNodes, [varsV[d]]),
+      fl_ne : sum(fl_v[i]/jacobNodes_vi[d][i]*basisNodal_vi[d][i], i, 1, numJacobNodes),
+      f_c : calcInnerProdList(varsP, 1, bP, fl_ne),
+      writeCExprsCollect1(symNm, f_c, clst_J),
+      printf(fh, "~%"),
+      fDiv1_e[d] : doExpand1(symNm, bP)
+    ),
+    /* Pair-divided distributions for the vel-vel block, from the singles. */
+    fDiv2_e : makelist(makelist(0, k2, 1, vdim), k1, 1, vdim),
+    if (vdim > 1) then (
+      for d1 : 1 thru vdim do (
+        for d2 : d1+1 thru vdim do block([fl_v, fl_ne, f_c, symNm],
+          symNm : eval_string(sconcat("f_dJv", d1-1, "v", d2-1)),
+          printf(fh, "  double f_dJv~av~a[~a] = {0.0}; ~%", d1-1, d2-1, NP),
+          fl_v : evAtNodes(fDiv1_e[d1], jacobNodes, [varsV[d2]]),
+          fl_ne : sum(fl_v[i]/jacobNodes_vi[d2][i]*basisNodal_vi[d2][i], i, 1, numJacobNodes),
+          f_c : calcInnerProdList(varsP, 1, bP, fl_ne),
+          writeCExprsCollect1(symNm, f_c, clst_J),
+          printf(fh, "~%"),
+          fDiv2_e[d1][d2] : doExpand1(symNm, bP)
+        )
+      )
+    )
+  ) else (
+    for dir : 1 thru vdim do (
+      printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel[~a]; ~%", clabels[dir], (polyOrder+1)*(dir-1))
+    )
   ),
   /* Physical transverse velocity from the C^0 linear velocity map (slots
      [0],[1] of each direction's 4-slot block); only the (vel,vel) Poisson
@@ -160,7 +210,17 @@ calcHamilVolNonCanonical(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep,
     printf(fh, "  const double dv1~a_sq = dv1~a*dv1~a; ~%",  i-1, i-1, i-1)
   ),
   loadVelLinearMapBasis(),
-  vmapTrans : [doExpand1(vmap_vx, bV_lin_vi[1]), doExpand1(vmap_vy, bV_lin_vi[2]), doExpand1(vmap_vz, bV_lin_vi[3])],
+  if (jacRep = "cubic") then (
+    /* C^1 cubic velocity map: vmap holds a genuine 1D p=3 tensor modal
+       expansion per direction (4 slots). The physical transverse velocity in
+       the vel-vel Poisson-tensor momentum factor must use the FULL cubic
+       expansion (the linear slots alone misrepresent the map in-cell). */
+    [varsV_p3map, bV_p3map] : loadBasis("Tensor", 1, 3),
+    bV_map_vi : [subst(x=vx, copylist(bV_p3map)), subst(x=vy, copylist(bV_p3map)), subst(x=vz, copylist(bV_p3map))]
+  ) else (
+    bV_map_vi : bV_lin_vi
+  ),
+  vmapTrans : [doExpand1(vmap_vx, bV_map_vi[1]), doExpand1(vmap_vy, bV_map_vi[2]), doExpand1(vmap_vz, bV_map_vi[3])],
 
 
   /* for a 2*vdim space varsPFull */
@@ -192,12 +252,22 @@ calcHamilVolNonCanonical(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep,
     if not((( dir1 <= vdim ) and ( dir1 > cdim )) or (( dir2 <= vdim ) and ( dir2 > cdim ))) then (
       printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", pt_index - 1, NC*(pt_index-1)),
 
-      /* Derivative factors: each d/dz_i carries 2/dz and the inverse mesh
-         Jacobian of its own direction. */
-      if (dir1 <= vdim ) then dz_val1 : dx1[dir1]*jacobCInv_sym[dir1] else dz_val1 : dv1_inv[dir1-vdim]*jacobVInv_sym[dir1-vdim],
-      if (dir2 <= vdim ) then dz_val2 : dx1[dir2]*jacobCInv_sym[dir2] else dz_val2 : dv1_inv[dir2-vdim]*jacobVInv_sym[dir2-vdim],
-      dvol : dz_val1*dz_val2, 
-
+      /* Derivative factors: each d/dz_i carries 2/dz and (conf) the constant
+         inverse position-map Jacobian. Velocity Jacobians: ser folds the
+         own-direction scalar inverse per derivative; tensor selects the
+         appropriately nodally-divided distribution instead. */
+      if (dir1 <= vdim ) then dz_val1 : dx1[dir1]*jacobCInv_sym[dir1] else dz_val1 : dv1_inv[dir1-vdim],
+      if (dir2 <= vdim ) then dz_val2 : dx1[dir2]*jacobCInv_sym[dir2] else dz_val2 : dv1_inv[dir2-vdim],
+      if (jacRep = "cubic") then (
+        if (dir1 > vdim and dir2 > vdim) then f_vol_e : fDiv2_e[dir1-vdim][dir2-vdim]
+        else if (dir2 > vdim) then f_vol_e : fDiv1_e[dir2-vdim]
+        else f_vol_e : f_e
+      ) else (
+        f_vol_e : f_e,
+        if (dir1 > vdim) then dz_val1 : dz_val1*jacobVInv_sym[dir1-vdim],
+        if (dir2 > vdim) then dz_val2 : dz_val2*jacobVInv_sym[dir2-vdim]
+      ),
+      dvol : dz_val1*dz_val2,
       /* For cdim /= vdim, we assume the ignorable coordinates are the last pairs.
         For instance if we have varsC = [x,y,z] with:
         - 1 ignorable coordinate: [x, y, \dot{x}, \dot{y}] are all that show up in {f,H} 
@@ -263,35 +333,114 @@ calcHamilVolNonCanonicalAlphaPreComp(fh, funcNm, cdim, vdim, basisFun, polyOrder
 
 
   printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *vmap,
-  const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
  
-  /* Allocate all the memory needed by the volume kernels */
-  printf(fh, "  double alphai[~a] = {0.0}; ~%", length(bP)),
-  printf(fh, "  double bracket_w_Hi[~a] = {0.0}; ~%", length(bP)),
-
-  /* Call all of the kernels for each component */
   funcNameComputePiDh : sconcat("vlasov_nc_hamil_", hamilLabel, "_vol_alpha_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
 
-  /* Iterate over directions */
-  printf(fh, "  for (int dir = 0; dir<~a; ++dir) { ~%",pdim),
-
-  /* Grab the various components of (Pi*dH/dz)_h and save as these will remain
-   the same for all phase space basis - this is really the bulk of the calculation */
-  printf(fh, "    // Compute the per-direction charateristic ~%"),
-  printf(fh, "    ~a(alphai); ~%", funcNameZero),
-  printf(fh, "    ~a(w, dxv, dir, vmap, jacob_pos, jacob_vel, poisson_tensor_conf, hamil, alphai); ~%", funcNameComputePiDh),
-  printf(fh, "    ~%"),
-
-  /* iterate over the number of components */
-  printf(fh, "    // Compute the modal basis backet coeffcients, accumulate the outputs ~%"),
-  for component : 1 thru NP do (
-    printf(fh, "    ~a(bracket_w_Hi); ~%", funcNameZero),
-    funcNameBracket : sconcat("vlasov_nc_hamil_gen_vol_comp", (component -1),"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-    printf(fh, "    ~a(w, dxv, dir, jacob_pos, jacob_vel, alphai, bracket_w_Hi); ~%", funcNameBracket),
-    printf(fh, "    ~a(f, bracket_w_Hi, &out[~a]); ~%", funcNameDot, component-1),
-    flush_output(fh) 
+  if (vlasovVelMapRep(bName[bInd]) = "linear") then (
+    /* ---- C^0 linear map (ser): original single-block flow, contraction
+       with f (constant Jacobians ride inside alpha/comps). ---- */
+    printf(fh, "  double alphai[~a] = {0.0}; ~%", length(bP)),
+    printf(fh, "  double bracket_w_Hi[~a] = {0.0}; ~%", length(bP)),
+    printf(fh, "  for (int dir = 0; dir<~a; ++dir) { ~%",pdim),
+    printf(fh, "    // Compute the per-direction charateristic ~%"),
+    printf(fh, "    ~a(alphai); ~%", funcNameZero),
+    printf(fh, "    ~a(w, dxv, dir, vmap, jacob_pos, jacob_vel, poisson_tensor_conf, hamil, alphai); ~%", funcNameComputePiDh),
+    printf(fh, "    ~%"),
+    printf(fh, "    // Compute the modal basis backet coeffcients, accumulate the outputs ~%"),
+    for component : 1 thru NP do (
+      printf(fh, "    ~a(bracket_w_Hi); ~%", funcNameZero),
+      funcNameBracket : sconcat("vlasov_nc_hamil_gen_vol_comp", (component -1),"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+      printf(fh, "    ~a(w, dxv, dir, jacob_pos, jacob_vel, alphai, bracket_w_Hi); ~%", funcNameBracket),
+      printf(fh, "    ~a(f, bracket_w_Hi, &out[~a]); ~%", funcNameDot, component-1),
+      flush_output(fh)
+    ),
+    printf(fh, "    ~%"),
+    printf(fh, "  } ~%")
+  ) else (
+    /* ---- C^1 cubic map (tensor): division-free exact-conservation flow.
+       The alpha kernel is J-FREE and writes PER-PARTNER blocks; every
+       velocity-Jacobian factor is applied here as a MODAL TEMPORARY built
+       from f_no_J by 1D nodal multiplication (the magnetic-force J*f
+       reconstruction pattern), and each block's bracket is contracted with
+       the f-object of its (dir, partner) pair. Both pieces of every
+       antisymmetric pair dot the SAME object => H conserved exactly. ---- */
+    block([f_e, fl, fmul_ne, f_c, fJ_e, clst_J, fS_nm, i1, k1],
+      [bV_vi, NV_1D, jacobNodes, numJacobNodes, jacobNodes_vi, basisNodal_vi] : loadVelJacobianBasis(vlasovPVel(bName[bInd], polyOrder)),
+      for d : 1 thru vdim do printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", clabels[d], numJacobNodes*(d-1)),
+      clst_J : append(makelist(arraymake(jacob_vx,[i-1]), i, 1, numJacobNodes),
+                      makelist(arraymake(jacob_vy,[i-1]), i, 1, numJacobNodes),
+                      makelist(arraymake(jacob_vz,[i-1]), i, 1, numJacobNodes)),
+      f_e : doExpand1(f_no_J, bP),
+      /* Singles: f_Jv<k> = Proj[J_k * f_no_J]. */
+      fJ_e : makelist(0, k, 1, vdim),
+      for k : 1 thru vdim do (
+        printf(fh, "  double f_Jv~a[~a] = {0.0}; ~%", k-1, NP),
+        fl : evAtNodes(f_e, jacobNodes, [varsV[k]]),
+        fmul_ne : sum(fl[i]*jacobNodes_vi[k][i]*basisNodal_vi[k][i], i, 1, numJacobNodes),
+        f_c : calcInnerProdList(varsP, 1, bP, fmul_ne),
+        writeCExprsCollect1(eval_string(sconcat("f_Jv", k-1)), f_c, clst_J),
+        printf(fh, "~%"),
+        fJ_e[k] : doExpand1(eval_string(sconcat("f_Jv", k-1)), bP)
+      ),
+      /* Conf-partner complements: f_Sv<j> = Proj[prod_{k#j} J_k * f_no_J]
+         (a second 1D multiply on a single; vdim=2 reuses the other single;
+         vdim=1 is f_no_J itself). */
+      fS_nm : makelist("", j, 1, vdim),
+      if (vdim = 1) then fS_nm[1] : "f_no_J"
+      else if (vdim = 2) then (fS_nm[1] : "f_Jv1", fS_nm[2] : "f_Jv0")
+      else (
+        for j : 1 thru vdim do block([othr],
+          othr : delete(j, [1,2,3]),
+          i1 : othr[1], k1 : othr[2],
+          printf(fh, "  double f_Sv~a[~a] = {0.0}; ~%", j-1, NP),
+          fl : evAtNodes(fJ_e[i1], jacobNodes, [varsV[k1]]),
+          fmul_ne : sum(fl[i]*jacobNodes_vi[k1][i]*basisNodal_vi[k1][i], i, 1, numJacobNodes),
+          f_c : calcInnerProdList(varsP, 1, bP, fmul_ne),
+          writeCExprsCollect1(eval_string(sconcat("f_Sv", j-1)), f_c, clst_J),
+          printf(fh, "~%"),
+          fS_nm[j] : sconcat("f_Sv", j-1)
+        )
+      ),
+      printf(fh, "  double alphai[~a] = {0.0}; ~%", pdim*NP),
+      printf(fh, "  double bracket_w_Hi[~a] = {0.0}; ~%", NP),
+      /* Per-direction unrolled: each direction owns its partner classes. */
+      for dird : 0 thru pdim-1 do block([classes, cls, i0, obj],
+        classes : [],
+        if (dird < cdim) then (
+          /* conf dir: partners are all velocity directions. */
+          for j : 1 thru vdim do classes : endcons([cdim + j - 1, fS_nm[j]], classes)
+        ) else (
+          /* vel dir: partners are the OTHER velocity directions (the conf
+             partner block vanishes for the velocity-space Hamiltonian). */
+          i0 : dird - cdim + 1,
+          for j : 1 thru vdim do (
+            if (j # i0) then (
+              if (vdim = 2) then obj : "f_no_J"
+              else obj : sconcat("f_Jv", first(delete(j, delete(i0, [1,2,3]))) - 1),
+              classes : endcons([cdim + j - 1, obj], classes)
+            )
+          )
+        ),
+        if (length(classes) > 0) then (
+          printf(fh, "  { ~%"),
+          printf(fh, "    const int dir = ~a; ~%", dird),
+          printf(fh, "    for (int i = 0; i<~a; ++i) alphai[i] = 0.0; ~%", pdim*NP),
+          printf(fh, "    ~a(w, dxv, dir, vmap, jacob_pos, jacob_vel, poisson_tensor_conf, hamil, alphai); ~%", funcNameComputePiDh),
+          for component : 1 thru NP do (
+            funcNameBracket : sconcat("vlasov_nc_hamil_gen_vol_comp", (component -1),"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+            for cls in classes do (
+              printf(fh, "    ~a(bracket_w_Hi); ~%", funcNameZero),
+              printf(fh, "    ~a(w, dxv, dir, jacob_pos, jacob_vel, &alphai[~a], bracket_w_Hi); ~%", funcNameBracket, cls[1]*NP),
+              printf(fh, "    ~a(~a, bracket_w_Hi, &out[~a]); ~%", funcNameDot, cls[2], component-1)
+            ),
+            flush_output(fh)
+          ),
+          printf(fh, "  } ~%")
+        )
+      )
+    )
   ),
-  printf(fh, "    ~%"),
-  printf(fh, "  } ~%"),
   printf(fh, "} ~%") 
 )$  

@@ -302,9 +302,10 @@ for bInd : 1 thru length(bName) do (
       /* We do not generate 5D and 6D p>1 phase-space Hamiltonian kernels. */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
-        /* Phase-space Hamiltonian volume component: Serendipity and the
-           tensor p=1 hybrid (no phase rep for tensor p>1). */
-        if (bName[bInd] = "ser" or polyOrder = 1) then (
+        /* Phase-space Hamiltonian volume component. RULE: hamil_phase at
+           c+v>=5 (2x3v, 3x3v) is p=1 ONLY (ser pure p1, tensor p1 hybrid);
+           phase p2 exists only at c+v<5. */
+        if ((bName[bInd] = "ser" or bName[bInd] = "tensor") and not(c+v>=5 and polyOrder>1)) then (
           fname : sconcat("~/max-out/vlasov_hamil_phase_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
           fh : openw(fname),
           funcName : sconcat("vlasov_hamil_phase_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),

@@ -17,7 +17,7 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
@@ -35,9 +35,14 @@ maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 
 printPrototype(deco, ci, vi, bStr, pi) := block([si],
+  /* At tensor p=1 (the hybrid), the conf-space content is identical to ser p=1,
+     so the n_set/n_copy/GammaV choosers alias the ser kernels; only the
+     phase-space pressure kernel is generated for the tensor p=1 hybrid. */
+  if not(bStr = "tensor" and pi = 1) then (
   printf(fh, "~avoid sr_vars_n_set_~ax~av_~a_p~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *M0, const double *M1i); ~%", deco, ci, vi, bStr, pi),
   printf(fh, "~avoid sr_vars_n_copy_~ax~av_~a_p~a(int count, struct gkyl_nmat *x, const double *M0, double* GKYL_RESTRICT n); ~%", deco, ci, vi, bStr, pi),
-  printf(fh, "~avoid sr_vars_GammaV_~ax~av_~a_p~a(const double *u_i, double* GKYL_RESTRICT u_i_sq, double* GKYL_RESTRICT GammaV, double* GKYL_RESTRICT GammaV_sq); ~%", deco, ci, vi, bStr, pi),
+  printf(fh, "~avoid sr_vars_GammaV_~ax~av_~a_p~a(const double *u_i, double* GKYL_RESTRICT u_i_sq, double* GKYL_RESTRICT GammaV, double* GKYL_RESTRICT GammaV_sq); ~%", deco, ci, vi, bStr, pi)
+  ),
   printf(fh, "~avoid sr_vars_pressure_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *gamma, const double *gamma_inv, const double *u_i, const double *u_i_sq, const double *GammaV, const double *GammaV_sq, const double *f, double* GKYL_RESTRICT sr_pressure); ~%", deco, ci, vi, bStr, pi),
   printf(fh, "~%")
 )$

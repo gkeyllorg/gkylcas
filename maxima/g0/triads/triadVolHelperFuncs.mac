@@ -25,6 +25,16 @@ vTrans  : [vx*dv0/2+wx1, vy*dv1/2+wx2, vz*dv2/2+wx3]$
    each derivative d/dz_i picks up the Jacobian of ITS OWN direction only. */
 jacobCInv_sym : [jacob_cx_inv, jacob_cy_inv, jacob_cz_inv]$
 jacobVInv_sym : [jacob_vx_inv, jacob_vy_inv, jacob_vz_inv]$
+
+/* 1D nodal divide of an expansion by the velocity-map Jacobian of direction d:
+   evaluate at the 1D Gauss-Legendre Jacobian nodes of that direction, divide
+   by the nodal Jacobian values, and re-expand (the C^1 cubic map's quadratic
+   in-cell Jacobian handled exactly at the nodes). Requires jacobNodes,
+   numJacobNodes, jacobNodes_vi, basisNodal_vi and varsV set by the caller. */
+ndivJ(expr_e, d) := block([vals],
+  vals : evAtNodes(expr_e, jacobNodes, [varsV[d]]),
+  sum(vals[i]/jacobNodes_vi[d][i]*basisNodal_vi[d][i], i, 1, numJacobNodes)
+)$
 cidx(cdim) := makelist(i,i,0,cdim-1)$
 vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
 PB_vol(f,g,x,y) := diff(f,x)*diff(g,y) - diff(g,x)*diff(f,y)$
@@ -116,16 +126,39 @@ calcHamilVolNonCanonicalHelper(fh, funcNm, cdim, vdim, basisFun, polyOrder, comp
   /* Constant per-direction mesh Jacobians (C^0 linear maps): the test-function
      derivative dw/dz_dir picks up the inverse Jacobian of its own direction. */
   for i : 1 thru cdim do printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_pos[~a]; ~%", clabels[i], (polyOrder+1)*(i-1)),
-  for i : 1 thru vdim do printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel[~a]; ~%", clabels[i], (polyOrder+1)*(i-1)),
+  jacRep : vlasovVelMapRep(basisFun),
+  if (jacRep = "cubic") then (
+    [bV_vi, NV_1D, jacobNodes, numJacobNodes, jacobNodes_vi, basisNodal_vi] : loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)),
+    for i : 1 thru vdim do printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", clabels[i], numJacobNodes*(i-1))
+  ) else (
+    for i : 1 thru vdim do printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel[~a]; ~%", clabels[i], (polyOrder+1)*(i-1))
+  ),
 
   printf(fh, "  ~%"),
   alpha_local_e : doExpand1(alpha,bP),
 
   /* Convert to a phase space PT by mulitplying by p for the bottom right block comps */
+  /* Test-function derivative dw/dz_dir: own-direction inverse Jacobian —
+     scalar constant for the C^0 linear map; 1D nodal divide of the modal
+     alpha for the C^1 cubic map (tensor). */
   for dir : 1 thru pdim do (
     printf(fh, "  if (dir == ~a) { ~%", dir - 1),
-    if (dir <= cdim ) then dvol : dx1[dir]*jacobCInv_sym[dir] else dvol : dv1_inv[dir-cdim]*jacobVInv_sym[dir-cdim],
-    pbBasis : dvol*diff(bP[comp],varsP[dir])*alpha_local_e,
+    if (dir <= cdim ) then (
+      dvol : dx1[dir]*jacobCInv_sym[dir],
+      alpha_use_e : alpha_local_e
+    ) else (
+      if (jacRep = "cubic") then (
+        /* Division-free design: all velocity-Jacobian factors are exact
+           polynomial multiplications inside alpha; the wrapper contracts
+           with f_no_J. The comp is J-free in velocity directions. */
+        dvol : dv1_inv[dir-cdim],
+        alpha_use_e : alpha_local_e
+      ) else (
+        dvol : dv1_inv[dir-cdim]*jacobVInv_sym[dir-cdim],
+        alpha_use_e : alpha_local_e
+      )
+    ),
+    pbBasis : dvol*diff(bP[comp],varsP[dir])*alpha_use_e,
     pb : fullratsimp(calcInnerProdList(varsP, 1, bP, pbBasis)),
 
     /* Volume factor for intergation */
@@ -192,7 +225,22 @@ calcHamilVolNonCanonicalAlpha(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil
   /* Constant per-direction mesh Jacobians (C^0 linear maps): each dH/dz_i
      derivative picks up the inverse Jacobian of its own direction. */
   for i : 1 thru cdim do printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_pos[~a]; ~%", clabels[i], (polyOrder+1)*(i-1)),
-  for i : 1 thru vdim do printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel[~a]; ~%", clabels[i], (polyOrder+1)*(i-1)),
+  jacRep : vlasovVelMapRep(basisFun),
+  if (jacRep = "cubic") then (
+    [bV_vi, NV_1D, jacobNodes, numJacobNodes, jacobNodes_vi, basisNodal_vi] : loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)),
+    for i : 1 thru vdim do printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", clabels[i], numJacobNodes*(i-1)),
+    /* Exact Jacobian expansions used MULTIPLICATIVELY: the stored jacob_vk
+       entries are NODAL VALUES at the loader's Jacobian nodes, so the
+       polynomial reconstruction MUST use the loader's own cardinal nodal
+       basis (basisNodal_vi at jacobNodes) — never treat them as modal
+       coefficients or assume a node set. Each dH/dv_j term in alpha then
+       carries the product of the COMPLEMENTARY directions' J's (the
+       wrapper dots with f_no_J). */
+    jacobVsym : [jacob_vx, jacob_vy, jacob_vz],
+    jacobV_e : makelist(fullratsimp(sum(arraymake(jacobVsym[k], [i-1])*basisNodal_vi[k][i], i, 1, numJacobNodes)), k, 1, vdim)
+  ) else (
+    for i : 1 thru vdim do printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel[~a]; ~%", clabels[i], (polyOrder+1)*(i-1))
+  ),
   /* Physical transverse velocity from the C^0 linear velocity map (slots
      [0],[1] of each direction's 4-slot block); only the (vel,vel) Poisson
      tensor block (vdim > 1) carries the momentum factor. */
@@ -200,7 +248,17 @@ calcHamilVolNonCanonicalAlpha(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil
     for i : 1 thru vdim do printf(fh, "  const double *vmap_v~a = &vmap[~a]; ~%", clabels[i], 4*(i-1))
   ),
   loadVelLinearMapBasis(),
-  vmapTrans : [doExpand1(vmap_vx, bV_lin_vi[1]), doExpand1(vmap_vy, bV_lin_vi[2]), doExpand1(vmap_vz, bV_lin_vi[3])],
+  if (jacRep = "cubic") then (
+    /* C^1 cubic velocity map: vmap holds a genuine 1D p=3 tensor modal
+       expansion per direction (4 slots). The physical transverse velocity in
+       the vel-vel Poisson-tensor momentum factor must use the FULL cubic
+       expansion (the linear slots alone misrepresent the map in-cell). */
+    [varsV_p3map, bV_p3map] : loadBasis("Tensor", 1, 3),
+    bV_map_vi : [subst(x=vx, copylist(bV_p3map)), subst(x=vy, copylist(bV_p3map)), subst(x=vz, copylist(bV_p3map))]
+  ) else (
+    bV_map_vi : bV_lin_vi
+  ),
+  vmapTrans : [doExpand1(vmap_vx, bV_map_vi[1]), doExpand1(vmap_vy, bV_map_vi[2]), doExpand1(vmap_vz, bV_map_vi[3])],
 
   /* for a 2*vdim space varsPFull */
   if (vdim = 3) then (
@@ -241,8 +299,14 @@ calcHamilVolNonCanonicalAlpha(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil
       /* Per-term derivative factors: each dH/dz_i carries the 2/dz of its own
          direction (the symmetric term differentiates in dir2, the antisymmetric
          term in dir1). */
-      if (dir1 <= vdim ) then dz_val1 : dx1[dir1]*jacobCInv_sym[dir1] else dz_val1 : dv1_inv[dir1-vdim]*jacobVInv_sym[dir1-vdim],
-      if (dir2 <= vdim ) then dz_val2 : dx1[dir2]*jacobCInv_sym[dir2] else dz_val2 : dv1_inv[dir2-vdim]*jacobVInv_sym[dir2-vdim],
+      /* Each dH/dz_i derivative folds in its own direction's inverse velocity
+         Jacobian: scalar constant for the linear map; 1D nodal divide of the
+         dH factor for the cubic map (applied below, commutes with the
+         conf-space Poisson tensor and transverse momentum factors). */
+      if (dir1 <= vdim ) then dz_val1 : dx1[dir1]*jacobCInv_sym[dir1]
+      else (if (jacRep = "cubic") then dz_val1 : dv1_inv[dir1-vdim] else dz_val1 : dv1_inv[dir1-vdim]*jacobVInv_sym[dir1-vdim]),
+      if (dir2 <= vdim ) then dz_val2 : dx1[dir2]*jacobCInv_sym[dir2]
+      else (if (jacRep = "cubic") then dz_val2 : dv1_inv[dir2-vdim] else dz_val2 : dv1_inv[dir2-vdim]*jacobVInv_sym[dir2-vdim]),
 
       /* For cdim /= vdim, we assume the ignorable coordinates are the last pairs.
         For instance if we have varsC = [x,y,z] with:
@@ -254,27 +318,44 @@ calcHamilVolNonCanonicalAlpha(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil
       if ( (dir1 > vdim) and (dir2 > vdim) ) then p_factor : vmapTrans[index_vsum] else p_factor : 1,
 
       /* Symmetric contribution: dH/dz_dir2, so dir2's derivative factor. */
-      pbBasis : dz_val2*diff(hamil,varsP2)*poissonTensorConf_local*p_factor,
+      /* J-FREE alpha (cubic): all velocity-Jacobian factors live in the
+         wrapper's modal f-object temporaries (J_k * f_no_J etc.), preserving
+         the orthogonality structure and keeping these kernels compact. The
+         blocks are indexed by the PARTNER direction so the wrapper can pair
+         each block's bracket with the correct f-object. */
+      dH2_e : diff(hamil,varsP2),
+      pbBasis : dz_val2*dH2_e*poissonTensorConf_local*p_factor,
       pb : fullratsimp(calcInnerProdList(varsP, 1, bP, pbBasis)), 
 
       /* Volume factor for intergation */
       clst_vol : [dx10, dx11, dx12, dv10, dv11, dv12,
         jacob_cx_inv, jacob_cy_inv, jacob_cz_inv, jacob_vx_inv, jacob_vy_inv, jacob_vz_inv],
       printf(fh, "  if (dir == ~a) { ~%", alpha_index_sym - 1),
-      writeCIncrExprsCollect1(out, pb, clst_vol),
+      if (jacRep = "cubic") then (
+        printf(fh, "  double *outb~a = &out[~a]; ~%", alpha_index_asym - 1, (alpha_index_asym - 1)*NP),
+        writeCIncrExprsCollect1(eval_string(sconcat("outb", alpha_index_asym - 1)), pb, clst_vol)
+      ) else (
+        writeCIncrExprsCollect1(out, pb, clst_vol)
+      ),
       printf(fh, "  } ~%"),
 
 
       /* Antisymmetric contribution: swap P2 -> P1 with a minus sign (PT and
          p_factor unchanged); dH/dz_dir1, so dir1's derivative factor. */
-      pbBasis : - dz_val1*diff(hamil,varsP1)*poissonTensorConf_local*p_factor,
+      dH1_e : diff(hamil,varsP1),
+      pbBasis : - dz_val1*dH1_e*poissonTensorConf_local*p_factor,
       pb : fullratsimp(calcInnerProdList(varsP, 1, bP, pbBasis)), 
 
       /* Volume factor for intergation */
       clst_vol : [dx10, dx11, dx12, dv10, dv11, dv12,
         jacob_cx_inv, jacob_cy_inv, jacob_cz_inv, jacob_vx_inv, jacob_vy_inv, jacob_vz_inv],
       printf(fh, "  if (dir == ~a) { ~%", alpha_index_asym - 1),
-      writeCIncrExprsCollect1(out, pb, clst_vol),
+      if (jacRep = "cubic") then (
+        printf(fh, "  double *outb~a = &out[~a]; ~%", alpha_index_sym - 1, (alpha_index_sym - 1)*NP),
+        writeCIncrExprsCollect1(eval_string(sconcat("outb", alpha_index_sym - 1)), pb, clst_vol)
+      ) else (
+        writeCIncrExprsCollect1(out, pb, clst_vol)
+      ),
       printf(fh, "  } ~%"),
 
 

@@ -53,7 +53,8 @@ calcHamilVelSurfForceNonCanonical(dir, fh, funcNm, cdim, vdim, basisFun, polyOrd
   [varsC,bC,varsV,bV,varsP,bP,cid,vid,vv,surfVars,surfVVars,bSurf,
    nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes,
    num_nodes_conf,num_nodes_vel,NC,NV,NB,tag,tabP,fact,NA,NMV,NS,
-   transK,omDefs,ppRows,ptxRow,retTerms,k,m,c,b,r,om,p],
+   transK,omDefs,ppRows,ptxRow,retTerms,k,m,c,b,r,om,p,nJPts,pp,nidx,
+   varsMap1,bMap1,vmapS,xnS,xnSqS,vt_e],
 
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
   NC : length(bC), NV : length(bV), NB : length(bP),
@@ -73,8 +74,11 @@ calcHamilVelSurfForceNonCanonical(dir, fh, funcNm, cdim, vdim, basisFun, polyOrd
 
   /* Mesh maps: each derivative picks up the inverse Jacobian of ITS OWN
      direction (dH/dx_c -> 1/J_x,c via jacob_pos, phase flavor only;
-     transverse dH/dv_k -> 1/J_v,k via jacob_vel_surf), and the omega = v.Pi
-     momentum factor evaluates physical velocity from the linear vmap. */
+     transverse dH/dv_k -> 1/J_v,k via jacob_vel_surf, per-node for the
+     C^1 cubic map whose in-cell Jacobian is quadratic), and the
+     omega = v.Pi momentum factor evaluates physical velocity from the
+     vmap in its native representation (linear for Serendipity, cubic
+     for Tensor). */
   printf(fh, "GKYL_CU_DH double ~a_node(int i, int j, const double *w, const double *dxv,
   const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
   const double *poisson_tensor_conf, const double *hamil) ~%{ ~%", funcNm),
@@ -160,18 +164,61 @@ calcHamilVelSurfForceNonCanonical(dir, fh, funcNm, cdim, vdim, basisFun, polyOrd
     if (vdim > 1) then (
       for m : 1 thru vdim do printf(fh, "  const double *vmap_v~a = &vmap[~a]; ~%", m-1, 4*(m-1)),
       for k in transK do printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", k-1, vid[k]),
-      for k in transK do printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a]; ~%", clabels[k], (polyOrder+2)*(k-1)),
-      /* Physical velocity at the node from the C^0 linear velocity map
-         (1D p1 modal evaluation of vmap slots [0],[1]); v_dir sits at its
-         -1 edge, transverse coordinates come from the shared node table. */
-      for m : 1 thru vdim do (
-        if (m = dir) then
-          printf(fh, "  const double vt~a = ~a*vmap_v~a[0] - ~a*vmap_v~a[1]; ~%",
-            m, float(1/sqrt(2)), m-1, float(sqrt(3/2)), m-1)
-        else block([p],
-          p : if m < dir then m-1 else m-2,
-          printf(fh, "  const double vt~a = ~a*vmap_v~a[0] + ~a*vmap_v~a[1]*vst_~a_vel_nodes_v~a[j*~a + ~a]; ~%",
-            m, float(1/sqrt(2)), m-1, float(sqrt(3/2)), m-1, tag, dir-1, vdim-1, p)
+      nJPts : vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder),
+      if (vlasovVelMapRep(basisFun) = "cubic") then (
+        /* C^1 cubic map: the in-cell Jacobian is quadratic, so each
+           transverse inverse Jacobian is evaluated at the node's own
+           per-direction 1D quadrature index (node j decomposes with the
+           last transverse direction fastest, nJPts points per direction;
+           same node set as jacob_vel_surf's per-direction blocks). */
+        for k in transK do block([pp, nidx],
+          pp : if k < dir then k-1 else k-2,
+          if (vdim = 2) then nidx : "j"
+          else nidx : if (pp = 0) then sconcat("j/", nJPts) else sconcat("j%", nJPts),
+          printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a + ~a]; ~%", clabels[k], nJPts*(k-1), nidx)
+        )
+      )
+      else (
+        for k in transK do printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a]; ~%", clabels[k], nJPts*(k-1))
+      ),
+      /* Physical velocity at the node from the velocity map, expanded in
+         the p1 (linear rep) or p3 (cubic rep) 1D modal basis; v_dir sits
+         at its -1 edge, transverse coordinates come from the shared node
+         table. */
+      if (vlasovVelMapRep(basisFun) = "cubic") then block([varsMap1, bMap1, vmapS, xnS, xnSqS, vt_e],
+        /* Expand the C^1 cubic map in the loaded 1D p3 modal basis. v_dir is
+           evaluated at its -1 edge at generation time; transverse directions
+           are evaluated at the runtime node coordinate (a symbol here), with
+           its powers rewritten as products for the emitted C. */
+        [varsMap1, bMap1] : loadBasis("Tensor", 1, 3),
+        for m : 1 thru vdim do (
+          vmapS : eval_string(sconcat("vmap_v", m-1)),
+          if (m = dir) then (
+            vt_e : float(expand(subst(x = -1, doExpand1(vmapS, bMap1)))),
+            printf(fh, "  const double vt~a = ~a; ~%", m, vt_e)
+          )
+          else block([p],
+            p : if m < dir then m-1 else m-2,
+            printf(fh, "  const double xn~a = vst_~a_vel_nodes_v~a[j*~a + ~a]; ~%", m-1, tag, dir-1, vdim-1, p),
+            printf(fh, "  const double xn~a_sq = xn~a*xn~a; ~%", m-1, m-1, m-1),
+            xnS : eval_string(sconcat("xn", m-1)),
+            xnSqS : eval_string(sconcat("xn", m-1, "_sq")),
+            vt_e : float(expand(subst(x = xnS, doExpand1(vmapS, bMap1)))),
+            vt_e : subst([xnS^3 = xnS*xnSqS, xnS^2 = xnSqS], vt_e),
+            printf(fh, "  const double vt~a = ~a; ~%", m, vt_e)
+          )
+        )
+      )
+      else (
+        for m : 1 thru vdim do (
+          if (m = dir) then
+            printf(fh, "  const double vt~a = ~a*vmap_v~a[0] - ~a*vmap_v~a[1]; ~%",
+              m, float(1/sqrt(2)), m-1, float(sqrt(3/2)), m-1)
+          else block([p],
+            p : if m < dir then m-1 else m-2,
+            printf(fh, "  const double vt~a = ~a*vmap_v~a[0] + ~a*vmap_v~a[1]*vst_~a_vel_nodes_v~a[j*~a + ~a]; ~%",
+              m, float(1/sqrt(2)), m-1, float(sqrt(3/2)), m-1, tag, dir-1, vdim-1, p)
+          )
         )
       ),
       /* omega_ab and the Pi_pp rows (0-based, within the block offset

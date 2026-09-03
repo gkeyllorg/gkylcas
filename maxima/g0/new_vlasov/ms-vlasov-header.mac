@@ -58,12 +58,13 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
       printf(fh, "~avoid vlasov_nc_hamil_vel_sparse_vol_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap,
         const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi)
     ),
-    printf(fh, "~avoid vlasov_nc_hamil_phase_vol_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap,
+    if not(ci+vi>=5 and pi>1) then
+      printf(fh, "~avoid vlasov_nc_hamil_phase_vol_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap,
       const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi)
   ),
   /* Phase-space Hamiltonian volume: Serendipity and the tensor p=1 hybrid
      (no phase rep for tensor p>1). */
-  if (bStr = "ser" or pi = 1) then (
+  if ((bStr = "ser" or bStr = "tensor") and not(ci+vi>=5 and pi>1)) then (
     printf(fh, "~avoid vlasov_hamil_phase_vol_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, 
       const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi)
   ),
@@ -189,7 +190,7 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
           printf(fhx, "~avoid nc_hamil_vel_sparse_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
           const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
         ),
-        printf(fhx, "~avoid nc_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+        if not(ci+vi>=5 and pi>1) then printf(fhx, "~avoid nc_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
           const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       )
       else (
@@ -205,9 +206,9 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
           printf(fhx, "~avoid nc_hamil_vel_sparse_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
         ),
-        printf(fhx, "~avoid nc_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+        if not(ci+vi>=5 and pi>1) then printf(fhx, "~avoid nc_hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
-        printf(fhx, "~avoid nc_hamil_phase_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
+        if not(ci+vi>=5 and pi>1) then printf(fhx, "~avoid nc_hamil_phase_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       )
     ),
@@ -219,7 +220,7 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
       const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, vi, bStr, pi),
       printf(fh, "~adouble vlasov_boundary_surfv~a_~ax~av_~a_p~a(const double *w, const double *dxv,
       const int edge, const double *flux, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, vi, bStr, pi),
-      if (bStr = "ser") then (
+      if ((bStr = "ser" or bStr = "tensor") and not(ci+vi>=5 and pi>1)) then (
         printf(fhx, "~avoid hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
@@ -253,7 +254,7 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
       const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, vi, bStr, pi),
       printf(fh, "~adouble vlasov_boundary_ho_surfv~a_~ax~av_~a_p~a(const double *w, const double *dxv,
       const int edge, const double *flux, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, vi, bStr, pi),
-      if (bStr = "ser" or pi = 1) then (
+      if ((bStr = "ser" or bStr = "tensor") and not(ci+vi>=5 and pi>1)) then (
         printf(fhx, "~avoid hamil_phase_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),
@@ -271,7 +272,7 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
       ),
       printf(fhx, "~avoid rad_alpha_quad_v~a_~ax~av_~a_p~a(const double *dxv, 
       const double *rad, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
-      if (bStr = "ser" or pi = 1) then (
+      if ((bStr = "ser" or bStr = "tensor") and not(ci+vi>=5 and pi>1)) then (
         printf(fhx, "~avoid hamil_phase_ho_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
         const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
       ),

@@ -124,7 +124,7 @@ calc_canonical_pb_alpha_no_write(fH,surfDir,bP,varsP,bSurf,basisType,rdx2V,rdv2V
 
 /* Determine the upwinded distribution function in canonical pb */
 calcAndWrite_CanonicalPBfUpwind(file_handle,surfDir,surfVar,surfIntVars,bSurf,NSurf,fl_e,fr_e,basisStr,sideStr,
-                    cdim, vdim, polyOrder, basisFun, conf_only) := block(
+                    cdim, vdim, polyOrder, basisFun, conf_only, fPrefix) := block(
   [fstrL, fstrR, fLNm, fRNm, fUpNm, sgn_alpha_surfNm, sgn_alphaUpNm, fSurfl_c, fSurfr_c, 
    fSurfl_e, fSurfr_e, sgn_alphaUp_e, fUp_c],
    
@@ -142,11 +142,11 @@ calcAndWrite_CanonicalPBfUpwind(file_handle,surfDir,surfVar,surfIntVars,bSurf,NS
     ),
     fLNm : eval_string(sconcat("f_",fstrL)),
     fRNm : eval_string(sconcat("f_",fstrR)),
-    fUpNm : eval_string(sconcat("fUp",sideStr)),
+    fUpNm : eval_string(sconcat(fPrefix,"Up",sideStr)),
     sgn_alpha_surfNm : eval_string(sconcat("sgn_alpha_surf",sideStr)),
     sgn_alphaUpNm : eval_string(sconcat("sgn_alphaUp",sideStr)),
 
-    printf(file_handle, "  double fUp~a[~a] = {0.};~%", sideStr, NSurf),
+    printf(file_handle, "  double ~aUp~a[~a] = {0.};~%", fPrefix, sideStr, NSurf),
     fSurfl_c : calcInnerProdList(surfIntVars, 1, bSurf, subst(surfVar=1, fl_e)),
     fSurfr_c : calcInnerProdList(surfIntVars, 1, bSurf, subst(surfVar=-1, fr_e)),
     fSurfl_e : doExpand1(fLNm, bSurf), 
