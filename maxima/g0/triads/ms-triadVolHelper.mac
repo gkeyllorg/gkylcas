@@ -15,11 +15,15 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 0$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel): usable by EVERY
+   Hamiltonian rep (vel_dense, vel_sparse, phase) on both the canonical and
+   triad paths (f_no_J flow, cubic-map volume representation and per-node
+   velocity-Jacobian indexing all validated). Tensor p>1 has no triad kernels. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$ /* tensor-hybrid (p=1) kernels are not hooked into any kernel table; re-enable when hybrid Vlasov support lands. */
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -52,7 +56,10 @@ for bInd : 1 thru length(bName) do (
       if (c=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x3v */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
       for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
-        if (( (c = 1 or c = 2) and v = 3 and polyOrder = 2) or (c = 3 and v = 3) or (c = 2 and v = 2 and polyOrder = 2) or (c = 2 and v = 3 and polyOrder = 1)) then (
+        /* Comps combos: ser p2 at 1x3v/2x2v/2x3v, ser p1 at 2x3v, 3x3v p1;
+           tensor p1 hybrid at 1x3v/2x2v (dense/phase precomp) and 2x3v/3x3v. */
+        if (( (c = 1 or c = 2) and v = 3 and polyOrder = 2) or (c = 3 and v = 3) or (c = 2 and v = 2 and polyOrder = 2) or (c = 2 and v = 3 and polyOrder = 1)
+            or (bName[bInd] = "tensor" and c+v >= 4)) then (
           [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(bName[bInd], c, v, polyOrder),
           for component : 1 thru length(bP) do( 
             fname : sconcat("~/max-out/vlasov_nc_hamil_gen_vol_comp", (component - 1),"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),

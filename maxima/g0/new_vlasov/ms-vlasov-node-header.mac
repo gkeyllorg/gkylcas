@@ -115,13 +115,13 @@ for c : 1 thru 3 do (
               deco, si, clabels[dir], c, v, bName[bInd], pi),
             printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_cfl(const double *dxv, const double *jacob_pos_l, const double *jacob_pos_r, double alpha_max); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi),
-            if (bName[bInd] = "ser") then (
-              printf(fh, "~adouble hamil_vel_dense_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-                deco, si, clabels[dir], c, v, pi),
-              if (v > 1) then
-                printf(fh, "~adouble hamil_vel_sparse_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-                  deco, si, clabels[dir], c, v, pi)
-            ),
+            /* Velocity-space Hamiltonian producers: Serendipity and the
+               tensor p=1 hybrid (every rep is usable on tensor p=1). */
+            printf(fh, "~adouble hamil_vel_dense_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
+              deco, si, clabels[dir], c, v, bName[bInd], pi),
+            if (v > 1) then
+              printf(fh, "~adouble hamil_vel_sparse_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
+                deco, si, clabels[dir], c, v, bName[bInd], pi),
             if not(c+v>=5 and pi>1) then printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi)
             /* DISABLED until the per-mode GPU launcher lands (re-enable with
@@ -142,27 +142,30 @@ for c : 1 thru 3 do (
 )
 )$
 /* Triad velocity-direction Hamiltonian producers (mirror
-   ms-triadVelFluxSurf.mac gates; serendipity only, vel_sparse skipped in
-   1V where sparse aliases dense). */
+   ms-triadVelFluxSurf.mac gates: serendipity p1/p2 and the tensor p=1
+   hybrid with every rep; vel_sparse skipped in 1V where sparse aliases
+   dense; ser p1 has a single lo form, tensor p1 has lo and ho_). */
+for bInd : 1 thru 2 do (
 for c : 1 thru 3 do (
   for v : max(c,1) thru 3 do (
-    maxPolyOrderB : 2, if (c+v>5) then maxPolyOrderB : 1,
+    maxPolyOrderB : (if bInd = 1 then 2 else 1), if (c+v>5) then maxPolyOrderB : 1,
     for pi : 1 thru maxPolyOrderB do (
       for dir : 1 thru v do (
         for hoInd : 1 thru 2 do (
           useHigherOrder : is(hoInd = 2),
           si : if useHigherOrder then "ho_" else "",
-          if not((pi = 1) and useHigherOrder) then (
-            if (pi = 1) then si : "",
+          if not((bName[bInd] = "ser") and (pi = 1) and useHigherOrder) then (
+            if ((bName[bInd] = "ser") and (pi = 1)) then si : "",
             for rep in (if v > 1 then ["vel_dense", "vel_sparse", "phase"] else ["vel_dense", "phase"]) do
-              if not(rep = "phase" and c+v>=5 and pi>1) then printf(fh, "~adouble nc_hamil_~a_~aalpha_quad_~a_~ax~av_ser_p~a_node(int i, int j, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-                deco, rep, si, vlabels[dir], c, v, pi)
+              if not(rep = "phase" and c+v>=5 and pi>1) then printf(fh, "~adouble nc_hamil_~a_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
+                deco, rep, si, vlabels[dir], c, v, bName[bInd], pi)
           )
         )
       ),
       printf(fh, "~%")
     )
   )
+)
 )$
 printf(fh, "EXTERN_C_END ~%")$
 close(fh)$

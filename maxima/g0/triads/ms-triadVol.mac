@@ -24,11 +24,15 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel): usable by EVERY
+   Hamiltonian rep (vel_dense, vel_sparse, phase) on both the canonical and
+   triad paths (f_no_J flow, cubic-map volume representation and per-node
+   velocity-Jacobian indexing all validated). Tensor p>1 has no triad kernels. */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -81,7 +85,10 @@ for bInd : 1 thru length(bName) do (
             /* POLICY: at 5D/6D (c+v>=5) EVERY Hamiltonian flavor takes the
                comps split (compile time dominates; no special cases), so the
                sparse inline-exact-bracket path is limited to c+v<5. */
-            if ( (hamil_rep = "vel_sparse" and not(c+v>4)) or ( (bName[bInd] = "ser") and not(c+v>4) and not(v = 3 and polyOrder = 2) and not(v = 3 and c = 1 and polyOrder = 2) and not(v = 2 and c = 2 and polyOrder = 2) ) ) then (
+            /* Tensor p=1 hybrid dense/phase: inline only at 1x1v/2x1v/1x2v;
+               1x3v (NP=54) and 2x2v (NP=36) take the precomputed-alpha +
+               comps split like ser p=2 at those combos. */
+            if ( (hamil_rep = "vel_sparse" and not(c+v>4)) or ( (bName[bInd] = "ser") and not(c+v>4) and not(v = 3 and polyOrder = 2) and not(v = 3 and c = 1 and polyOrder = 2) and not(v = 2 and c = 2 and polyOrder = 2) ) or ( (bName[bInd] = "tensor") and not(c+v>3) ) ) then (
               calcHamilVolNonCanonical(fh, funcName, c, v, bName[bInd], polyOrder, hamil_rep, false)
             ) else  (
               calcHamilVolNonCanonicalAlphaPreComp(fh, funcName, c, v, bName[bInd], polyOrder, hamilLabels[vhamilInd], false)

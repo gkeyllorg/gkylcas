@@ -19,11 +19,15 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel): usable by EVERY
+   Hamiltonian rep (vel_dense, vel_sparse, phase) on both the canonical and
+   triad paths (f_no_J flow, cubic-map volume representation and per-node
+   velocity-Jacobian indexing all validated). Tensor p>1 has no triad kernels. */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */

@@ -12,11 +12,15 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 0$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel): usable by EVERY
+   Hamiltonian rep (vel_dense, vel_sparse, phase) on both the canonical and
+   triad paths (f_no_J flow, cubic-map volume representation and per-node
+   velocity-Jacobian indexing all validated). Tensor p>1 has no triad kernels. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$ /* tensor-hybrid (p=1) kernels are not hooked into any kernel table; re-enable when hybrid Vlasov support lands. */
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -86,7 +90,10 @@ for bInd : 1 thru length(bName) do (
 
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         for vhamilInd : 1 thru length(hamilLabels) do (
-          if ((c+v>=4) or (v = 3) ) and ((( polyOrder > 1 and c+v < 6) or (c+v >= 5)) or (c+v = 4 and polyOrder = 2 ))then (
+          /* Mirror ms-triadVolHelper.mac: comps at ser p2 1x3v/2x2v/2x3v, ser
+             p1 2x3v, 3x3v p1, and tensor p1 at every c+v>=4 combo. */
+          if (((c+v>=4) or (v = 3) ) and ((( polyOrder > 1 and c+v < 6) or (c+v >= 5)) or (c+v = 4 and polyOrder = 2 ))
+              or (bName[bInd] = "tensor" and c+v >= 4)) then (
             [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(bName[bInd], c, v, polyOrder), 
             for component : 0 thru (length(bP)-1) do( 
               printPrototype(component, decorator, c, v, bName[bInd], hamilLabels[vhamilInd], polyOrder)

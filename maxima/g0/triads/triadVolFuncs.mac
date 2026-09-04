@@ -316,7 +316,10 @@ calcHamilVolNonCanonicalAlphaPreComp(fh, funcNm, cdim, vdim, basisFun, polyOrder
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
 
   funcNameDot : sconcat("dot_pb_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-  printf(fh, "GKYL_CU_DH static void ~a(const double *list_1, const double *list_2, double* GKYL_RESTRICT out) ~%{ ~%", funcNameDot),
+  /* GKYL_NOINLINE: these helpers are called NP x (partner classes) times per
+     direction; inlined into the wrapper they blow up the loop vectorizer's
+     compile time (1108 s vs 4 s at -O3 for the 2x3v tensor wrapper). */
+  printf(fh, "GKYL_CU_DH GKYL_NOINLINE static void ~a(const double *list_1, const double *list_2, double* GKYL_RESTRICT out) ~%{ ~%", funcNameDot),
 
   printf(fh, "  for (int i = 0; i<~a; ++i) out[0] += list_1[i]*list_2[i]; ~%",NP),
   printf(fh, "} ~%"),
@@ -324,7 +327,7 @@ calcHamilVolNonCanonicalAlphaPreComp(fh, funcNm, cdim, vdim, basisFun, polyOrder
 
 
   funcNameZero : sconcat("zero_pb_list"),
-  printf(fh, "GKYL_CU_DH static inline void ~a(double *pb_list) ~%{ ~%", funcNameZero),
+  printf(fh, "GKYL_CU_DH GKYL_NOINLINE static void ~a(double *pb_list) ~%{ ~%", funcNameZero),
 
   /* Zero out the pb_list */
   printf(fh, "  for (int i = 0; i<~a; ++i) pb_list[i] = 0.0; ~%",NP),
@@ -414,9 +417,17 @@ calcHamilVolNonCanonicalAlphaPreComp(fh, funcNm, cdim, vdim, basisFun, polyOrder
           /* conf dir: partners are all velocity directions. */
           for j : 1 thru vdim do classes : endcons([cdim + j - 1, fS_nm[j]], classes)
         ) else (
-          /* vel dir: partners are the OTHER velocity directions (the conf
-             partner block vanishes for the velocity-space Hamiltonian). */
+          /* vel dir v_i: partners are the OTHER velocity directions, plus --
+             for a PHASE-space Hamiltonian (dH/dx != 0) -- every conf
+             direction: the antisymmetric piece of the (x_j, v_i) pair has
+             one velocity derivative (dir i), so it dots the same complement
+             object f_Sv<i> as its symmetric partner at dir x_j (exact
+             cancellation under the H-contraction). The conf blocks vanish
+             identically for velocity-space Hamiltonians and are skipped. */
           i0 : dird - cdim + 1,
+          if (hamilLabel = "phase") then (
+            for j : 1 thru cdim do classes : endcons([j - 1, fS_nm[i0]], classes)
+          ),
           for j : 1 thru vdim do (
             if (j # i0) then (
               if (vdim = 2) then obj : "f_no_J"
