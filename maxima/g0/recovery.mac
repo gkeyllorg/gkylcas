@@ -1,11 +1,17 @@
 load("modal-basis") $
 
-/* The recovery equation systems can contain redundant (consistent)
-   equations; with linsolve_params : true (the Maxima default) linsolve
-   then introduces spurious %r free parameters that leak into the
-   generated kernels. The systems are fully determined, so disable the
-   parameterization and let linsolve solve them outright. */
-linsolve_params : false $
+/* NOTE: keep Maxima's default linsolve_params : true. A recovery system that
+   is rank-deficient (e.g. an ansatz of higher degree than the data that
+   constrains it) must surface as %r free parameters and fail loudly (see
+   recovAssertDetermined), NOT be silently zeroed into a plausible-looking
+   but wrong kernel -- that hid the tensor-hybrid p=1 LBO diffusion defect
+   of 2026-09. Redundant-but-consistent equations belong fixed in the
+   individual recovery function. */
+recovAssertDetermined(rec, tag) := block([fp],
+  fp : sublist(listofvars(rec), lambda([v], is(charat(string(v),1) = "%"))),
+  if length(fp) > 0 then error(sconcat("recovery ", tag, ": rank-deficient system, free parameters ", string(fp))),
+  rec
+)$
 
 load("recovery-calc/recovery-1cell") $
 load("recovery-calc/recovery-2cell") $

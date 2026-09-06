@@ -191,7 +191,7 @@ calcRecov3CellGen(basisNm, recDir, dirs, polyOrder, lo, ce, up) := block(
     )
   ),
 
-  return(expand(subst(projSubList, rSub)))
+  return(recovAssertDetermined(expand(subst(projSubList, rSub)), "3cell"))
 ) $
 
 calcRecov3Cell(recDir, dirs, polyOrder, lo, ce, up) := calcRecov3CellGen("Ser", recDir, dirs, polyOrder, lo, ce, up)$

@@ -246,7 +246,7 @@ calcRecov2CellGenNonuniform(basisNm, recDir, dirs, polyOrder, dxlo, dxup, lo, up
         makelist(qUp1D[i]=args(up)[1][i], i, 1, length(baCe1D))
       )
   ),
-  return(expand(subst(projSubList, rSub)))
+  return(recovAssertDetermined(expand(subst(projSubList, rSub)), "2cell"))
 ) $
 
 calcRecov2CellGen(basisNm, recDir, dirs, polyOrder, lo, up) := block(

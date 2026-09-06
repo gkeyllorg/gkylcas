@@ -15,11 +15,11 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor order basis. */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$ 
+minPolyOrder_Tensor : 1$ /* tensor p=1 IS the tensor hybrid */
+maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* but see v loop below. */
-maxCdim_Tensor : 2$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -42,6 +42,7 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1, /* no tensor p2 at 2x3v */
 
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating lbo_vlasov_drag_vol_~ax~av_",bName[bInd]," _p~a"),c,v,polyOrder)),
