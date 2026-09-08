@@ -6,10 +6,10 @@ load("utilities_gyrokinetic")$
 load("nodal_operations/nodal_functions")$
 fpprec : 24$
 
-buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no_by, edge, mb_bound) := block(
+buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no_by, is_bound, bound_side, bound_type) := block(
   [pDim,varsC,bC,varsP,bP,vSub,numC,numP,surfVar,varLabel,dirLabel,surfIntVars,surf_cvars,surf_vvars,
    surfNodes,nodeVars,bSurf,basisNodal,surfConfigNodes,numSurfNodes,numSurfConfigNodes,numVelNodes,
-   numMuNodes,numVparNodes,d,rdx2vec,rdv2vec,rdSurfVar2,bmagBasis,phiL_e,phiR_e,bmagSurf_e,vmap_e,vmapSq_e,
+   numMuNodes,numVparNodes,d,rdx2vec,rdv2vec,rdSurfVar2,bmagBasis,phiL_e,phiR_e,bmag_e,vmap_e,vmapSq_e,
    vmap_prime_e,evPoint,hamil_e,hamil_c,replaceList,hamilNoZero_c,JfL_e,JfR_e,JfL_c,JfR_c,
    jacobgeo_rat_surfR_e,jacobgeo_rat_surfL_e,JfL_nodes,JfR_nodes,vmap_prime_nodes,vpardim,
    dH_dz_nodes,mvpar_nodes,di3,i,j,jIdx0,jIdx1,vparIdx1,vparIdx0,pOrderCFL
@@ -45,10 +45,10 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
     nodeVars  : surfIntVars,
     bSurf     : basisFromVars(basisFun,surfIntVars,polyOrder)
   ),
+
   if cdim = 1 then (
     surfConfigNodes : [1]
-  )
-  else (
+  ) else (
     surfConfigNodes : gaussOrd(polyOrder+1, cdim-1)
   ),
   numSurfNodes : length(surfNodes),  
@@ -58,7 +58,6 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   if vdim > 1 then ( numMuNodes : 2),
   numVparNodes : numVelNodes/numMuNodes,
 
-  print("Working on ", funcNm),
   printf(fh, "GKYL_CU_DH double ~a(
     const double *w, const double *dxv,
     const double *vmap, const double *vmapSq, const double q_, const double m_,
@@ -82,8 +81,7 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   printf(fh, "  // JfR: distribution times total jacobian in right cell.~%"),
   printf(fh, "  // yfieldL: Yushmanov field (gradient of Yushmanov potential) in left cell.~%"),
   printf(fh, "  // yfieldR: Yushmanov field (gradient of Yushmanov potential) in right cell.~%"),
-  printf(fh, "  // flux_surf: output surface phase space flux in each direction (cdim + 1 components).~%"),
-  printf(fh, "  //            Note: Each cell owns their *lower* edge surface evaluation.~%"),
+  printf(fh, "  // flux_surf: surface phase space flux in each direction.~%"),
   printf(fh, "~%"),
 
   /* Declare cell-center variables and variables multiplying gradients. */
@@ -99,9 +97,16 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   bmagBasis : getAxisymmetricConfBasis(bC),
 
   /* Expand input fields for Hamiltonian calculation */
-  phiL_e     : doExpand1(phiL,bC),
-  phiR_e     : doExpand1(phiR,bC),
-  bmagSurf_e : doExpand1(bmag, bmagBasis),
+  phiL_e : doExpand1(phiL,bC),
+  phiR_e : doExpand1(phiR,bC),
+  bmag_e : doExpand1(bmag, bmagBasis),
+  /**
+  if (is_bound) then (
+    /* Alter the sign of the odd monomials in the surfDir so the rest
+       of the Maxima looks the same for interior and boundary kernels. */
+      
+  ),
+  **/
 
   /* Velocity mapping fields. */
   [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
@@ -110,20 +115,31 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   /*vmap_prime_e : makelist((2/dxv[cdim+d-1])*diff(vmap_e[d],varsP[cdim+d]),d,1,vdim),*/
   vmap_prime_e : makelist(diff(vmap_e[d],varsP[cdim+d]),d,1,vdim),
 
-  if edge = true then (
-    evPoint : 1
+  if is_bound = true then (
+    if bound_side = "lower" then (
+      evPoint : -1
+    ) else (
+      evPoint : 1
+    )
   ) else (
     evPoint : -1
   ),
 
-  /* Finally write out the hamiltonian*/
+  /* Write out the hamiltonian*/
   hamil_e : (1/2)*m_*vmapSq_e[1],
-  if edge = true then (
-    hamil_e : hamil_e + q_*phiL_e
+  if is_bound = true then (
+    if bound_side = "lower" then (
+      hamil_e : hamil_e + q_*phiR_e
+    ) else (
+      hamil_e : hamil_e + q_*phiL_e
+    )
   ) else (
     hamil_e : hamil_e + q_*phiR_e
   ),
-  if vdim > 1 then ( hamil_e : hamil_e + vmap_e[2]*bmagSurf_e ),
+  if vdim > 1 then (
+    hamil_e : hamil_e + vmap_e[2]*bmag_e
+  ),
+
   hamil_c : calcInnerProdList(surfIntVars, 1, bSurf, subst(surfVar=evPoint,hamil_e)),
   printf(fh, "  double hamil[~a] = {0.}; ~%", numP),
   replaceList : [wvpar^2=wvparSq, rdvpar2^2=rdvpar2Sq, rdx2^2=rdx2Sq, m_^2=mSq, q_^2=qSq],
@@ -143,10 +159,10 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   JfL_e : JfL_c . bSurf,
   JfR_e : JfR_c . bSurf,
 
-  if (mb_bound = true) then (
+  if (is_bound = true and bound_type = "multib") then (
     /* Rescale ghost cell by ratio of the Jacobians at multiblock boundaries. */
 
-    if (edge = true) then (
+    if (bound_side = "upper") then (
       /* Upper boundary. */
       jacobgeo_rat_surfR_e : doExpand1(jacobgeo_rat_surfR, bSurfC),
 
@@ -202,24 +218,38 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   ypotL_e : q_*phiL_e,
   ypotR_e : q_*phiR_e,
   if vdim > 1 then (
-    ypotL_e : ypotL_e + vmap_e[2]*bmagSurf_e,
-    ypotR_e : ypotR_e + vmap_e[2]*bmagSurf_e
+    /* Add mu*B contribution. Since bmag may not exist in the ghost cell,
+       at boundaries we assume it is continuous and use the skin cell instead.
+       For interior kernels, assume the updater passes bmag right. */
+    bmagMirrored_e : subst(surfVar=-surfVar, bmag_e),
+    if not (is_bound = true and bound_side = "upper") then (
+      ypotL_e : ypotL_e + vmap_e[2]*bmagMirrored_e,
+      ypotR_e : ypotR_e + vmap_e[2]*bmag_e
+    ) else (
+      ypotL_e : ypotL_e + vmap_e[2]*bmag_e,
+      ypotR_e : ypotR_e + vmap_e[2]*bmagMirrored_e
+    )
   ),
 
-  if edge = false then (
-    /* Add volume contribution to Yushmanov field. */
-    if edge = true then (
-      ypot_der_vol_c : -rdx2vec[surfDir]*calcInnerProdList(varsP,1,diff(bP,surfVar),ypotL_e),
-      writeCIncrExprs1(ypotderL, ypot_der_vol_c)
-    ) else (
-      ypot_der_vol_c : -rdx2vec[surfDir]*calcInnerProdList(varsP,1,diff(bP,surfVar),ypotR_e),
-      writeCIncrExprs1(ypotderR, ypot_der_vol_c)
-    ) 
+  /* Add volume contribution to Yushmanov field. */
+  if not (is_bound = true and bound_side = "upper") then (
+    ypot_der_vol_c : -rdx2vec[surfDir]*calcInnerProdList(varsP,1,diff(bP,surfVar),ypotR_e),
+    writeCIncrExprs1(ypotderR, ypot_der_vol_c)
   ),
 
   /* Evaluate Yushmanov potential at nodes. */
   ypotSurfL_c : calcInnerProdList(surfIntVars, 1, bSurf, subst(surfVar=1,ypotL_e)),
   ypotSurfR_c : calcInnerProdList(surfIntVars, 1, bSurf, subst(surfVar=-1,ypotR_e)),
+  if (is_bound = true and bound_type = "nonperiodic") then (
+    /* At the nonperiodic boundaries, the surface term should just use
+       the value at the boundary. */
+    if (bound_side = "lower") then (
+      ypotSurfL_c : ypotSurfR_c
+    ) else (
+      ypotSurfR_c : ypotSurfL_c
+    )
+  ),
+
   ypotSurfL_e : doExpand(ypotSurfL_c, bSurf),
   ypotSurfR_e : doExpand(ypotSurfR_c, bSurf),
   ypotSurfL_n : float(evAtNodes(ypotSurfL_e,surfNodes,surfIntVars)),
@@ -284,7 +314,6 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
         )
       ),
       if no_by = false then (
-        /*printf(fh, "  alpha_quad += mvparsq_quad[~a]*normcurlbhat_quad/(bmag_quad*q_) ;~%", vparIdx0),*/
         if cdim = 3 then (
            if surfDir = 1 then(
              printf(fh, "  alpha_quad = (mvparsq_quad[~a]*normcurlbhat_quad/(bmag_quad*q_) + 1/(q_*bmag_quad*area_elem_quad) * (bhat_quad[1]*(~a) - bhat_quad[2]*(~a)))*area_elem_quad/Jc_quad; ~%", vparIdx0, dH_dz_nodes[3][jIdx1], dH_dz_nodes[2][jIdx1])
@@ -310,7 +339,6 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
       ),
 
       printf(fh, "~%"),
-      /*printf(fh, "  alpha_quad = alpha_quad*area_elem_quad/Jc_quad; ~%"),*/
       printf(fh, "  cfl = fmax(fabs(alpha_quad), fabs(cfl)); ~%"),
       printf(fh, "  JfL_quad = ~a; ~%", JfL_nodes[jIdx1]),
       printf(fh, "  JfR_quad = ~a; ~%", JfR_nodes[jIdx1]),
@@ -328,13 +356,17 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
 
   /* Convert quad nodal Yushmanov derivativ to modal and add to volume term. */
   ypot_der_surf_e : doExpand1(ypot_der_surf_n,basisNodal),
-  ypot_der_surfL_c : fullratsimp(rdx2vec[surfDir]*calcInnerProdList(surfIntVars, 1, subst(surfVar=1,bP), ypot_der_surf_e)),
-  ypot_der_surfR_c : fullratsimp(rdx2vec[surfDir]*calcInnerProdList(surfIntVars, -1, subst(surfVar=-1,bP), ypot_der_surf_e)),
-  writeCIncrExprs1(ypotderL, ypot_der_surfL_c),
-  writeCIncrExprs1(ypotderR, ypot_der_surfR_c),
+  if not (is_bound = true and bound_side = "lower") then (
+    ypot_der_surfL_c : fullratsimp(rdx2vec[surfDir]*calcInnerProdList(surfIntVars, 1, subst(surfVar=1,bP), ypot_der_surf_e)),
+    writeCIncrExprs1(ypotderL, ypot_der_surfL_c)
+  ),
+  if not (is_bound = true and bound_side = "upper") then (
+    ypot_der_surfR_c : fullratsimp(rdx2vec[surfDir]*calcInnerProdList(surfIntVars, -1, subst(surfVar=-1,bP), ypot_der_surf_e)),
+    writeCIncrExprs1(ypotderR, ypot_der_surfR_c)
+  ),
   printf(fh, "~%"),
 
-  /*Calculate the cfl*/
+  /* Calculate the cfl frequency contribution. */
   pOrderCFL : polyOrder,
   printf(fh, "~%"),
   printf(fh, "  return cfl*~a; ~%", float(0.5*(2*pOrderCFL+1)*rdSurfVar2)),

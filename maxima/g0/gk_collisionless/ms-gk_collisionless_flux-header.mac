@@ -33,15 +33,17 @@ minVdim      : [minVdim_Ser, minVdim_Tensor]$
 maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 
+clabels : ["x","y","z"]$
+vlabels : ["vpar","mu"]$
+
+/* Boundary side and type. */
+bound_side : ["lower","upper"]$
+bound_type : ["periodic","nonperiodic","multib"]$
+
 /* Options for writing kernels with and without toroidal field (b_y=0), one per
    dimension. */
 byOpt : [[false], [false, true], [false, true]]$
-byStr : ["", "no_by_"]$
-
-/* Options for writing kernels used at multiblock boundaries. One for each
- dimension. */
-mb_bcOpt : [[false,true],[false,true],[false,true]]$
-mb_bcStr : ["", "multib_boundary_"]$
+byStr : ["", "_no_by"]$
 
 printPrototypes() := block([],
   for bInd : 1 thru length(bName) do (
@@ -57,32 +59,40 @@ printPrototypes() := block([],
             no_by : byOpt[c][byI],
             no_byStr : byStr[byI],
 
-            for mbI : 1 thru length(mb_bcOpt[c]) do (
-              mb_bound : mb_bcOpt[c][mbI],
-              mb_boundStr : mb_bcStr[mbI],
+            extraargs : "const struct gkyl_dg_surf_geom *dgs, const struct gkyl_gk_dg_surf_geom *gkdgs, ",
+            vprimeargs : "",
+
+            /* Interior conf-space kernels. */
+            for surfDir : 1 thru c do (
+              dirlabel : varsC[surfDir],
+
+              printf(fh, "GKYL_CU_DH double gk_collisionless_flux_surf~a~a_~ax~av_~a_p~a(
+                const double *w, const double *dxv,
+                ~a
+                const double *vmap, const double *vmapSq, const double q_, const double m_, 
+                ~a
+                const double *bmag, const double *jacobgeo_rat_surfL, const double *jacobgeo_rat_surfR,
+                const double *phiL, const double *phiR, const double *JfL, const double *JfR, double* GKYL_RESTRICT yfieldL, double* GKYL_RESTRICT yfieldR, 
+                double* GKYL_RESTRICT flux_surf); ~%", dirlabel, no_byStr, c, v, bName[bInd], polyOrder, vprimeargs, extraargs)
+            ),
+
+            /* Boundary conf-space kernels. */
+            for tI : 1 thru length(bound_type) do (
 
               for surfDir : 1 thru c do (
                 dirlabel : varsC[surfDir],
-                extraargs : "const struct gkyl_dg_surf_geom *dgs, const struct gkyl_gk_dg_surf_geom *gkdgs, ",
-                vprimeargs : "",
 
-                printf(fh, "GKYL_CU_DH double gk_collisionless_flux_~a~asurf~a_~ax~av_~a_p~a(
-                  const double *w, const double *dxv,
-                  ~a
-                  const double *vmap, const double *vmapSq, const double q_, const double m_, 
-                  ~a
-                  const double *bmag, const double *jacobgeo_rat_surfL, const double *jacobgeo_rat_surfR,
-                  const double *phiL, const double *phiR, const double *JfL, const double *JfR, double* GKYL_RESTRICT yfieldL, double* GKYL_RESTRICT yfieldR, 
-                  double* GKYL_RESTRICT flux_surf); ~%", no_byStr, mb_boundStr, dirlabel, c, v, bName[bInd], polyOrder, vprimeargs, extraargs),  
+                for sI : 1 thru length(bound_side) do (
 
-                printf(fh, "GKYL_CU_DH double gk_collisionless_flux_~a~aedge_surf~a_~ax~av_~a_p~a(
-                  const double *w, const double *dxv,
-                  ~a
-                  const double *vmap, const double *vmapSq, const double q_, const double m_,
-                  ~a
-                  const double *bmag, const double *jacobgeo_rat_surfL, const double *jacobgeo_rat_surfR,
-                  const double *phiL, const double *phiR, const double *JfL, const double *JfR, double* GKYL_RESTRICT yfieldL, double* GKYL_RESTRICT yfieldR, 
-                  double* GKYL_RESTRICT flux_surf); ~%", no_byStr, mb_boundStr, dirlabel, c, v, bName[bInd], polyOrder, vprimeargs, extraargs)
+                  printf(fh, "GKYL_CU_DH double gk_collisionless_flux_boundary_surf~a~a_~a_~a_~ax~av_~a_p~a(
+                    const double *w, const double *dxv,
+                    ~a
+                    const double *vmap, const double *vmapSq, const double q_, const double m_,
+                    ~a
+                    const double *bmag, const double *jacobgeo_rat_surfL, const double *jacobgeo_rat_surfR,
+                    const double *phiL, const double *phiR, const double *JfL, const double *JfR, double* GKYL_RESTRICT yfieldL, double* GKYL_RESTRICT yfieldR, 
+                    double* GKYL_RESTRICT flux_surf); ~%", dirlabel, no_byStr, bound_side[sI], bound_type[tI], c, v, bName[bInd], polyOrder, vprimeargs, extraargs)
+                )
               )
             ),
 
@@ -90,13 +100,13 @@ printPrototypes() := block([],
             extraargs : "const struct gkyl_dg_vol_geom *dgv, const struct gkyl_gk_dg_vol_geom *gkdgv, ",
             vprimeargs : "const double *vmap_prime_l, const double *vmap_prime_r, ",
 
-            printf(fh, "GKYL_CU_DH double gk_collisionless_flux_~asurf~a_~ax~av_~a_p~a(
+            printf(fh, "GKYL_CU_DH double gk_collisionless_flux_surf~a~a_~ax~av_~a_p~a(
               const double *w, const double *dxv,
               ~a
               const double *vmap, const double *vmapSq, const double q_, const double m_, 
               ~a
               const double *bmag, const double *yfield, const double *JfL, const double *JfR, 
-              double* GKYL_RESTRICT flux_surf); ~%", no_byStr, dirlabel, c, v, bName[bInd], polyOrder, vprimeargs, extraargs)
+              double* GKYL_RESTRICT flux_surf); ~%", dirlabel, no_byStr, c, v, bName[bInd], polyOrder, vprimeargs, extraargs)
           ),
 
           printf(fh, "~%")
@@ -114,7 +124,7 @@ printf(fh, "#include <gkyl_util.h>~%")$
 printf(fh, "#include <gkyl_dg_geom.h>~%")$
 printf(fh, "#include <gkyl_gk_dg_geom.h>~%")$
 printf(fh, "~%")$
-printf(fh, "#define gsgn(x) (((x) > 0) - ((x) < 0));~%")$
+printf(fh, "#define gsign(x) (((x) > 0) - ((x) < 0))~%")$
 printf(fh, "~%")$
 printf(fh, "EXTERN_C_BEG~%")$
 printf(fh, "~%")$
