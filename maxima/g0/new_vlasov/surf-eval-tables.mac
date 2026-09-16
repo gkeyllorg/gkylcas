@@ -70,7 +70,7 @@ surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder) :=
 /* Emit exprs evaluated at nodes as a flattened [length(nodes)*length(exprs)]
    static const double array (row = node, column = expr). */
 emitTabMatrix(fh, name, exprs, vars, nodes) := block([i, a, sub],
-  printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a[~a] = { ~%", name, length(nodes)*length(exprs)),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a[~a] = { ~%", name, length(nodes)*length(exprs)),
   for i : 1 thru length(nodes) do (
     sub : if listp(nodes[i])
           then makelist(vars[d] = nodes[i][d], d, 1, length(vars))
@@ -139,13 +139,13 @@ laxDerivSizes(fact, normalVar, dvar) := block([psiShapes, NM, dd, m],
 )$
 
 emitTabIntArray(fh, name, vals) := block([k],
-  printf(fh, "GKYL_CU_D __attribute__((unused)) static const int ~a[~a] = { ~%", name, length(vals)),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const int ~a[~a] = { ~%", name, length(vals)),
   for k : 1 thru length(vals) do printf(fh, "  ~a, ~%", vals[k]),
   printf(fh, "}; ~%")
 )$
 
 emitTabDoubleArray(fh, name, vals) := block([k],
-  printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a[~a] = { ~%", name, length(vals)),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a[~a] = { ~%", name, length(vals)),
   for k : 1 thru length(vals) do printf(fh, "  ~a, ~%", float(expand(vals[k]))),
   printf(fh, "}; ~%")
 )$
@@ -218,7 +218,7 @@ writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars,
       error("writeConsumerProjTables: inner weight sum mismatch")
   ),
   NO : length(nodesO), NI : length(nodesI),
-  printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a_Cw[~a] = { ~%", prefix, NO*NA),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_Cw[~a] = { ~%", prefix, NO*NA),
   for i : 1 thru NO do (
     sub : if listp(nodesO[i])
           then makelist(outerVars[d] = nodesO[i][d], d, 1, length(outerVars))
@@ -227,7 +227,7 @@ writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars,
       printf(fh, "  ~a, ~%", float(expand(wO[i]*subst(sub, chiShapes[a]))))
   ),
   printf(fh, "}; ~%"),
-  printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a_Vw[~a] = { ~%", prefix, NI*NMV),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_Vw[~a] = { ~%", prefix, NI*NMV),
   for j : 1 thru NI do (
     sub : if listp(nodesI[j])
           then makelist(innerVars[d] = nodesI[j][d], d, 1, length(innerVars))
@@ -378,10 +378,10 @@ writePhaseFactorTables(fh, prefix, bP, outerVars, normalVar, innerVars,
   /* One V matrix serves both edges: psi(-1,.) = +/- psi(+1,.) (parity of the
      normal factor); the sign is folded into the per-edge coefficient copies. */
   emitTabMatrix(fh, sconcat(prefix, "_V"), ed[1], innerVars, nodesInner),
-  printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a_coefl[~a] = { ~%", prefix, NB),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_coefl[~a] = { ~%", prefix, NB),
   for k : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(ed[4][k]*coefL[k]))),
   printf(fh, "}; ~%"),
-  printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a_coefr[~a] = { ~%", prefix, NB),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_coefr[~a] = { ~%", prefix, NB),
   for k : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(ed[5][k]*coefL[k]))),
   printf(fh, "}; ~%"),
   emitTabIntArray(fh, sconcat(prefix, "_cmap"), fact[4]),
@@ -403,10 +403,10 @@ writePhaseFactorTables(fh, prefix, bP, outerVars, normalVar, innerVars,
         makelist(dcl[2][fact[5][kk] + 1], kk, 1, NB)),
       emitTabIntArray(fh, sconcat(prefix, "_vrd", k-1, "map"),
         makelist(dd[2][fact[5][kk] + 1], kk, 1, NB)),
-      printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a_dcoefl~a[~a] = { ~%", prefix, k-1, NB),
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_dcoefl~a[~a] = { ~%", prefix, k-1, NB),
       for kk : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(dcl[3][fact[5][kk] + 1]*coefL[kk]))),
       printf(fh, "}; ~%"),
-      printf(fh, "GKYL_CU_D __attribute__((unused)) static const double ~a_dcoefr~a[~a] = { ~%", prefix, k-1, NB),
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_dcoefr~a[~a] = { ~%", prefix, k-1, NB),
       for kk : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(dd[3][fact[5][kk] + 1]*coefL[kk]))),
       printf(fh, "}; ~%")
     )
@@ -440,7 +440,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
     if vdim > 1 then (
       /* Reference coordinates of the transverse velocity nodes, for producers
          that need v at the node (e.g. the triad omega = vTrans.Pi terms). */
-      printf(fh, "GKYL_CU_D __attribute__((unused)) static const double vst_~a_vel_nodes_v~a[~a] = { ~%", tag, d-1, length(nodes_vel)*(vdim-1)),
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double vst_~a_vel_nodes_v~a[~a] = { ~%", tag, d-1, length(nodes_vel)*(vdim-1)),
       for i : 1 thru length(nodes_vel) do
         for k : 1 thru vdim-1 do
           printf(fh, "  ~a, ~%", float(nodes_vel[i][k])),
@@ -459,7 +459,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   for b : 1 thru length(bV) do
     if length(intersection(setify(listofvars(bV[b])), setify(varsV))) <= 1 then
       sparseIdx : endcons(b-1, sparseIdx),
-  printf(fh, "GKYL_CU_D __attribute__((unused)) static const int vst_~a_vel_sparse_idx[~a] = { ~%", tag, length(sparseIdx)),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const int vst_~a_vel_sparse_idx[~a] = { ~%", tag, length(sparseIdx)),
   for b : 1 thru length(sparseIdx) do
     printf(fh, "  ~a, ~%", sparseIdx[b]),
   printf(fh, "}; ~%"),
@@ -475,7 +475,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
     sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_v", d-1), bP,
       varsC, vv, svv, nodes_conf, nodes_vel,
       if d <= min(cdim, vdim) then varsC[d] else false, varsV, varsC),
-    printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_v~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
+    printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_v~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
       tag, d-1, length(bP), sz[1], sz[2], length(nodes_conf), length(nodes_vel), length(sparseIdx), (d-1)*length(nodes_conf)*length(nodes_vel))
   ),
 
@@ -497,7 +497,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
         makelist(subst(cv = -1, bC[b]), b, 1, length(bC)), surfCVars, nodes_crem),
       sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_x", d-1), bP,
         surfCVars, cv, varsV, nodes_crem, nodes_vvol, false, varsV, false),
-      printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_x~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_x~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
         tag, d-1, length(bP), sz[1], sz[2], length(nodes_crem), length(nodes_vvol), length(sparseIdx), (d-1)*length(nodes_crem)*length(nodes_vvol))
     )
   )
@@ -524,7 +524,7 @@ writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := 
     szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_v", d-1), bP,
       basisFromVars(vlasovBtype(basisFun, polyOrder), delete(vv, varsP), polyOrder),
       varsC, vv, svv, nPtsConf, nPtsVel),
-    printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
+    printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
       tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
   ),
   if (basisFun = "ser" or basisFun = "tensor") then (
@@ -536,7 +536,7 @@ writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := 
       szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_x", d-1), bP,
         basisFromVars(vlasovBtype(basisFun, polyOrder), delete(cv, varsP), polyOrder),
         surfCVars, cv, varsV, nPtsConf, nPtsVel),
-      printf(fh, "GKYL_CU_D __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_x~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_x~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
         tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
     )
   )
