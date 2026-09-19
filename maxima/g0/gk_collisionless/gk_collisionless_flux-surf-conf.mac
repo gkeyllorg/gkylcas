@@ -100,13 +100,6 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   phiL_e : doExpand1(phiL,bC),
   phiR_e : doExpand1(phiR,bC),
   bmag_e : doExpand1(bmag, bmagBasis),
-  /**
-  if (is_bound) then (
-    /* Alter the sign of the odd monomials in the surfDir so the rest
-       of the Maxima looks the same for interior and boundary kernels. */
-      
-  ),
-  **/
 
   /* Velocity mapping fields. */
   [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
