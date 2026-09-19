@@ -13,11 +13,13 @@ maxPolyOrder_Ser : 2$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
 
-/* Tensor order basis. No need to generate p=1. */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+/* Tensor product basis: p=1 IS the tensor hybrid (p1 conf x p2 vel);
+   only the Vlasov phase-space kernels are generated (conf-space tensor
+   p=1 is identical to ser p=1, and the GK hybrid is separate). */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
-maxCdim_Tensor : 0$
+maxCdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
 
@@ -37,7 +39,9 @@ printPrototypes(fh) := block(
 
   for bInd : 1 thru length(bName) do (
 
-    /* Conf-space kernels. */
+    /* Conf-space kernels (ser only; tensor p=1 conf-space is identical
+       to ser p=1). */
+    if (bName[bInd] = "ser") then
     for c : minCdim[bInd] thru maxCdim[bInd] do (
       for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
 
@@ -74,7 +78,8 @@ printPrototypes(fh) := block(
     ),
     printf(fh, "~%"),
 
-    /* Gyrokinetic kernels. */
+    /* Gyrokinetic kernels (ser only). */
+    if (bName[bInd] = "ser") then
     for c : minCdim[bInd] thru maxCdim[bInd] do (
       for gkV : 1 thru length(gkVdims[c]) do (
         v : gkVdims[c][gkV],

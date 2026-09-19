@@ -21,11 +21,13 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel); pure p=1 tensor
+   kernels still do not exist anywhere. */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 2$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -52,7 +54,7 @@ for bInd : 1 thru length(bName) do (
 
       /* Skip 2x3v tensor kernels: not used by the kernel tables and very
          expensive to generate. */
-      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 0,
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating Jf/J  ",bName[bInd]," ~ax~avP~a"),c,v,polyOrder)),
         fname : sconcat("~/max-out/vlasov_divide_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
@@ -60,7 +62,7 @@ for bInd : 1 thru length(bName) do (
         funcName : sconcat("vlasov_divide_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
         /* Tensor (p>1) uses the C^1 cubic map representation; Serendipity
            (and p=1) uses the C^0 piecewise linear representation. */
-        if (bName[bInd] = "tensor" and polyOrder > 1) then (
+        if (bName[bInd] = "tensor") then (
           divideJvel(fh, funcName, c, v, bName[bInd], polyOrder, "cubic")
         )
         else (
@@ -72,7 +74,7 @@ for bInd : 1 thru length(bName) do (
         fname : sconcat("~/max-out/vlasov_rescale_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
         fh : openw(fname),
         funcName : sconcat("vlasov_rescale_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-        if (bName[bInd] = "tensor" and polyOrder > 1) then (
+        if (bName[bInd] = "tensor") then (
           rescaleJvel(fh, funcName, c, v, bName[bInd], polyOrder, "cubic")
         )
         else (

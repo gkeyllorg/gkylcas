@@ -14,7 +14,7 @@ maxCdim_Ser : 2$
 maxVdim_Ser : 1$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 1$
+minPolyOrder_Tensor : 2$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */

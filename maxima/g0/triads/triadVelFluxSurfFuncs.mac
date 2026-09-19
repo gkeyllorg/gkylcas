@@ -1,25 +1,25 @@
-/* Functions which compute the components of the surface flux in velocity space. 
+/* Functions which compute the components of the surface flux in velocity space.
    The procedure we utilize to generalize to the presence of different forces/different
    flavors of the Vlasov equation is a set of functions that compute the characteristics
-   alpha_v at surface quadrature points of the needed order, accumulating each component, 
-   e.g., Hamiltonian forces, the Lorentz force, or forces due to a scalar potential, 
-   into a total alpha_v at the surface. 
+   alpha_v at surface quadrature points of the needed order, accumulating each component,
+   e.g., Hamiltonian forces, the Lorentz force, or forces due to a scalar potential,
+   into a total alpha_v at the surface.
 
    We then evaluate the Lax-Friedrichs flux G = alpha/2*(f^+ + f^-) - |alpha|/2*(f^+ - f^-)
-   at each quadrature point, and then convert that back to a modal expansion of the 
-   velocity-space flux for use in the final update in hyper_dg. 
+   at each quadrature point, and then convert that back to a modal expansion of the
+   velocity-space flux for use in the final update in hyper_dg.
 
    Note that we do not make any assumptions on the order of the phase space expansion
    and thus to evaluate G, we must utilize enough Gauss-Legendre quadrature points
-   to integrate a 3*p polynomial (cubic for p=1, sixth order for p=2, ninth order for p=3). 
-   We thus must use 2, 4, and 5 Gauss-Legendre points respectively. 
+   to integrate a 3*p polynomial (cubic for p=1, sixth order for p=2, ninth order for p=3).
+   We thus must use 2, 4, and 5 Gauss-Legendre points respectively.
 
    In velocity space, certain Hamiltonians such as H = v^2/2 require fewer velocity space
    quadrature points since these Hamiltonians are "sparse." We separate the velocity space
    vs. configuration space quadrature loops and generate separate nodal configuration space
    and nodal velocity space surface bases. Since these quadrature rules are all tensor products
    of configuration space and velocity space, the final phase space basis is simply a tensor
-   product of the configuration space and velocity space bases.  
+   product of the configuration space and velocity space bases.
 */
 
 load("modal-basis");
@@ -27,220 +27,247 @@ load("out-scripts");
 load("utilities")$
 load("nodal_operations/nodal_functions")$
 load("new_vlasov/vlasov-basis");
+load("new_vlasov/nodal-lax-emit");
+load("new_vlasov/surf-eval-tables");
 load(stringproc)$
 fpprec : 24$
 
 clabels : ["x","y","z"]$
-dx1_inv : [dx10, dx11, dx12]$
-dv1_inv : [dv10, dv11, dv12]$
-vTrans  : [vx*dv0/2+wx1, vy*dv1/2+wx2, vz*dv2/2+wx3]$
+vlabels : ["vx","vy","vz"]$
 cidx(cdim) := makelist(i,i,0,cdim-1)$
 vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
 
-/* Phase-space Hamiltonian forces at velocity-space surface quadrature points. */
-calcHamilGenVelSurfForceNonCanonical(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, vel_hamil, useHigherOrder) := block(
-  [varsC,bC,varsV,bV,varsP,bP,cid,hamil,vv,surfVars,surfVVars,bSurf,NSurf,
-   nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
-   surfNodes,numNodes,PI_dH_dz_l],
+/* Phase-space Hamiltonian forces at velocity-space surface quadrature points
+   for the non-canonical (triad) bracket:
 
-  [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
-  NC : length(bC), 
+     alpha^dir = Pi^{dir,xi} dH/dz^xi,  z^xi = (x, y, z, vx, vy, vz)
 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
-  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *poisson_tensor_conf,
-  const double *hamil, double* GKYL_RESTRICT alpha_quad) ~%{ ~%", funcNm),
+   evaluated at (v_dir = -1, conf node i, vel node j); each cell owns its
+   lower edge. The Pi_px block contracts H's configuration gradient (phase
+   Hamiltonians only; velocity Hamiltonians have none) and the Pi_pp block
+   enters through omega_ab = vTrans . Pi with the transverse velocity
+   coordinates read from the shared vel_nodes table (Pi_pp vanishes in 1V).
+   The node function does one (i, j) node's work (Design A); the flat node
+   is n = i*NIv + j. */
+calcHamilVelSurfForceNonCanonical(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, useHigherOrder) := block(
+  [varsC,bC,varsV,bV,varsP,bP,cid,vid,vv,surfVars,surfVVars,bSurf,
+   nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes,
+   num_nodes_conf,num_nodes_vel,NC,NV,NB,tag,tabP,fact,NA,NMV,NS,
+   transK,omDefs,ppRows,ptxRow,retTerms,k,m,c,b,r,om,p,nJPts,pp,nidx,
+   varsMap1,bMap1,vmapS,xnS,xnSqS,vt_e],
 
-  printf(fh, "~%"),
-  if (vel_hamil) then (
-    hamil : doExpand1(hamil, bV)
-  )
-  else (
-    hamil : doExpand1(hamil, bP)    
-  ),
+  [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC), NV : length(bV), NB : length(bP),
+  cid : cidx(cdim), vid : vidx(cdim,vdim),
 
-  /* Save enough names for 3D (conf and vel spaces)*/
-  poissonTensorConf : [poisson_tensor_conf_0, poisson_tensor_conf_1, poisson_tensor_conf_2, 
-    poisson_tensor_conf_3, poisson_tensor_conf_4, poisson_tensor_conf_5, poisson_tensor_conf_6,
-    poisson_tensor_conf_7, poisson_tensor_conf_8],
-  poissonTensorConfx : [poisson_tensor_conf_x0, poisson_tensor_conf_x1, poisson_tensor_conf_x2, 
-    poisson_tensor_conf_x3, poisson_tensor_conf_x4, poisson_tensor_conf_x5, poisson_tensor_conf_x6,
-    poisson_tensor_conf_x7, poisson_tensor_conf_x8],
-
-  vv : varsV[dir], 
-  surfVars : delete(vv,varsP), /* Surface variables at constant vv surface. */
+  vv : varsV[dir],
+  surfVars : delete(vv,varsP),  /* Surface variables at constant vv surface. */
   surfVVars : delete(vv,varsV), /* Remaining variables in v. */
   [bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes] : loadVlasovVelSurfBasis(cdim, vdim, basisFun, polyOrder, surfVars, surfVVars, varsC, useHigherOrder),
-  NSurf : length(bSurf), 
-  num_nodes_conf : length(nodes_conf), 
-  num_nodes_vel : length(nodes_vel), 
-  numNodes : length(surfNodes), 
+  num_nodes_conf : length(nodes_conf),
+  num_nodes_vel : length(nodes_vel),
+  laxAssertNodeOrder(surfNodes, nodes_conf, nodes_vel),
+  tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
 
-  /* Create a projection of the momentum */
-  vid : vidx(cdim,vdim), 
-  for i : 1 thru vdim do printf(fh, "  const double wx~a = w[~a]; ~%", i, cdim+i-1, i, cdim+i-1),
-  for i : 1 thru vdim do printf(fh, "  const double dv~a = dxv[~a]; ~%", i-1, vid[i]),
-  if not(vel_hamil) then (
-    for i : 1 thru cdim do printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", i-1, i-1)
-  ),
-  for i : 1 thru vdim do printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", i-1, vid[i]),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
+  surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
 
-  /* Compute the characteristic for the NC Poisson Tensor */
-  Pi_dH_dx : 0,
-  Pi_dH_dv : 0,
-  Pi_dH_dz : 0,
+  /* Mesh maps: each derivative picks up the inverse Jacobian of ITS OWN
+     direction (dH/dx_c -> 1/J_x,c via jacob_pos, phase flavor only;
+     transverse dH/dv_k -> 1/J_v,k via jacob_vel_surf, per-node for the
+     C^1 cubic map whose in-cell Jacobian is quadratic), and the
+     omega = v.Pi momentum factor evaluates physical velocity from the
+     vmap in its native representation (linear for Serendipity, cubic
+     for Tensor). */
+  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j, const double *w, const double *dxv,
+  const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
+  const double *poisson_tensor_conf, const double *hamil) ~%{ ~%", funcNm),
 
+  if (vdim = 1) and not(hamil_rep = "phase") then (
+    /* Pi_pp vanishes in 1V and velocity-space Hamiltonians carry no
+       configuration gradient: no triad Hamiltonian force. */
+    printf(fh, "  return 0.0; ~%"),
+    printf(fh, "} ~%~%")
+  )
+  else (
+    transK : delete(dir, makelist(k, k, 1, vdim)),
 
-  /* \Pi_{px} contributions (Pi is allways 2vdim * 2vdim, regardless of cdim) */
-  /* alpha^i = \Pi^{ij}_{px} \pfrac{H}{x^j} = - \Pi^{ji}_{xp} \pfrac{H}{x^j} */
-  /* for i = (vx, vy, vz), x^j = (x, y, z)*/
-  if not(vel_hamil) then (
-    if (vdim = 1) then (
-      
-      /* Offset the row by vdim*vdim*NC components so we are in the bottom right block */
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 0, 0),
-
-      pt_x1 : doExpand1(poissonTensorConfx[1],bC),
-
-      /* Antisymmetry of Pi introduces the minus sign and various element numbers */
-      pt_x_list : [pt_x1],
-
-      /* lists are used to avoid problems referencing varsC[i] when cdim < vdim */
-      for i : 1 thru cdim do (
-        Pi_dH_dx : Pi_dH_dx - pt_x_list[i] * diff(hamil, varsC[i]) * dx1_inv[i]
+    /* --- H contractions: dH/dv_k (transverse) and, for phase Hamiltonians,
+       the G column feeding the configuration gradient. --- */
+    if (hamil_rep = "phase") then (
+      fact : laxFactorizeBasis(bP, varsC, cons(vv, surfVVars)),
+      NA : laxFactorSizes(fact, vv)[1],
+      NMV : laxFactorSizes(fact, vv)[2],
+      tabP : sconcat("vst_", tag, "_ph_v", dir-1),
+      printf(fh, "  double G[~a]; ~%", NA),
+      for k in transK do printf(fh, "  double Gd~a[~a]; ~%", k-1, NA),
+      printf(fh, "  for (int a = 0; a < ~a; ++a) { G[a] = 0.0; ~a} ~%", NA,
+        if transK = [] then "" else simplode(makelist(sconcat("Gd", k-1, "[a] = 0.0; "), k, transK))),
+      printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NB),
+      printf(fh, "    const int a = ~a_cmap[k]; ~%", tabP),
+      printf(fh, "    G[a] += ~a_V[j*~a + ~a_vrmap[k]]*(~a_coefr[k]*hamil[k]); ~%", tabP, NMV, tabP, tabP),
+      for k in transK do block([NMd],
+        NMd : laxDerivSizes(fact, vv, varsV[k]),
+        printf(fh, "    Gd~a[a] += ~a_Vd~a[j*~a + ~a_vrd~amap[k]]*(~a_dcoefr~a[k]*hamil[k]); ~%",
+          k-1, tabP, k-1, NMd, tabP, k-1, tabP, k-1)
+      ),
+      printf(fh, "  } ~%"),
+      for k in transK do (
+        printf(fh, "  double dH_dv~a = 0.0; ~%", k-1),
+        printf(fh, "  for (int a = 0; a < ~a; ++a) dH_dv~a += ~a_Cm[i*~a + a]*Gd~a[a]; ~%", NA, k-1, tabP, NA, k-1)
       )
-
+    )
+    else (
+      /* Velocity-space Hamiltonian: the sparse (separable) flavor only
+         references the constant and single-velocity-variable coefficients
+         via the shared sparse index list. */
+      NS : 0,
+      for b : 1 thru NV do
+        if length(intersection(setify(listofvars(bV[b])), setify(varsV))) <= 1 then NS : NS + 1,
+      for k in transK do (
+        printf(fh, "  double dH_dv~a = 0.0; ~%", k-1),
+        if (hamil_rep = "vel_sparse") then (
+          printf(fh, "  for (int s = 0; s < ~a; ++s) { ~%", NS),
+          printf(fh, "    const int b = vst_~a_vel_sparse_idx[s]; ~%", tag),
+          printf(fh, "    dH_dv~a += vst_~a_vel_dv~a_v~a[j*~a + b]*hamil[b]; ~%", k-1, tag, k-1, dir-1, NV),
+          printf(fh, "  } ~%")
+        )
+        else (
+          printf(fh, "  for (int b = 0; b < ~a; ++b) dH_dv~a += vst_~a_vel_dv~a_v~a[j*~a + b]*hamil[b]; ~%", NV, k-1, tag, k-1, dir-1, NV)
+        )
+      )
     ),
+
+    /* --- Pi_px block (phase Hamiltonians only): alpha += -Pi^{ji}_{xp}
+       dH/dx_j. Row j of column dir lives at NC*((dir-1) + vdim*(j-1)). --- */
+    if (hamil_rep = "phase") then (
+      for c : 1 thru cdim do printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", c-1, c-1),
+      for c : 1 thru cdim do printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_pos[~a]; ~%", clabels[c], (polyOrder+1)*(c-1)),
+      for c : 1 thru cdim do block([ptxRow],
+        ptxRow : (dir-1) + vdim*(c-1),
+        printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", ptxRow, NC*ptxRow)
+      ),
+      for c : 1 thru cdim do printf(fh, "  double px~a_q = 0.0; ~%", c-1),
+      printf(fh, "  for (int a = 0; a < ~a; ++a) { ~%", NC),
+      for c : 1 thru cdim do
+        printf(fh, "    px~a_q += vst_~a_conf_ev[i*~a + a]*poisson_tensor_conf_x~a[a]; ~%", c-1, tag, NC, (dir-1) + vdim*(c-1)),
+      printf(fh, "  } ~%"),
+      for c : 1 thru cdim do (
+        printf(fh, "  double dH_dx~a = 0.0; ~%", c-1),
+        printf(fh, "  for (int a = 0; a < ~a; ++a) dH_dx~a += ~a_CmDx~a[i*~a + a]*G[a]; ~%", NA, c-1, tabP, c-1, NA)
+      )
+    ),
+
+    /* --- Pi_pp block (vdim > 1): omega_ab = vTrans . Pi at (conf node i,
+       vel node j); v_dir sits at its -1 edge, transverse coordinates come
+       from the shared node table. --- */
+    if (vdim > 1) then (
+      for m : 1 thru vdim do printf(fh, "  const double *vmap_v~a = &vmap[~a]; ~%", m-1, 4*(m-1)),
+      for k in transK do printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", k-1, vid[k]),
+      nJPts : vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder),
+      if (vlasovVelMapRep(basisFun) = "cubic") then (
+        /* C^1 cubic map: the in-cell Jacobian is quadratic, so each
+           transverse inverse Jacobian is evaluated at the node's own
+           per-direction 1D quadrature index (node j decomposes with the
+           last transverse direction fastest, nJPts points per direction;
+           same node set as jacob_vel_surf's per-direction blocks). */
+        for k in transK do block([pp, nidx],
+          pp : if k < dir then k-1 else k-2,
+          if (vdim = 2) then nidx : "j"
+          else nidx : if (pp = 0) then sconcat("j/", nJPts) else sconcat("j%", nJPts),
+          printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a + ~a]; ~%", clabels[k], nJPts*(k-1), nidx)
+        )
+      )
+      else (
+        for k in transK do printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a]; ~%", clabels[k], nJPts*(k-1))
+      ),
+      /* Physical velocity at the node from the velocity map, expanded in
+         the p1 (linear rep) or p3 (cubic rep) 1D modal basis; v_dir sits
+         at its -1 edge, transverse coordinates come from the shared node
+         table. */
+      if (vlasovVelMapRep(basisFun) = "cubic") then block([varsMap1, bMap1, vmapS, xnS, xnSqS, vt_e],
+        /* Expand the C^1 cubic map in the loaded 1D p3 modal basis. v_dir is
+           evaluated at its -1 edge at generation time; transverse directions
+           are evaluated at the runtime node coordinate (a symbol here), with
+           its powers rewritten as products for the emitted C. */
+        [varsMap1, bMap1] : loadBasis("Tensor", 1, 3),
+        for m : 1 thru vdim do (
+          vmapS : eval_string(sconcat("vmap_v", m-1)),
+          if (m = dir) then (
+            vt_e : float(expand(subst(x = -1, doExpand1(vmapS, bMap1)))),
+            printf(fh, "  const double vt~a = ~a; ~%", m, vt_e)
+          )
+          else block([p],
+            p : if m < dir then m-1 else m-2,
+            printf(fh, "  const double xn~a = vst_~a_vel_nodes_v~a[j*~a + ~a]; ~%", m-1, tag, dir-1, vdim-1, p),
+            printf(fh, "  const double xn~a_sq = xn~a*xn~a; ~%", m-1, m-1, m-1),
+            xnS : eval_string(sconcat("xn", m-1)),
+            xnSqS : eval_string(sconcat("xn", m-1, "_sq")),
+            vt_e : float(expand(subst(x = xnS, doExpand1(vmapS, bMap1)))),
+            vt_e : subst([xnS^3 = xnS*xnSqS, xnS^2 = xnSqS], vt_e),
+            printf(fh, "  const double vt~a = ~a; ~%", m, vt_e)
+          )
+        )
+      )
+      else (
+        for m : 1 thru vdim do (
+          if (m = dir) then
+            printf(fh, "  const double vt~a = ~a*vmap_v~a[0] - ~a*vmap_v~a[1]; ~%",
+              m, float(1/sqrt(2)), m-1, float(sqrt(3/2)), m-1)
+          else block([p],
+            p : if m < dir then m-1 else m-2,
+            printf(fh, "  const double vt~a = ~a*vmap_v~a[0] + ~a*vmap_v~a[1]*vst_~a_vel_nodes_v~a[j*~a + ~a]; ~%",
+              m, float(1/sqrt(2)), m-1, float(sqrt(3/2)), m-1, tag, dir-1, vdim-1, p)
+          )
+        )
+      ),
+      /* omega_ab and the Pi_pp rows (0-based, within the block offset
+         vdim*vdim*NC) entering each: om12 <- (0,3,6), om13 <- (1,4,7),
+         om23 <- (2,5,8) in 3V; om12 <- (0,1) in 2V. */
+      if (vdim = 2) then
+        omDefs : [["om12", [0, 1]]]
+      else (
+        if (dir = 1) then omDefs : [["om12", [0, 3, 6]], ["om13", [1, 4, 7]]]
+        else if (dir = 2) then omDefs : [["om12", [0, 3, 6]], ["om23", [2, 5, 8]]]
+        else omDefs : [["om13", [1, 4, 7]], ["om23", [2, 5, 8]]]
+      ),
+      ppRows : sort(unique(flatten(makelist(om[2], om, omDefs)))),
+      for r in ppRows do
+        printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", r, vdim*vdim*NC + NC*r),
+      for r in ppRows do printf(fh, "  double p~a_q = 0.0; ~%", r),
+      printf(fh, "  for (int a = 0; a < ~a; ++a) { ~%", NC),
+      for r in ppRows do
+        printf(fh, "    p~a_q += vst_~a_conf_ev[i*~a + a]*poisson_tensor_conf_~a[a]; ~%", r, tag, NC, r),
+      printf(fh, "  } ~%"),
+      for om in omDefs do
+        printf(fh, "  const double ~a = ~a; ~%", om[1],
+          simplode(makelist(sconcat("vt", m, "*p", om[2][m], "_q"), m, 1, vdim), " + "))
+    ),
+
+    /* --- Assemble alpha^dir. --- */
+    retTerms : [],
+    if (hamil_rep = "phase") then
+      retTerms : endcons(sconcat("-(",
+        simplode(makelist(sconcat("px", c-1, "_q*dH_dx", c-1, "*dx1", c-1, "*jacob_c", clabels[c], "_inv"), c, 1, cdim), " + "), ")"), retTerms),
     if (vdim = 2) then (
-
-      /* Offset the row by vdim*vdim*NC components so we are in the bottom right block */
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 0, 0),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 1, NC),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 2, NC*2),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 3, NC*3),
-
-      pt_x1 : doExpand1(poissonTensorConfx[1],bC),
-      pt_x2 : doExpand1(poissonTensorConfx[2],bC),
-      pt_x3 : doExpand1(poissonTensorConfx[3],bC),
-      pt_x4 : doExpand1(poissonTensorConfx[4],bC),
-
-      /* Antisymmetry of Pi introduces the minus sign and various element numbers */
-      pt_x_list : [pt_x1, pt_x3],
-      if (dir = 2) then pt_x_list : [pt_x2, pt_x4],
-
-      /* lists are used to avoid problems referencing varsC[i] when cdim < vdim */
-      for i : 1 thru cdim do (
-        Pi_dH_dx : Pi_dH_dx - pt_x_list[i] * diff(hamil, varsC[i]) * dx1_inv[i]
-      )
-
+      if (dir = 1) then retTerms : endcons("om12*dH_dv1*dv11*jacob_vy_inv", retTerms)
+      else retTerms : endcons("-om12*dH_dv0*dv10*jacob_vx_inv", retTerms)
+    )
+    else if (vdim = 3) then (
+      if (dir = 1) then retTerms : append(retTerms, ["om12*dH_dv1*dv11*jacob_vy_inv", "om13*dH_dv2*dv12*jacob_vz_inv"])
+      else if (dir = 2) then retTerms : append(retTerms, ["-om12*dH_dv0*dv10*jacob_vx_inv", "om23*dH_dv2*dv12*jacob_vz_inv"])
+      else retTerms : append(retTerms, ["-om13*dH_dv0*dv10*jacob_vx_inv", "-om23*dH_dv1*dv11*jacob_vy_inv"])
     ),
-    if (vdim = 3) then (
-
-      /* Offset the row by vdim*vdim*NC components so we are in the bottom right block */
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 0, 0),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 1, NC),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 2, NC*2),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 3, NC*3),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 4, NC*4),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 5, NC*5),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 6, NC*6),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 7, NC*7),
-      printf(fh, "  const double *poisson_tensor_conf_x~a = &poisson_tensor_conf[~a]; ~%", 8, NC*8),
-
-      pt_x1 : doExpand1(poissonTensorConfx[1],bC),
-      pt_x2 : doExpand1(poissonTensorConfx[2],bC),
-      pt_x3 : doExpand1(poissonTensorConfx[3],bC),
-      pt_x4 : doExpand1(poissonTensorConfx[4],bC),
-      pt_x5 : doExpand1(poissonTensorConfx[5],bC),
-      pt_x6 : doExpand1(poissonTensorConfx[6],bC),
-      pt_x7 : doExpand1(poissonTensorConfx[7],bC),
-      pt_x8 : doExpand1(poissonTensorConfx[8],bC),
-      pt_x9 : doExpand1(poissonTensorConfx[9],bC),
-
-      /* Antisymmetry of Pi introduces the minus sign and various element numbers */
-      pt_x_list : [pt_x1, pt_x4, pt_x7],
-      if (dir = 2) then pt_x_list : [pt_x2, pt_x5, pt_x8],
-      if (dir = 3) then pt_x_list : [pt_x3, pt_x6, pt_x9],
-
-      /* lists are used to avoid problems referencing varsC[i] when cdim < vdim */
-      for i : 1 thru cdim do (
-        Pi_dH_dx : Pi_dH_dx - pt_x_list[i] * diff(hamil, varsC[i]) * dx1_inv[i]
-      )
-    )
+    printf(fh, "  return ~a; ~%", simplode(retTerms, " + ")),
+    printf(fh, "} ~%~%")
   ),
 
-  /* \Pi_{pp} contributions */
-  /* vdim = 1 has no contributions, hence is zero */
-  if (vdim = 2) then (
-
-    /* Offset the row by vdim*vdim*NC components so we are in the bottom right block */
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 0, vdim*vdim*NC ),
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 1, vdim*vdim*NC + NC),
-
-    poissonTensorConf_local_1 : doExpand1(poissonTensorConf[1],bC),
-    poissonTensorConf_local_2 : doExpand1(poissonTensorConf[2],bC),
-
-    omega_12 : (vTrans[1]*poissonTensorConf_local_1 + vTrans[2]*poissonTensorConf_local_2 ),
-
-    if (dir = 1) then (
-      Pi_dH_dv : omega_12 * diff(hamil,varsV[2])*dv1_inv[2] 
-    ) 
-    else if (dir = 2) then (
-      Pi_dH_dv : - omega_12 * diff(hamil,varsV[1])*dv1_inv[1]
-    )
-  ),
-  if (vdim = 3) then (
-
-    /* Offset the row by vdim*vdim*NC components so we are in the bottom right block */
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 0, vdim*vdim*NC ),
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 1, vdim*vdim*NC + NC),
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 2, vdim*vdim*NC + NC*2),
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 3, vdim*vdim*NC + NC*3),
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 4, vdim*vdim*NC + NC*4),
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 5, vdim*vdim*NC + NC*5),
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 6, vdim*vdim*NC + NC*6),
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 7, vdim*vdim*NC + NC*7),
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", 8, vdim*vdim*NC + NC*8),
-
-    poissonTensorConf_local_1 : doExpand1(poissonTensorConf[1],bC),
-    poissonTensorConf_local_2 : doExpand1(poissonTensorConf[2],bC),
-    poissonTensorConf_local_3 : doExpand1(poissonTensorConf[3],bC),
-    poissonTensorConf_local_4 : doExpand1(poissonTensorConf[4],bC),
-    poissonTensorConf_local_5 : doExpand1(poissonTensorConf[5],bC),
-    poissonTensorConf_local_6 : doExpand1(poissonTensorConf[6],bC),
-    poissonTensorConf_local_7 : doExpand1(poissonTensorConf[7],bC),
-    poissonTensorConf_local_8 : doExpand1(poissonTensorConf[8],bC),
-    poissonTensorConf_local_9 : doExpand1(poissonTensorConf[9],bC),
-
-    omega_12 : vTrans[1]*poissonTensorConf_local_1 + vTrans[2]*poissonTensorConf_local_4 + vTrans[3]*poissonTensorConf_local_7,
-    omega_13 : vTrans[1]*poissonTensorConf_local_2 + vTrans[2]*poissonTensorConf_local_5 + vTrans[3]*poissonTensorConf_local_8,
-    omega_23 : vTrans[1]*poissonTensorConf_local_3 + vTrans[2]*poissonTensorConf_local_6 + vTrans[3]*poissonTensorConf_local_9,
-
-    if (dir = 1) then (
-      Pi_dH_dv : Pi_dH_dv + omega_12 * diff(hamil,varsV[2])*dv1_inv[2],
-      Pi_dH_dv : Pi_dH_dv + omega_13 * diff(hamil,varsV[3])*dv1_inv[3]
-    ) 
-    else if (dir = 2) then (
-      Pi_dH_dv : Pi_dH_dv - omega_12 * diff(hamil,varsV[1])*dv1_inv[1],
-      Pi_dH_dv : Pi_dH_dv + omega_23 * diff(hamil,varsV[3])*dv1_inv[3]
-    )
-    else if (dir = 3) then (
-      Pi_dH_dv : Pi_dH_dv - omega_13 * diff(hamil,varsV[1])*dv1_inv[1],
-      Pi_dH_dv : Pi_dH_dv - omega_23 * diff(hamil,varsV[2])*dv1_inv[2]
-    )
-  ),
-
-  /* Sum components together */
-  /* alpha^i = \Pi^{i\xi} \pfrac{H}{z^\xi} */
-  /* for i = (vx, vy, vz), \xi = (x, y, z, vx, vy, vz)*/
-  Pi_dH_dz : Pi_dH_dx + Pi_dH_dv,
-
-  /* Each cells owns its *lower* edge fluxes, so we evaluate the derivative of the 
-     Hamiltonian at vv = -1. Note that the flux is -grad_x(H). */
-  PI_dH_dz_l : float(evAtNodes(subst(vv=-1,Pi_dH_dz),surfNodes,surfVars)), 
-  for i : 1 thru numNodes do (
-    printf(fh, "  alpha_quad[~a] += ~a; ~%", i-1, PI_dH_dz_l[i]) 
-  ),
-  printf(fh, "~%"),
-
+  /* Wrapper with the original ABI: loop the node function. */
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *vmap,
+  const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
+  const double *hamil, double* GKYL_RESTRICT alpha_quad) ~%{ ~%", funcNm),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
+  printf(fh, "    for (int j = 0; j < ~a; ++j) alpha_quad[i*~a + j] += ~a_node(i, j, w, dxv, vmap, jacob_pos, jacob_vel_surf, poisson_tensor_conf, hamil); ~%", num_nodes_vel, num_nodes_vel, funcNm),
+  printf(fh, "  } ~%"),
   printf(fh, "} ~%")
-)$ 
+)$

@@ -7,7 +7,10 @@ load("nodal_operations/nodal_functions")$
 load(stringproc)$
 fpprec : 24$
 
-calcVmap(fh, funcNm, vdim, polyOrder) := block(
+/* nSurfPts = per-direction node count (and stride) of the jacob_vel_surf
+   blocks this kernel writes: p+2 for ser/tensor; the tensor p=1 hybrid has
+   a lo/ho quadrature choice, lo = 3 (ho reuses the p2 kernel's 4). */
+calcVmap(fh, funcNm, vdim, polyOrder, nSurfPts) := block(
   [bV_p3, varsV_p3, NV_p3, bV_p2, varsV_p2, NV_p2],
 
   kill(varsV_p2, bV_p2, varsV_p3, bV_p3),
@@ -53,7 +56,7 @@ calcVmap(fh, funcNm, vdim, polyOrder) := block(
     printf(fh, "  double *p~a = &vmap[~a]; ~%", dir-1, NV_p3*(dir-1)),
     printf(fh, "  double *vmap_pgkyl~a = &vmap_pgkyl[~a]; ~%", dir-1, NV_vdim_p3*(dir-1)),
     printf(fh, "  double *jacob_vel~a = &jacob_vel[~a]; ~%", dir-1, NV_p2*(dir-1)), 
-    printf(fh, "  double *jacob_vel~a_surf = &jacob_vel_surf[~a]; ~%", dir-1, 4*(dir-1))
+    printf(fh, "  double *jacob_vel~a_surf = &jacob_vel_surf[~a]; ~%", dir-1, nSurfPts*(dir-1))
   ),
 
   px_e : doExpand1(p0, bV_p3), 
@@ -71,7 +74,7 @@ calcVmap(fh, funcNm, vdim, polyOrder) := block(
   jacob_vel_nodes : [jacob_velx_nodes, jacob_vely_nodes, jacob_velz_nodes], 
 
   /* Evaluate derivative at larger number of nodes for use in surface terms (polyOrder + 2). */
-  nodes_gauss_surf : gaussOrd(polyOrder+2, 1),
+  nodes_gauss_surf : gaussOrd(nSurfPts, 1),
   num_nodes_gauss_surf : length(nodes_gauss_surf), 
   jacob_velx_surf_nodes : expand(float(evAtNodes(diff(px_e,x),nodes_gauss_surf,varsV_p3))),  
   jacob_vely_surf_nodes : expand(float(evAtNodes(diff(py_e,x),nodes_gauss_surf,varsV_p3))),  

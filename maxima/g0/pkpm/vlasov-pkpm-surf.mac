@@ -35,7 +35,7 @@ calcVlasovPKPMStreamUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder
    F_0r_lx_temp, F_0r_lx_temp_e, G_1r_lx_temp, G_1r_lx_temp_e, 
    out_F_0_c, out_G_1_c],
 
-  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+  [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),
 
   /* Number of basis monomials. */
   NP : length(bP),
@@ -478,7 +478,7 @@ calcVlasovPKPMAccelUpdate(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
    incr_F_0_l, incr_G_1_l, incr_F_0_r, incr_G_1_r, 
    incr_F_0_div_b_l, incr_G_1_div_b_l, incr_F_0_div_b_r, incr_G_1_div_b_r],
 
-  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+  [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),
 
   /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
      mean hybrid basis. */

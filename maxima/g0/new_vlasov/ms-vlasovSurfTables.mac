@@ -1,7 +1,12 @@
-/* Generate kernels that compute the moments of the distribution function. */
-
-load("new_vlasov/vlasovMomentsFuncs")$
+/* Generate the shared nodal surface-evaluation table headers
+   gkyl_vlasov_surf_tables_<c>x<v>v_<b>_p<p>.h used by the velocity-flux
+   alpha_quad producers and lax_flux_nodal kernels. Combo coverage mirrors
+   ms-vlasovVelFluxSurf.mac. */
+load("new_vlasov/vlasov-basis");
+load("new_vlasov/surf-eval-tables");
+load("nodal_operations/nodal_functions")$
 load(stringproc)$
+fpprec : 24$
 
 /* ...... USER INPUTS........ */
 
@@ -33,36 +38,33 @@ minVdim      : [minVdim_Ser, minVdim_Tensor]$
 maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 
+if not(symbolp(tablesOutdir)) then tablesOutdir : tablesOutdir else tablesOutdir : "~/max-out/"$
+
 for bInd : 1 thru length(bName) do (
   for c : minCdim[bInd] thru maxCdim[bInd] do (
-    minVdimB : max(c,minVdim[bInd]), 
-    maxVdimB : maxVdim[bInd], 
+    minVdimB : max(c,minVdim[bInd]),
+    maxVdimB : maxVdim[bInd],
     if (c = 2) then minVdimB : 1, /* We support 2x1v. */
     for v : minVdimB thru maxVdimB do (
-
       minPolyOrderB : minPolyOrder[bInd],
       maxPolyOrderB : maxPolyOrder[bInd],
       if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-      /* Tensor 2x3v/3x3v: only the p=1 hybrid (p>1 tensor kernels at these
-         dimensionalities are unused by the kernel tables and very expensive
-         to generate). */
-      if (bName[bInd] = "tensor" and c+v >= 5) then maxPolyOrderB : 1,
-      /* Vlasov moment calculators. */
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
-        disp(printf(false,sconcat("Creating Vlasov Moments ~ax~av ", bName[bInd]),c,v)),
-        fname : sconcat("~/max-out/mom_vlasov_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        /* Modal->nodal (producer) tables, for vlasov/ker/flux_vlasov. */
+        fname : sconcat(tablesOutdir, "gkyl_vlasov_flux_surf_mod2nod_tables_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".h"),
+        disp(printf(false,"tables: ~a",fname)),
         fh : openw(fname),
-        funcName : sconcat("mom_vlasov"),
-        /* We do not generate 5D and 6D p>1 phase-space Hamiltonian kernels. */
-        if (c+v>=5 and polyOrder>1) then (
-          calcMoments(fh, funcName, c, v, bName[bInd], polyOrder, false)
-        )
-        else (
-          calcMoments(fh, funcName, c, v, bName[bInd], polyOrder, true)
-        ),
+        writeFluxSurfTabHeader(fh, c, v, bName[bInd], polyOrder),
+        close(fh),
+        /* Nodal->modal (consumer projection) tables, for vlasov/ker/vlasov. */
+        fname : sconcat(tablesOutdir, "gkyl_vlasov_surf_nod2mod_tables_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".h"),
+        disp(printf(false,"tables: ~a",fname)),
+        fh : openw(fname),
+        writePrjTabHeader(fh, c, v, bName[bInd], polyOrder),
         close(fh)
       )
     )
   )
-);
+)$

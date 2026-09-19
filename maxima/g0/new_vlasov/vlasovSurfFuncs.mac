@@ -25,6 +25,7 @@ load("out-scripts");
 load("utilities")$
 load("nodal_operations/nodal_functions")$
 load("new_vlasov/vlasov-basis");
+load("new_vlasov/surf-eval-tables");
 load(stringproc)$
 fpprec : 24$
 
@@ -48,7 +49,7 @@ cidx(cdim) := makelist(i,i,0,cdim-1)$
 vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
 
 /* Velocity-space Hamiltonian surface streaming */
-calcHamilVelSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
+calcHamilVelSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, rep) := block(
   [varsC,bC,varsV,bV,varsP,bP,
    bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi,
    cid,vid,hamil,cv,vv,surfVars,bSurf,NSurf,fl_e,fc_e,fr_e,
@@ -57,7 +58,7 @@ calcHamilVelSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) :=
    Ghat_r_c,Ghat_l_c,Ghat_l_e,Ghat_r_e,incr_l,incr_r,stream],
 
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder),
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)),
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
@@ -71,7 +72,10 @@ calcHamilVelSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) :=
   printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
   printf(fh, "  double wv = w[~a]; ~%", vid[dir], vid[dir]),
   printf(fh, "~%"),
-  hamil : doExpand1(hamil, bV), /* Hamiltonian only a function of velocity space. */
+  /* Velocity-space Hamiltonian. The sparse (separable) representation keeps
+     the dense storage layout but only references the constant and
+     single-velocity-variable coefficients (cross terms are exactly zero). */
+  hamil : hamilExpand(hamil, bV, varsV, hamil_rep = "vel_sparse"),
 
   /* Surface contribution is defined as integral(phi^- Ghat) over the surface. */
   /* cv = variable in direction of surface update. */
@@ -80,7 +84,7 @@ calcHamilVelSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) :=
 
   /* Surface variables to integrate over. */
   surfVars : delete(cv,varsP),
-  bSurf : basisFromVars(basisFun,surfVars,polyOrder),
+  bSurf : basisFromVars(vlasovBtype(basisFun, polyOrder),surfVars,polyOrder),
   NSurf : length(bSurf), 
 
   /* Create expansions of f_left, f_center, and f_right on volume basis. */
@@ -212,165 +216,82 @@ calcHamilVelSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) :=
   printf(fh, "} ~%")
 )$  
 
-/* Phase-space Hamiltonian surface streaming */
-calcHamilGenSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
-  [varsC,bC,varsV,bV,varsP,bP,cid,vid,hamil,cv,vv,surfVars,surfCVars, 
-   bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes, 
-   NSurf,num_nodes_conf,num_nodes_vel,numNodes,fl_e,fc_e,fr_e,
-   dH_dv_l_n,dH_dv_r_n,f_lr_n,f_cl_n,f_cr_n,f_rl_n,
-   Ghat_r_nodal_e,Ghat_l_nodal_e,Ghat_r_c,Ghat_l_c,Ghat_l_e,Ghat_r_e,incr_l,incr_r],
+/* Velocity-space surface update from the pre-computed nodal flux, as loops
+   over the shared consumer projection tables (vst_<tag>_prj_v<d>_*, see
+   writeConsumerProjTables in surf-eval-tables.mac). Mode k's projection
+   g = <bSurfP_k, F_nodal>/coef_k factorizes over the conf (x) vel
+   tensor-product node set into the Cw/Vw table contractions
+   (quadrature-weight-folded shape evaluations, exactly the inner products
+   with the nodal cardinal basis by Gauss-Legendre exactness), and the
+   volume increments follow from the restriction identity
+   bP_m|_{vv=+/-1} = c*bSurfP_{s(m)} (signs and coef folded into the
+   coefficient tables at generation time, where all identities are asserted
+   exactly). No G1/Ghat scratch, no duplicated left/right matrices.
 
-  [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
-
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
-  /* jacob_pos_l/c/r carried uniformly for a shared function-pointer typedef
-     with the default-model streaming surface kernels; unused here (phase-space
-     Hamiltonian / canonical-PB does not use the position-map Jacobian). */
-  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *jacob_pos_l, const double *jacob_pos_c, const double *jacob_pos_r, const double *jacob_vel,
-  const double *poisson_tensor_conf, const double *hamil,
-  const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-
-  cid : cidx(cdim),
-  vid : vidx(cdim,vdim),
-  printf(fh, "  double dx1~a = 2.0/dxv[~a]; ~%", dir-1, cid[dir]),
-  printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
-  printf(fh, "~%"),
-  hamil : doExpand1(hamil, bP), /* Hamiltonian a function of the full phase space. */
-
-  /* Surface contribution is defined as integral(phi^- Fhat) over the surface. */
-  /* cv = variable in direction of surface update. */
-  cv : varsP[dir],
-  vv : varsV[dir], 
-  surfVars : delete(cv,varsP), /* Surface variables at constant cv surface. */
-  surfCVars : delete(cv,varsC), /* Remaining configuration space variables at cv surface. */
-  [bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes] : loadVlasovConfSurfBasis(cdim, vdim, basisFun, polyOrder, surfVars, surfCVars, varsV, useHigherOrder),
-  NSurf : length(bSurf), 
-  num_nodes_conf : length(nodes_conf), 
-  num_nodes_vel : length(nodes_vel), 
-  numNodes : length(surfNodes), 
-
-  /* Create expansions of f_left, f_center, and f_right on volume basis. */
-  fl_e : doExpand1(fl, bP),
-  fc_e : doExpand1(fc, bP),
-  fr_e : doExpand1(fr, bP),
-
-  printf(fh, "  double Fhat_l_nodal[~a] = {0.0}; ~%", numNodes),
-  printf(fh, "  double Fhat_r_nodal[~a] = {0.0}; ~%", numNodes),
-  dH_dv_l_n : float(evAtNodes(subst(cv=-1,diff(hamil,vv)),surfNodes,surfVars)), 
-  dH_dv_r_n : float(evAtNodes(subst(cv=1,diff(hamil,vv)),surfNodes,surfVars)), 
-  f_lr_n : float(evAtNodes(subst(cv=1,fl_e),surfNodes,surfVars)), 
-  f_cl_n : float(evAtNodes(subst(cv=-1,fc_e),surfNodes,surfVars)), 
-  f_cr_n : float(evAtNodes(subst(cv=1,fc_e),surfNodes,surfVars)), 
-  f_rl_n : float(evAtNodes(subst(cv=-1,fr_e),surfNodes,surfVars)), 
-  printf(fh, "  double alpha_l_quad = 0.0; ~%"), 
-  printf(fh, "  double alpha_r_quad = 0.0; ~%"), 
-  printf(fh, "  double alpha_max = 0.0; ~%"), 
-  printf(fh, "  double f_lr_quad = 0.0; ~%"), 
-  printf(fh, "  double f_cl_quad = 0.0; ~%"), 
-  printf(fh, "  double f_cr_quad = 0.0; ~%"), 
-  printf(fh, "  double f_rl_quad = 0.0; ~%"), 
-  for i : 1 thru numNodes do (
-    printf(fh, "  alpha_l_quad = ~a; ~%", dH_dv_l_n[i]), 
-    printf(fh, "  alpha_r_quad = ~a; ~%", dH_dv_r_n[i]), 
-    printf(fh, "  alpha_max = fmax(alpha_max, fmax(fabs(alpha_l_quad), fabs(alpha_r_quad))); ~%"), 
-    printf(fh, "  f_lr_quad = ~a; ~%", f_lr_n[i]), 
-    printf(fh, "  f_cl_quad = ~a; ~%", f_cl_n[i]), 
-    printf(fh, "  f_cr_quad = ~a; ~%", f_cr_n[i]), 
-    printf(fh, "  f_rl_quad = ~a; ~%", f_rl_n[i]), 
-    printf(fh, "  Fhat_l_nodal[~a] = 0.5*(alpha_l_quad*(f_cl_quad + f_lr_quad) - fabs(alpha_l_quad)*(f_cl_quad - f_lr_quad)); ~%", i-1), 
-    printf(fh, "  Fhat_r_nodal[~a] = 0.5*(alpha_r_quad*(f_rl_quad + f_cr_quad) - fabs(alpha_r_quad)*(f_rl_quad - f_cr_quad)); ~%", i-1), 
-    printf(fh, "~%")    
-  ), 
-  /* Construct the nodal expansion from a tensor product of the configuration-space nodal basis 
-     and velocity-space nodal basis. We do this separation because Maxima struggles to make
-     high dimensional nodal bases and we know the basis we need is a tensor product of two
-     lower dimensional basis sets. */
-  Fhat_l_nodal_list : makelist(Fhat_l_nodal[i], i, 0, numNodes-1), 
-  Fhat_r_nodal_list : makelist(Fhat_r_nodal[i], i, 0, numNodes-1), 
-  Fhat_l_nodal_e : 0, 
-  Fhat_r_nodal_e : 0, 
-  for i : 1 thru num_nodes_conf do (
-    for j : 1 thru num_nodes_vel do (
-      Fhat_l_nodal_e : ratsimp(Fhat_l_nodal_e + Fhat_l_nodal_list[j + (i-1)*num_nodes_vel]*basisNodalVel[j]*basisNodalConf[i]),
-      Fhat_r_nodal_e : ratsimp(Fhat_r_nodal_e + Fhat_r_nodal_list[j + (i-1)*num_nodes_vel]*basisNodalVel[j]*basisNodalConf[i])
-    )
-  ),
-
-  /* Compute surface contribution integral(phi^- Fhat) on the left and right. */
-  incr_l : calcInnerProdList(surfVars, 1, subst(cv=-1.0, bP), Fhat_l_nodal_e),
-  incr_r : calcInnerProdList(surfVars, -1, subst(cv=1.0, bP), Fhat_r_nodal_e),
-  writeCIncrExprsCollect1lhsc(out, dv11[dir]*dx11[dir]*incr_l + dv11[dir]*dx11[dir]*incr_r),    
-  printf(fh, "~%"),
-
-  /* Estimate stable time step from the maximum quadrature point evaluation. */
-  printf(fh, "  return fabs(~a*~a*~a*alpha_max);~%", float(0.5*(2*polyOrder+1)), dv11[dir], dx11[dir]), 
-  printf(fh, "~%"),
-
-  printf(fh, "} ~%")
-)$  
-
-/* Velocity-space surface update from pre-computed flux. */
+   TWO FRAMINGS of the same tables are emitted into each .c file:
+   - the WRAPPER (original ABI, production CPU path) loops SURFACE modes k
+     and scatters through the CSR out maps -- flop-minimal (each projection
+     computed once; per-volume-mode recompute measured 1.5-5.8x slower in
+     hyper_dg on CPU);
+   - the `_mode(m, ...)` function (declared in
+     gkyl_vlasov_surf_node_kernels.h) does ONE VOLUME MODE's work via the
+     transposed pm_ maps: thread m owns out[m] exclusively, in every
+     direction, so a (cells x np) GPU launch needs no atomics or barriers.
+   Both use emitPrjProjection, so the projections cannot drift apart.
+   Never hand-edit one form in isolation; regenerate the file. */
 calcVelSurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP, vid,vv, surfVars,surfVVars,
-   bSurf,NSurf, nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,
-   surfNodes, num_nodes_conf,num_nodes_vel,numNodes,Fhat_l_nodal_c,
-   Fhat_r_nodal_c,Fhat_l_nodal_list,Fhat_r_nodal_list,
-   Fhat_l_nodal_e,Fhat_r_nodal_e, Ghat_l_d,Ghat_r_d,Ghat_l,Ghat_r,
-   Ghat_l_e,Ghat_r_e,incr_l,incr_r],
+   bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,
+   surfNodes, num_nodes_conf,num_nodes_vel,numNodes,
+   bSurfP,NK,fact,NA,NMV,tag,pre,off],
 
-  [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
-  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
-  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
   vid : vidx(cdim,vdim),
-  printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
-  printf(fh, "~%"),
-
-  /* Surface contribution is defined as integral(phi^- Fhat) over the surface. */
-  vv : varsV[dir], 
+  vv : varsV[dir],
   surfVars : delete(vv,varsP), /* Surface variables at constant vv surface. */
-  surfVVars : delete(vv,varsV), 
+  surfVVars : delete(vv,varsV),
   [bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes] : loadVlasovVelSurfBasis(cdim, vdim, basisFun, polyOrder, surfVars, surfVVars, varsC, useHigherOrder),
-  NSurf : length(bSurf), 
-  num_nodes_conf : length(nodes_conf), 
-  num_nodes_vel : length(nodes_vel), 
-  numNodes : length(surfNodes), 
+  num_nodes_conf : length(nodes_conf),
+  num_nodes_vel : length(nodes_vel),
+  numNodes : length(surfNodes),
 
-  printf(fh, "  double Ghat_l[~a] = {0.0}; ~%", NSurf),
-  printf(fh, "  double Ghat_r[~a] = {0.0}; ~%", NSurf),
+  /* Sizes must reproduce the table generator's (deterministic: same
+     factorization/dedup path on the same p=polyOrder surface basis). */
+  bSurfP : basisFromVars(vlasovBtype(basisFun, polyOrder), surfVars, polyOrder),
+  NK : length(bSurfP),
+  fact : laxFactorizeBasis(bSurfP,
+    varsC,
+    if length(surfVVars) = 0 then [prjdummy] else surfVVars),
+  NA : length(fact[1]),
+  NMV : length(fact[2]),
+  tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
+  pre : sconcat("vst_", tag, "_prj_v", dir-1),
+  off : (dir-1)*numNodes,
 
-  printf(fh, "  const double *Fhat_l_nodal_c = &Fhat_l_nodal[~a]; ~%", (dir-1)*numNodes),
-  printf(fh, "  const double *Fhat_r_nodal_c = &Fhat_r_nodal[~a]; ~%", (dir-1)*numNodes),
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder),
 
-  Fhat_l_nodal_list : makelist(Fhat_l_nodal_c[i], i, 0, numNodes-1), 
-  Fhat_r_nodal_list : makelist(Fhat_r_nodal_c[i], i, 0, numNodes-1), 
-  Fhat_l_nodal_e : 0, 
-  Fhat_r_nodal_e : 0, 
-  for i : 1 thru num_nodes_conf do (
-    for j : 1 thru num_nodes_vel do (
-      Fhat_l_nodal_e : Fhat_l_nodal_e + Fhat_l_nodal_list[j + (i-1)*num_nodes_vel]*basisNodalVel[j]*basisNodalConf[i],
-      Fhat_r_nodal_e : Fhat_r_nodal_e + Fhat_r_nodal_list[j + (i-1)*num_nodes_vel]*basisNodalVel[j]*basisNodalConf[i]
-    )
+  /* Per-volume-mode form for the FUTURE (cells x np) GPU launcher: thread m
+     owns out[m] exclusively. Gated off until that work starts -- see
+     emitConsumerModeFns in surf-eval-tables.mac. */
+  if emitConsumerModeFns then (
+    printf(fh, "GKYL_CU_DH void ~a_mode(int m, double dv1~a,
+  const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
+    emitPrjProjection(fh, pre, "pm_a", "pm_b", "m", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
+    printf(fh, "  out[m] += dv1~a*(~a_pm_cl[m]*g_l + ~a_pm_cr[m]*g_r); ~%", dir-1, pre, pre),
+    printf(fh, "} ~%~%")
   ),
 
-  Ghat_l_d : calcInnerProdList(surfVars, 1, bSurf, Fhat_l_nodal_e),
-  Ghat_r_d : calcInnerProdList(surfVars, 1, bSurf, Fhat_r_nodal_e),
-  writeCExprs1(Ghat_l, Ghat_l_d), 
-  writeCExprs1(Ghat_r, Ghat_r_d), 
-
-  Ghat_l_e : doExpand1(Ghat_l, bSurf),
-  Ghat_r_e : doExpand1(Ghat_r, bSurf),
-
-  incr_l : calcInnerProdList(surfVars, 1, subst(vv=-1.0, bP), Ghat_l_e),
-  incr_r : calcInnerProdList(surfVars, -1, subst(vv=1.0, bP), Ghat_r_e),
-
-  writeCIncrExprsCollect1lhsc(out, dv11[dir]*incr_l + dv11[dir]*incr_r),    
-  printf(fh, "~%"),
-
-  /* Stable time step obtained from flux computation at nodes earlier. */
-  printf(fh, "  return 0.0;~%"), 
-  printf(fh, "~%"),
-
+  /* Surface-mode CSR form (CPU): each projection computed once. */
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
+  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NK),
+  emitPrjProjection(fh, pre, "kamap", "kbmap", "k", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
+  printf(fh, "  for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
+  printf(fh, "    out[~a_out_mode[q]] += dv1~a*(~a_out_cl[q]*g_l + ~a_out_cr[q]*g_r); ~%", pre, dir-1, pre, pre),
+  printf(fh, "  } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  return 0.0;~%"),
   printf(fh, "} ~%")
-)$    
+)$

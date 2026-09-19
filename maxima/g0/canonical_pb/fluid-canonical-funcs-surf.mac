@@ -101,8 +101,8 @@ calcFluidCanonicalPBSurfUpdateInDir(surfDir, fh, funcNm, cdim, basisFun, polyOrd
   fc_e : doExpand1(fc, bC),
   fr_e : doExpand1(fr, bC),
 
-  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,fl_e,fc_e,basisStr,"L",cdim, vdim, polyOrder,basisFun,true),
-  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,fc_e,fr_e,basisStr,"R",cdim, vdim, polyOrder,basisFun,true),
+  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,fl_e,fc_e,basisStr,"L",cdim, vdim, polyOrder,basisFun,true,"f"),
+  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,fc_e,fr_e,basisStr,"R",cdim, vdim, polyOrder,basisFun,true,"f"),
 
   fUpL_e : doExpand1(fUpL, bSurf), 
   fUpR_e : doExpand1(fUpR, bSurf), 
@@ -146,7 +146,6 @@ calcTwoFluidCanonicalPBSurfUpdateInDir(surfDir, fh, funcNm, cdim, basisFun, poly
    surfNodes, bSurf, basisStr, NSurf, numNodes, NSurfIndexing, numNodesIndexing, rdSurfVar2, rdx2vec, 
    phi_e, alphaSurfL_e, alphaSurfR_e, fl_e, fc_e, fr_e, fUpL_e, fUpR_e, GhatL_c, GhatR_c, GhatL_e, GhatR_e, 
    incrL_c, incrR_c],
-  /* NOTE: THIS FUNCTION REQUIRES A FURTHER SEARCH AND REPLACE AFTER GENERATION TO fUpL -> f1/2UpL, SAME FOR R */
   kill(varsC,bC),
 
   /* Load basis of dimensionality requested. */
@@ -238,8 +237,8 @@ calcTwoFluidCanonicalPBSurfUpdateInDir(surfDir, fh, funcNm, cdim, basisFun, poly
   f1r_e : doExpand1(f1r, bC),
   f2r_e : doExpand1(f2r, bC),
 
-  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,f1l_e,f1c_e,basisStr,"L",cdim, vdim, polyOrder,basisFun,true),
-  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,f1c_e,f1r_e,basisStr,"R",cdim, vdim, polyOrder,basisFun,true),
+  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,f1l_e,f1c_e,basisStr,"L",cdim, vdim, polyOrder,basisFun,true,"f1"),
+  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,f1c_e,f1r_e,basisStr,"R",cdim, vdim, polyOrder,basisFun,true,"f1"),
 
   f1UpL_e : doExpand1(f1UpL, bSurf), 
   f1UpR_e : doExpand1(f1UpR, bSurf), 
@@ -266,8 +265,8 @@ calcTwoFluidCanonicalPBSurfUpdateInDir(surfDir, fh, funcNm, cdim, basisFun, poly
   flush_output(fh),
 
   /* Now update the second fluid identically to the first */
-  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,f2l_e,f2c_e,basisStr,"L",cdim, vdim, polyOrder,basisFun,true),
-  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,f2c_e,f2r_e,basisStr,"R",cdim, vdim, polyOrder,basisFun,true),
+  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,f2l_e,f2c_e,basisStr,"L",cdim, vdim, polyOrder,basisFun,true,"f2"),
+  calcAndWrite_CanonicalPBfUpwind(fh,surfDir,surfVar,surfIntVars,bSurf,NSurf,f2c_e,f2r_e,basisStr,"R",cdim, vdim, polyOrder,basisFun,true,"f2"),
 
   f2UpL_e : doExpand1(f2UpL, bSurf), 
   f2UpR_e : doExpand1(f2UpR, bSurf), 

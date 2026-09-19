@@ -1,0 +1,160 @@
+/* nodal-lax-emit.mac -------------------------------------------------------
+   Factorized (sum-factorization) emission of the nodal Lax-Friedrichs flux
+   producers (lax_flux_nodal / ho_lax_flux_nodal, velocity- and
+   configuration-direction).
+
+   Every gkeyll modal basis function is a product of 1D Legendre polynomials,
+   so each phase-space basis function splits EXACTLY as
+
+     phi_k = coef_k * chi_{cmap[k]}(outer vars) * psi_{vmap[k]}(normal + inner vars)
+
+   where the chi/psi "shapes" (normalized to 1 at a reference point) are
+   shared across many k. The surface node set is the tensor product of outer
+   nodes and inner nodes, so the nodal evaluation of f_l/f_r factorizes into
+   two stages:
+
+     stage 1:  G[j][a]      = sum_k coef_k * V_side[j][vmap_side[k]] * f[k]   (k with cmap[k] = a)
+     stage 2:  f(node i,j)  = sum_a C[i][a] * G[j][a]
+
+   with C (outer-shape evaluations at outer nodes) and V_l/V_r (inner-shape
+   evaluations at the +/-1 edge and inner nodes) emitted as small static
+   constant matrices. This replaces the fully unrolled per-node evaluations
+   (1.6MB of text per kernel at 2x3v p=2 ho) with short loops over constant
+   data. The flat node index n = i*NI + j reproduces gaussOrd's ordering
+   (last surface variable fastest, so the outer/configuration block is
+   slowest); laxAssertNodeOrder verifies this at generation time.
+
+   The loop structure is the CPU realization of the planned GPU 2D
+   (cell x node) thread mapping: stage 1 becomes a cooperative shared-memory
+   fill, stage 2 the per-node-thread dot product, and the static matrices
+   become constant device data.
+
+   PAIRING CONSTRAINT: every emitter writes BOTH callable forms into the
+   same .c file — the per-node `_node` function and the whole-array wrapper
+   (original ABI, loop bounds emitted as literals so the compiler inlines
+   the node function and recovers unrolled-kernel performance). The C
+   dispatch tables in vlasov/zero/gkyl_dg_vlasov_{vel,conf}_flux_surf_priv.h
+   reference both symbol sets (`_arr` tables -> wrappers for the CPU path,
+   `_node` tables -> node functions for the GPU 2D launcher), so a kernel
+   file missing either form fails at link time even if only one path runs.
+   Never hand-edit one form in isolation; regenerate the file so the pair
+   (and gkyl_vlasov_surf_node_kernels.h) stays consistent. */
+
+/* Reference point for shape normalization; must avoid the roots of every
+   Legendre polynomial used (P1, P2, P3 are all nonzero at 2/5). */
+laxNormPoint : 2/5$
+
+/* Split each basis function into outer/rest factors with dedup'd shapes.
+   Returns [chiShapes, psiShapes, coefL, cmap, vmap] with 0-based maps.
+   Errors out if any basis function is not outer*rest separable. */
+laxFactorizeBasis(bP, outerVars, restVars) := block(
+  [NB, sOuter, sRest, chiShapes, psiShapes, coefL, cmap, vmap,
+   k, phik, chiRaw, chiShape, psiRaw, psiShape, coefk, found, q],
+  NB : length(bP),
+  chiShapes : [], psiShapes : [], coefL : [],
+  cmap : makelist(0, k, 1, NB),
+  vmap : makelist(0, k, 1, NB),
+  sOuter : makelist(outerVars[i] = laxNormPoint, i, 1, length(outerVars)),
+  sRest  : makelist(restVars[i]  = laxNormPoint, i, 1, length(restVars)),
+  for k : 1 thru NB do (
+    phik : bP[k],
+    chiRaw   : ratsimp(subst(sRest, phik)),
+    chiShape : ratsimp(chiRaw / subst(sOuter, chiRaw)),
+    psiRaw   : ratsimp(phik / chiShape),
+    psiShape : ratsimp(psiRaw / subst(sRest, psiRaw)),
+    coefk    : ratsimp(subst(sOuter, subst(sRest, phik))),
+    /* radcan, not ratsimp: the zero test involves radical normalizations
+       (e.g. 15^(3/2) vs 15*sqrt(15)) that plain ratsimp can fail to merge
+       once the rational-form cache has been touched by the nodal-basis
+       loaders' bfloat arithmetic. radcan is canonical for these. */
+    if ratsimp(radcan(phik - coefk*chiShape*psiShape)) # 0 then
+      error("laxFactorizeBasis: basis function not outer*rest separable, k =", k),
+    found : 0,
+    for q : 1 thru length(chiShapes) do
+      if (found = 0) then (if ratsimp(chiShapes[q] - chiShape) = 0 then found : q),
+    if found = 0 then (chiShapes : endcons(chiShape, chiShapes), found : length(chiShapes)),
+    cmap[k] : found - 1,
+    found : 0,
+    for q : 1 thru length(psiShapes) do
+      if (found = 0) then (if ratsimp(psiShapes[q] - psiShape) = 0 then found : q),
+    if found = 0 then (psiShapes : endcons(psiShape, psiShapes), found : length(psiShapes)),
+    vmap[k] : found - 1,
+    coefL : endcons(coefk, coefL)
+  ),
+  [chiShapes, psiShapes, coefL, cmap, vmap]
+)$
+
+/* Verify that the flat surface node ordering is outer (x) inner with the
+   inner block fastest: surfNodes[(i-1)*NI + j] = [outerNode_i, innerNode_j].
+   Degenerate node lists from the loaders are [1] (single node, no coords). */
+laxAssertNodeOrder(surfNodes, nodesOuter, nodesInner) := block(
+  [NO, NI, i, j, d, expectd, n],
+  NO : length(nodesOuter), NI : length(nodesInner),
+  if NO*NI # length(surfNodes) then
+    error("laxAssertNodeOrder: node count mismatch"),
+  for i : 1 thru NO do
+    for j : 1 thru NI do (
+      expectd : append(if listp(nodesOuter[i]) then nodesOuter[i] else [],
+                       if listp(nodesInner[j]) then nodesInner[j] else []),
+      n : (i-1)*NI + j,
+      if length(expectd) # length(surfNodes[n]) then
+        error("laxAssertNodeOrder: node dimension mismatch at flat node", n),
+      for d : 1 thru length(expectd) do
+        if abs(float(expectd[d] - surfNodes[n][d])) > 1.0e-14 then
+          error("laxAssertNodeOrder: ordering mismatch at flat node", n)
+    )
+)$
+
+/* Emit the per-node function (Design A GPU decomposition): given (i, j),
+   rebuild the j-th G column of both sides in registers (NA doubles), do the
+   stage-2 dot, apply the Lax flux at flat node n = i*NI + j, and return
+   |alpha| at the node for the caller's CFL reduction. The wrapper (and later
+   the CUDA launcher) supplies one thread/iteration per node.
+   prefix is the SHARED table symbol prefix (vst_<tag>_ph_<surf>).
+   jacDecls is a list of C lines computing `const double jac = ...;` from j
+   (index arithmetic for the cubic map, cell constants for the linear map);
+   an empty list means no jacobian factor (jac omitted). jacArgs is the
+   argument-declaration string for the jacobian inputs ("" if none).
+   scaleLines is a list of C lines emitted after the stage-2 nodal
+   reconstruction (e.g. per-side `f_l_quad *= ...;` un-weighting on
+   configuration-direction surfaces); [] means none. */
+laxEmitNodeFn(fh, funcNm, prefix, NB, NA, NMV, NI, outOff, jacArgs, jacDecls, hasJac, scaleLines) := block([ln],
+  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j,~a
+  double alpha, const double *f_l, const double *f_r, double* GKYL_RESTRICT Fhat_nodal) ~%{ ~%", funcNm, jacArgs),
+  printf(fh, "  double G_l[~a]; ~%", NA),
+  printf(fh, "  double G_r[~a]; ~%", NA),
+  printf(fh, "  for (int a = 0; a < ~a; ++a) { G_l[a] = 0.0; G_r[a] = 0.0; } ~%", NA),
+  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NB),
+  printf(fh, "    const int a = ~a_cmap[k]; ~%", prefix),
+  printf(fh, "    G_l[a] += ~a_V[j*~a + ~a_vlmap[k]]*(~a_coefl[k]*f_l[k]); ~%", prefix, NMV, prefix, prefix),
+  printf(fh, "    G_r[a] += ~a_V[j*~a + ~a_vrmap[k]]*(~a_coefr[k]*f_r[k]); ~%", prefix, NMV, prefix, prefix),
+  printf(fh, "  } ~%"),
+  printf(fh, "  double f_l_quad = 0.0; ~%"),
+  printf(fh, "  double f_r_quad = 0.0; ~%"),
+  printf(fh, "  for (int a = 0; a < ~a; ++a) { ~%", NA),
+  printf(fh, "    f_l_quad += ~a_Cm[i*~a + a]*G_l[a]; ~%", prefix, NA),
+  printf(fh, "    f_r_quad += ~a_Cm[i*~a + a]*G_r[a]; ~%", prefix, NA),
+  printf(fh, "  } ~%"),
+  for ln in scaleLines do printf(fh, "~a~%", ln),
+  printf(fh, "  const int n = i*~a + j; ~%", NI),
+  for ln in jacDecls do printf(fh, "~a~%", ln),
+  if hasJac then
+    printf(fh, "  Fhat_nodal[~a + n] = 0.5*jac*(alpha*(f_r_quad + f_l_quad) - fabs(alpha)*(f_r_quad - f_l_quad)); ~%", outOff)
+  else
+    printf(fh, "  Fhat_nodal[~a + n] = 0.5*(alpha*(f_r_quad + f_l_quad) - fabs(alpha)*(f_r_quad - f_l_quad)); ~%", outOff),
+  printf(fh, "  return fabs(alpha); ~%"),
+  printf(fh, "} ~%~%")
+)$
+
+/* Emit the wrapper body: loop the node function over all (i, j), reducing
+   alpha_max. nodeCallArgs must match the node function's jacArgs. The
+   wrapper still ingests the full nodal alpha_quad array (original ABI);
+   the per-node dispatch in the updater passes a register double instead. */
+laxEmitWrapperLoop(fh, funcNm, NO, NI, nodeCallArgs) := block(
+  printf(fh, "  double alpha_max = 0.0; ~%"),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
+  printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
+  printf(fh, "      alpha_max = fmax(alpha_max, ~a_node(i, j,~a alpha_quad[i*~a + j], f_l, f_r, Fhat_nodal)); ~%", funcNm, nodeCallArgs, NI),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%")
+)$

@@ -184,8 +184,8 @@ getNodes(basisType, dim, polyOrder) := block(
 /* Nodes for tensor hybrid basis that is a Cartesian product of p=1 Tensor in
    configuration space and p=2 Tensor in velocity space. */
 getNodesTenHyb(cdim, vdim) := block([cnodes,vnodes,nodeLst],
-  cnodes  : getNodes("tensor", cdim, 1),
-  vnodes  : getNodes("tensor", vdim, 2),
+  cnodes  : args(getNodes("tensor", cdim, 1)),
+  vnodes  : args(getNodes("tensor", vdim, 2)),
   nodeLst : listify(cartesian_product(setify(cnodes),setify(vnodes))),
   nodes   : apply('matrix,makelist(flatten(nodeLst[i]),i,1,length(nodeLst))),
   return(nodes)

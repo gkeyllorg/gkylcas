@@ -27,12 +27,14 @@ confForceEBTerms(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   num_field_components : 8,
 
   printf(fh, "#include <gkyl_dg_gr_maxwell_kernels.h> ~%"),
-  printf(fh, "GKYL_CU_DH void ~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *dx, const double *lapse_nodal, const double *shift_nodal,
+  printf(fh, "GKYL_CU_DH void ~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *dx, const double *jacob_pos, const double *lapse_nodal, const double *shift_nodal,
   const double *h_ij_nodal, const double *h_ij_inv_nodal, const double *J_c, const double *fields, const double *vierb_cov_nodal, 
     const double *vierb_con_nodal, double* GKYL_RESTRICT E_conf_for_force, double* GKYL_RESTRICT B_conf_for_force) ~%{ ~%", funcNm, polyOrder),
 
   /* Grab wave speeds for PHM */
   printf(fh, "  const double chi = meq->chi, gamma = meq->gamma; ~%"),
+  printf(fh, "  const double jacob_pos_tot_inv = 1.0/(~a); ~%",
+    simplode(makelist(sconcat("jacob_pos[", (polyOrder+1)*(d-1), "]"), d, 1, cdim), "*")),
 
  for d : 1 thru cdim do (
     printf(fh, "  double dx~a = 2.0/dx[~a]; ~%", d-1, d-1)
@@ -192,7 +194,15 @@ confForceEBTerms(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "    Ez_n[i] = lapse_nodal[i]*( h_xz_nodal[i]*JDx_con_n[i] + h_yz_nodal[i]*JDy_con_n[i] + h_zz_nodal[i]*JDz_con_n[i] ) / J_c[i] + ( shift_nodal_x[i]*JBy_con_n[i] - shift_nodal_y[i]*JBx_con_n[i]); ~%"),
   printf(fh, "    Bx_n[i] = JBx_con_n[i] / J_c[i]; ~%"),
   printf(fh, "    By_n[i] = JBy_con_n[i] / J_c[i]; ~%"),
-  printf(fh, "    Bz_n[i] = JBz_con_n[i] / J_c[i]; ~%"), 
+  printf(fh, "    Bz_n[i] = JBz_con_n[i] / J_c[i]; ~%"),
+  /* The stored fields also carry the TOTAL (cell-constant) position-map
+     Jacobian; divide it out so the particle push sees physical E and B. */
+  printf(fh, "    Ex_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    Ey_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    Ez_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    Bx_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    By_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    Bz_n[i] *= jacob_pos_tot_inv; ~%"), 
   printf(fh, "  }~%"),
   printf(fh, "  ~%"), 
 

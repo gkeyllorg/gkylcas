@@ -63,7 +63,7 @@ calcBasisNodToModWithNodesHyb(basisType, cdim, vdim, nodes) := block(
   if basisType = "hyb" then (
     [varsC,bC,vars,basis] : loadPhaseBasis("ser", cdim, vdim, 1)
   ) elseif basisType = "tenhyb" then (
-    [varsC,bC,vars,basis] : loadTensorHybridBasis(basisName, cdim, vdim)
+    [varsC,bC,vars,basis] : loadTensorHybridBasis(basisType, cdim, vdim)
   ) elseif basisType = "gkhyb" then (
     [varsC,bC,vars,basis,vSub] : loadGkBasis("ser", cdim, vdim, 1)
   ),

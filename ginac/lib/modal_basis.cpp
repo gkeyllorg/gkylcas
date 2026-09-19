@@ -5,6 +5,7 @@
 #include "tensor_mono.h"
 #include "hyb_mono.h"
 #include "gkhyb_mono.h"
+#include "tenhyb_mono.h"
 #include <modal_basis.h>
 
 // Serendipity basis function monomial list for each dimension: mo_list[ndim].ev[polyOrder]
@@ -51,6 +52,16 @@ static struct { GiNaC::lst (*ev[4])(const std::vector<GiNaC::symbol>&);
   {NULL,          NULL, gkhyb_3x2v_p1, NULL},
 };
 
+// Tensor hybrid basis function monomial list (p=1 tensor in configuration
+// space x p=2 tensor in velocity space): mo_list[cdim].ev[vdim]
+static struct { GiNaC::lst (*ev[4])(const std::vector<GiNaC::symbol>&);
+} tenhyb_mo_list[] = {
+  {NULL, NULL, NULL, NULL}, // No 0x basis functions
+  {NULL, tenhyb_1x1v_p1, tenhyb_1x2v_p1, tenhyb_1x3v_p1},
+  {NULL, tenhyb_2x1v_p1, tenhyb_2x2v_p1, tenhyb_2x3v_p1},
+  {NULL, tenhyb_3x1v_p1, tenhyb_3x2v_p1, tenhyb_3x3v_p1},
+};
+
 Gkyl::ModalBasis::ModalBasis(ModalBasisType type, int ndim, int vdim, const std::vector<GiNaC::symbol>& invars, int polyOrder)
 : ndim(ndim), vdim(vdim), polyOrder(polyOrder)
 {
@@ -79,7 +90,14 @@ Gkyl::ModalBasis::ModalBasis(ModalBasisType type, int ndim, int vdim, const std:
     int cdim = ndim-vdim;
     assert(gkhyb_mo_list[cdim].ev[vdim] != NULL);
     bc = gsOrthoNorm(gkhyb_mo_list[cdim].ev[vdim](vars));
-  }  
+  }
+  else if (type == Gkyl::MODAL_TENHYB) {
+    assert(vdim > 0 && vdim < ndim);
+    assert(polyOrder == 1);
+    int cdim = ndim-vdim;
+    assert(tenhyb_mo_list[cdim].ev[vdim] != NULL);
+    bc = gsOrthoNorm(tenhyb_mo_list[cdim].ev[vdim](vars));
+  }
 }
 
 GiNaC::lst

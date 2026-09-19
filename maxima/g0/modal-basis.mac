@@ -302,6 +302,7 @@ loadTensorHybridBasis(basisType, cdim, vdim) := block(
   btype : basisType,
   if basisType="tensor" then btype : "TensorHybrid",
   if basisType="tenhyb" then btype : "TensorHybrid",
+  if basisType="hyb" then btype : "TensorHybrid",  /* "hyb" is the tensor hybrid too. */
 
   kill(varsC, varsP, basisC, basisP),
 
@@ -337,17 +338,24 @@ loadPhaseBasis(basisType, cdim, vdim, pOrder) := block(
   btype : basisType,
   if basisType="ser" then btype : "Ser"
   elseif basisType="tensor" then btype : "Tensor"
-  elseif basisType="hyb" then btype : "Hybrid",
+  elseif basisType="hyb" then btype : "TensorHybrid",
 
   kill(varsC, varsP, basisC, basisP),
   if vdim>0 then (
     if cdim>0 then (
-      if pOrder = 1 and btype = "Ser" then /* Forcing p=1 to hybrid. */
-        modNm : sconcat("basis-precalc/basisHybrid", cdim, "x", vdim, "v")
+      /* Serendipity p=1 is the pure p=1 basis; tensor p=1 (and "hyb") is
+         the TENSOR hybrid: p=1 tensor in conf space x p=2 tensor in
+         velocity space, total-degree graded ordering. The old
+         Serendipity-flavored basisHybrid is retired. */
+      if pOrder = 1 and btype = "Tensor" then
+        modNm : sconcat("basis-precalc/basisTensorHybrid", cdim, "x", vdim, "v")
       else
         modNm : sconcat("basis-precalc/basis", btype, cdim, "x", vdim, "v")
     ) else (
-      if btype = "Tensor" then 
+      /* Velocity-space-only basis. The tensor hybrid's velocity factor is the
+         p=2 TENSOR basis (recovery/surface code reaches this branch with a
+         velocity-only direction list, e.g. the LBO diffusion face recoveries). */
+      if btype = "Tensor" or btype = "TensorHybrid" then 
         modNm : sconcat("basis-precalc/basisTensor", vdim, "x")
       else
         modNm : sconcat("basis-precalc/basisSer", vdim, "x")
@@ -365,7 +373,11 @@ loadPhaseBasis(basisType, cdim, vdim, pOrder) := block(
       bC : copylist(basisC[pOrder]),  varsC : copylist(varsC),
       bP : copylist(basisP[pOrder]),  varsP : copylist(varsP)
     ) else (
-      if btype = "hyb" then p : 2 else p : pOrder,  /* Forcing p=1 to hybrid. */
+      /* Hybrid (tensor p=1 conf x p=2 vel): the velocity-only basis is p=2.
+         Compare against the REMAPPED type: the literal "hyb" never matched
+         here, which silently gave p=1 velocity bases to the LBO diffusion
+         face recoveries and made their equation systems rank-deficient. */
+      if btype = "TensorHybrid" then p : 2 else p : pOrder,
       bP    : subst([x=vx,y=vy,z=vz],copylist(basisC[p])),
       varsP : subst([x=vx,y=vy,z=vz],copylist(varsC)),
       bC : [],  varsC : []
@@ -513,7 +525,9 @@ basisFromVars(basisType, varsIn, pOrder) := block(
   btype : basisType,
   if basisType="ser" then btype : "Ser"
   elseif basisType="tensor" then btype : "Tensor"
-  elseif basisType="hyb" then btype : "Hybrid"
+  /* "hyb" IS the tensor hybrid (p=1 conf x p=2 vel), consistent with
+     loadPhaseBasis; the Serendipity-flavored "Hybrid" basis is retired. */
+  elseif basisType="hyb" then btype : "TensorHybrid"
   elseif basisType="gkhyb" then btype : "GkHybrid"
   elseif basisType="tenhyb" then btype : "TensorHybrid",
 

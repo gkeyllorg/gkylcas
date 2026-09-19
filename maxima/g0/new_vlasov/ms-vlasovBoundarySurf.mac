@@ -14,11 +14,13 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel); pure p=1 tensor
+   kernels still do not exist anywhere. */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -46,26 +48,41 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-
       /* Skip 2x3v tensor kernels: not used by the kernel tables and very
          expensive to generate. */
-      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 0,
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating surface Vlasov ",bName[bInd]," ~ax~av_p~a"),c,v,polyOrder)),
         maxC : c, /* Which directions are we generating surface kernels for? */
         if (v < c) then maxC : v, /* In 2x1v, only generate the vx surface kernel. */
         for dir : 1 thru maxC do ( 
-          fname : sconcat("~/max-out/vlasov_hamil_vel_boundary_surf", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+          fname : sconcat("~/max-out/vlasov_hamil_vel_dense_boundary_surf", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
           fh : openw(fname),
-          funcName : sconcat("vlasov_hamil_vel_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-          if (bName[bInd] = "tensor" and polyOrder > 1) then (
+          funcName : sconcat("vlasov_hamil_vel_dense_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+          if (bName[bInd] = "tensor") then (
             /* Generate mapped velocity grid kernels when utilizing the tensor basis. */
-            calcHamilVelBoundarySurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "cubic")
+            calcHamilVelBoundarySurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_dense", "cubic")
           )
           else (
-            calcHamilVelBoundarySurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "linear")
+            calcHamilVelBoundarySurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_dense", "linear")
           ),
-          close(fh)
+          close(fh),
+
+          /* Sparse (separable) velocity-space Hamiltonian boundary_surf component.
+             In 1V sparse and dense are identical: only generate for v > 1 and
+             let the kernel tables alias the 1V sparse entries to dense. */
+          if (v > 1) then (
+            fname : sconcat("~/max-out/vlasov_hamil_vel_sparse_boundary_surf", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+            fh : openw(fname),
+            funcName : sconcat("vlasov_hamil_vel_sparse_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+            if (bName[bInd] = "tensor") then (
+              calcHamilVelBoundarySurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_sparse", "cubic")
+            )
+            else (
+              calcHamilVelBoundarySurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_sparse", "linear")
+            ),
+            close(fh)
+          )
         ), 
         for dir : 1 thru v do (
 
@@ -73,8 +90,8 @@ for bInd : 1 thru length(bName) do (
           for hoInd : 1 thru length(useHigherOrderList) do (
             useHigherOrder : useHigherOrderList[hoInd],
             if useHigherOrder then si : "ho_" else si : "",
-            if (not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) and not((useHigherOrder = false) and (bName[bInd] = "tensor")) and not((bName[bInd] = "ser") and (polyOrder = 2) and (c = 2) and (v = 3) and (useHigherOrder = true))) then (
-              if ((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = false)) or ((useHigherOrder = true) and (bName[bInd] = "tensor")) then si : "",
+            if (not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) and not((useHigherOrder = false) and (bName[bInd] = "tensor") and (polyOrder > 1))) then (
+              if ((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = false)) or ((useHigherOrder = true) and (bName[bInd] = "tensor") and (polyOrder > 1)) then si : "",
 
               fname : sconcat("~/max-out/vlasov_boundary_",si,"surf", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
               fh : openw(fname),
@@ -84,35 +101,11 @@ for bInd : 1 thru length(bName) do (
             )
           )
         )
-      ),
-      if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
-      /* We do not generate 5D and 6D p>1 phase-space Hamiltonian kernels. */
-      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
-
-        /* Higher-order integration logic*/
-        for hoInd : 1 thru length(useHigherOrderList) do (
-          useHigherOrder : useHigherOrderList[hoInd],
-          if useHigherOrder then si : "ho_" else si : "",
-          if (not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) and not((useHigherOrder = false) and (bName[bInd] = "tensor")) and not((bName[bInd] = "ser") and (polyOrder = 2) and (c = 2) and (v = 3) and (useHigherOrder = true))) then (
-            if ((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = false)) or ((useHigherOrder = true) and (bName[bInd] = "tensor")) then si : "",
-
-            disp(printf(false,sconcat("Creating surface Vlasov ",bName[bInd]," ~ax~av_p~a"),c,v,polyOrder)),
-            maxC : c, /* Which directions are we generating surface kernels for? */
-            if (v < c) then maxC : v, /* In 2x1v, only generate the vx surface kernel. */
-            for dir : 1 thru maxC do ( 
-              /* Phase-space Hamiltonian surface fluxes. Only generate with Serendipity basis for now. */
-              if (bName[bInd] = "ser") then (
-                fname : sconcat("~/max-out/vlasov_hamil_gen_boundary_",si,"surf", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
-                fh : openw(fname),
-                funcName : sconcat("vlasov_hamil_gen_boundary_",si,"surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-                calcHamilGenBoundarySurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, useHigherOrder), 
-                close(fh) 
-              )
-            )
-          )
-        )
       )
+      /* The inline phase-Hamiltonian boundary stream-surface family
+         (vlasov_hamil_phase_boundary_(ho_)surf*) was retired: canonical-PB
+         models now stream through the configuration-space flux machinery
+         (see ms-vlasovSurf.mac). */
     )
   )
 );

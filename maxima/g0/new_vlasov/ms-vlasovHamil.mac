@@ -16,7 +16,9 @@ minVdim_Ser : 1$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel); pure p=1 tensor
+   kernels still do not exist anywhere. */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minVdim_Tensor : 1$ 
 maxVdim_Tensor : 3$
@@ -37,7 +39,7 @@ for bInd : 1 thru length(bName) do (
     for polyOrder : minPolyOrderB thru maxPolyOrderB do (
       /* Tensor (p>1) uses the C^1 cubic velocity map; Serendipity (and p=1)
          uses the C^0 piecewise linear velocity map. */
-      if (bName[bInd] = "tensor" and polyOrder > 1) then (
+      if (bName[bInd] = "tensor") then (
         fname : sconcat("~/max-out/hamil_default_", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
         fh : openw(fname),
         funcName : sconcat("hamil_default_",  v, "v_", bName[bInd], "_p", polyOrder),

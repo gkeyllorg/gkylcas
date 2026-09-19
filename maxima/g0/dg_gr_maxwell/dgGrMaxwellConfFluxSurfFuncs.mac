@@ -28,13 +28,20 @@ calcConfSurfFlux(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
 
   printf(fh, "#include <gkyl_dg_gr_maxwell_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const gkyl_dg_gr_maxwell_inp *meq, const double *w, const double *dxv, 
-      const int theta_pole, const double *lapse_nodal, const double *shift_nodal, const double *h_ij_nodal, 
+      const int theta_pole, const double *jacob_pos_l, const double *jacob_pos_r,
+      const double *lapse_nodal, const double *shift_nodal, const double *h_ij_nodal, 
       const double *h_ij_inv_nodal, const double *J_c, const double *field_con_l, const double *field_con_r, 
       const double *field_no_J_con_l, const double *field_no_J_con_r, 
       double* GKYL_RESTRICT flux_l, double* GKYL_RESTRICT flux_r, double* GKYL_RESTRICT max_alpha_quad) ~%{ ~%", funcNm),
 
   /* Grab wave speeds for PHM */
   printf(fh, "  const double chi = meq->chi, gamma = meq->gamma; ~%"),
+  /* Per-side inverse position-map (mesh) Jacobian in the surface direction:
+     the stored fields carry a cell-constant J_pos that jumps at the interface,
+     so each side's flux is un-weighted by its OWN cell's normal-direction
+     factor (the transverse factors are continuous and stay on the flux). */
+  printf(fh, "  const double jacob_pos_l_inv = 1.0/jacob_pos_l[~a]; ~%", (polyOrder+1)*(dir-1)),
+  printf(fh, "  const double jacob_pos_r_inv = 1.0/jacob_pos_r[~a]; ~%", (polyOrder+1)*(dir-1)),
 
   /* Surface contribution is defined as integral(phi^- Fhat) over the surface. */
   /* cv = variable in direction of surface update. */
@@ -498,8 +505,8 @@ calcConfSurfFlux(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
     printf(fh, "  flux_l_quad = &flux_l[~a]; ~%", (i-1)*numNodes),
     printf(fh, "  flux_r_quad = &flux_r[~a]; ~%", (i-1)*numNodes),
     for j : 1 thru numNodes do (
-      printf(fh, "  flux_l_quad[~a] = ~a; ~%", j-1, flux_n_l[i][j]),
-      printf(fh, "  flux_r_quad[~a] = ~a; ~%", j-1, flux_n_r[i][j])
+      printf(fh, "  flux_l_quad[~a] = jacob_pos_l_inv*(~a); ~%", j-1, flux_n_l[i][j]),
+      printf(fh, "  flux_r_quad[~a] = jacob_pos_r_inv*(~a); ~%", j-1, flux_n_r[i][j])
     )
   ), 
   printf(fh, "  ~%"),
@@ -633,6 +640,7 @@ calcNodalLaxConfFlux(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
 
   printf(fh, "#include <gkyl_dg_gr_maxwell_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH double ~a(const double *dxv, const int theta_pole,
+      const double *jacob_pos_l, const double *jacob_pos_r,
       const double *J_c, const double *flux_l, const double *flux_r, const double *max_alpha_quad, 
       const double *field_con_l, const double *field_con_r, const double *field_no_J_con_l, const double *field_no_J_con_r,
        double* GKYL_RESTRICT conf_flux_surf) ~%{ ~%", funcNm),
@@ -640,6 +648,12 @@ calcNodalLaxConfFlux(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
   [varsC,bC] : loadBasis(basisFun, cdim, polyOrder), 
   cid : cidx(cdim),
   printf(fh, "  double dx1~a = 2.0/dxv[~a]; ~%", dir-1, cid[dir]),
+  /* Per-side inverse position-map Jacobian in the surface direction: un-weights
+     each side's stored fields in the Lax dissipation; the CFL rate carries the
+     current (r) cell's factor, since this cell owns the flux and accumulates
+     the estimate. */
+  printf(fh, "  const double jacob_pos_l_inv = 1.0/jacob_pos_l[~a]; ~%", (polyOrder+1)*(dir-1)),
+  printf(fh, "  const double jacob_pos_r_inv = 1.0/jacob_pos_r[~a]; ~%", (polyOrder+1)*(dir-1)),
   printf(fh, "~%"),
 
   cv : varsC[dir], 
@@ -688,10 +702,10 @@ calcNodalLaxConfFlux(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "    // At the pole max_alpha_quad includes Jc multiplication already to get the correct asymptotic limit from pre-computed values ~%"),
   for j : 1 thru numNodes do (
     printf(fh, "    alpha_max = fmax(alpha_max, fabs(max_alpha_quad[~a])); ~%", j-1), 
-    printf(fh, "    Q_l_quad = ~a; ~%", em_l_n[j]), 
-    printf(fh, "    Q_r_quad = ~a; ~%", em_r_n[j]), 
-    printf(fh, "    U_l_quad = ~a; ~%", em_no_J_l_n[j]), 
-    printf(fh, "    U_r_quad = ~a; ~%", em_no_J_r_n[j]), 
+    printf(fh, "    Q_l_quad = jacob_pos_l_inv*(~a); ~%", em_l_n[j]), 
+    printf(fh, "    Q_r_quad = jacob_pos_r_inv*(~a); ~%", em_r_n[j]), 
+    printf(fh, "    U_l_quad = jacob_pos_l_inv*(~a); ~%", em_no_J_l_n[j]), 
+    printf(fh, "    U_r_quad = jacob_pos_r_inv*(~a); ~%", em_no_J_r_n[j]), 
     /* Jc needs to be multiplied back in to convert between primitive and conserved variables */
     /* max_alpha_quad at theta_pole includes Jc multiplication already to get the correct asymptotic limit */
     printf(fh, "    if (theta_pole) { ~%"), 
@@ -704,8 +718,11 @@ calcNodalLaxConfFlux(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  }~%"),
   printf(fh, "  ~%"),
 
-  /* Estimate stable time step from the maximum quadrature point evaluation. */
-  printf(fh, "  return ~a*~a*alpha_max;~%", float(0.5*(2*polyOrder+1)), dx1[dir]),
+  /* Estimate stable time step from the maximum quadrature point evaluation;
+     the physical cell width in this direction is J_pos*dx, so use the
+     larger inverse Jacobian of the two cells sharing this interface
+     (the smaller physical cell is the most restrictive). */
+  printf(fh, "  return ~a*~a*fmax(jacob_pos_l_inv,jacob_pos_r_inv)*alpha_max;~%", float(0.5*(2*polyOrder+1)), dx1[dir]),
   printf(fh, "~%"),
 
   printf(fh, "} ~%")

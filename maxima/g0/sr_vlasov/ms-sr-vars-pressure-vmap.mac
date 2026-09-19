@@ -15,7 +15,8 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel). */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 maxCdim_Tensor : 2$
@@ -39,12 +40,13 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (bName[bInd] = "ser" and c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 0,
 
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,"Creating sr_vars_pressure ~ax~av ~a p~a",c,v,bName[bInd],polyOrder)),
-        /* Tensor (p>1) uses the C^1 cubic map representation; Serendipity (and
-           p=1) uses the C^0 piecewise linear representation. */
-        if (bName[bInd] = "tensor" and polyOrder > 1) then rep : "cubic" else rep : "linear",
+        /* Tensor bases use the C^1 cubic map representation (including the
+           p=1 tensor hybrid); Serendipity uses the C^0 piecewise linear. */
+        if (bName[bInd] = "tensor") then rep : "cubic" else rep : "linear",
         fname : sconcat("~/max-out/sr_vars_pressure_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
         fh : openw(fname),
         funcName : sconcat("sr_vars_pressure_",  c, "x", v, "v_", bName[bInd], "_p", polyOrder),

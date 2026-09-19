@@ -1,0 +1,593 @@
+/* surf-eval-tables.mac ------------------------------------------------------
+   Generator for the shared nodal surface-evaluation tables, split into TWO
+   headers per phase-space combo, named after the updaters that call the
+   kernels using them:
+
+   gkyl_vlasov_flux_surf_mod2nod_tables_<c>x<v>v_<b>_p<p>.h  (ker/flux_vlasov)
+     MODAL->NODAL: everything the vlasov_{vel,conf}_flux_surf producers
+     (E/phi/rad/B/hamil/nc_hamil alpha_quad + lax_flux_nodal) evaluate at
+     surface nodes -- conf_ev/conf_dx, vel_ev/vel_dv/vel_nodes,
+     vel_sparse_idx, vel_vol_dv, confsurf_ev, and the ph_* volume-basis
+     factor tables with their gkyl_vlasov_surf_meta instances.
+
+   gkyl_vlasov_surf_nod2mod_tables_<c>x<v>v_<b>_p<p>.h  (ker/vlasov)
+     NODAL->MODAL: the prj_* projection tables the vlasov_(boundary_)surf*
+     from-flux consumers use, with their gkyl_vlasov_prj_meta instances.
+
+   The two sets share NO arrays: producers evaluate the VOLUME basis at
+   edge-substituted nodes (ph_* shapes), consumers project onto the p-order
+   SURFACE basis (prj_* shapes, quadrature weights folded in) -- transposes
+   only in the abstract, over different bases, so the partition is exact.
+
+   All arrays are `static const` named vst_<tag>[_ho]_<item>, header-static
+   (per-TU copies) ON PURPOSE: GKYL_CU_DH kernels are compiled for both host
+   and device, and a header-static constant-initialized array is the one
+   storage class nvcc accepts from BOTH instantiations (an extern host
+   symbol is invisible to device code; a __device__ symbol is invisible to
+   the host copy). Arrays carry __attribute__((unused)) so kernels that
+   reference only a subset compile warning-free.
+
+   Items (nPts = p+1, +1 in the ho variant; row index = node, column = basis fn):
+     conf_ev        [nPts^c * NC]     bC_a(conf node i)
+     conf_dx<d>     [nPts^c * NC]     d(bC_a)/dx_d at conf node i (d 0-based)
+     vel_ev_v<d>    [nPts^(v-1) * NV] bV_b(v_d = -1, vel node j) on the v_d surface
+     vel_dv<k>_v<d> [nPts^(v-1) * NV] d(bV_b)/dv_k at (v_d = -1, vel node j), k != d
+     vel_nodes_v<d> [nPts^(v-1) * (v-1)] reference coordinates of the inner
+                                      (transverse velocity) nodes, columns in
+                                      remaining-variable order (v > 1 only)
+     vel_sparse_idx [NS]              indices of bV fns depending on <= 1 velocity
+                                      variable (the sparse-Hamiltonian support)
+   plus, per surface, the phase-factor tables (ph_v<d>/ph_x<d>, see
+   writePhaseFactorTables) for the producers and the projection tables
+   (prj_v<d>/prj_x<d>, see writeConsumerProjTables) for the from-flux
+   surf/boundary_surf consumers.
+   Flat node layout matches the alpha_quad/lax convention: gaussOrd ordering,
+   last variable fastest; producers/consumers index n = i*NVn + j. */
+load("new_vlasov/vlasov-basis");
+load("new_vlasov/nodal-lax-emit");
+
+/* Symbol tag for a combo's table set: ser ho variants carry _ho; tensor p>1
+   kernels are generated at the higher node count under the plain name; the
+   tensor p=1 HYBRID follows the ser convention (lo plain + _ho variant,
+   with the extra ho node in velocity directions only). */
+surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder) := block([tag],
+  tag : sconcat(cdim, "x", vdim, "v_", basisFun, "_p", polyOrder),
+  if (useHigherOrder and (basisFun = "ser" and polyOrder > 1
+                          or basisFun = "tensor" and polyOrder = 1)) then tag : sconcat(tag, "_ho"),
+  tag
+)$
+
+/* Producer (modal->nodal) tables include; the historical name is kept so
+   the many producer emitters need no changes. */
+surfTabInclude(fh, cdim, vdim, basisFun, polyOrder) :=
+  printf(fh, "#include <gkyl_vlasov_flux_surf_mod2nod_tables_~ax~av_~a_p~a.h> ~%", cdim, vdim, basisFun, polyOrder)$
+
+/* Consumer (nodal->modal) tables include, for the from-flux
+   vlasov_(boundary_)(ho_)surf* emitters. */
+surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder) :=
+  printf(fh, "#include <gkyl_vlasov_surf_nod2mod_tables_~ax~av_~a_p~a.h> ~%", cdim, vdim, basisFun, polyOrder)$
+
+/* Emit exprs evaluated at nodes as a flattened [length(nodes)*length(exprs)]
+   static const double array (row = node, column = expr). */
+emitTabMatrix(fh, name, exprs, vars, nodes) := block([i, a, sub],
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a[~a] = { ~%", name, length(nodes)*length(exprs)),
+  for i : 1 thru length(nodes) do (
+    sub : if listp(nodes[i])
+          then makelist(vars[d] = nodes[i][d], d, 1, length(vars))
+          else [],
+    for a : 1 thru length(exprs) do
+      printf(fh, "  ~a, ~%", float(expand(subst(sub, exprs[a]))))
+  ),
+  printf(fh, "}; ~%")
+)$
+
+/* Sign-aware dedup of a list of edge-evaluated shapes into an accumulating
+   list: shapes matching an existing entry up to overall sign map to it with
+   the sign recorded. Used for both edges of one V matrix (psi(-1,.) is
+   +/- psi(+1,.) exactly, by parity of the normal factor) and for the
+   psi-derivative matrices. Returns [shapes, map0based, signs]. */
+laxSignDedup(shapes, exprs) := block([map0, sgns, e, q, found, sg, m],
+  map0 : makelist(0, m, 1, length(exprs)),
+  sgns : makelist(1, m, 1, length(exprs)),
+  for m : 1 thru length(exprs) do (
+    e : ratsimp(exprs[m]),
+    found : 0, sg : 1,
+    for q : 1 thru length(shapes) do
+      if (found = 0) then (
+        if ratsimp(shapes[q] - e) = 0 then (found : q, sg : 1)
+        else if ratsimp(shapes[q] + e) = 0 then (found : q, sg : -1)
+      ),
+    if found = 0 then (shapes : endcons(e, shapes), found : length(shapes)),
+    map0[m] : found - 1,
+    sgns[m] : sg
+  ),
+  [shapes, map0, sgns]
+)$
+
+/* Both edges of the inner (psi) shapes dedup'd into ONE shape list with
+   signed per-coefficient maps. Returns [V shapes, vlmap, vrmap, sgnl, sgnr]
+   (maps/signs per BASE shape index; chain through fact[5] per coefficient). */
+laxEdgeDedup(fact, normalVar) := block(
+  [psiShapes, NM, NB, V, ddl, ddr, k],
+  psiShapes : fact[2],
+  NM : length(psiShapes), NB : length(fact[3]),
+  ddl : laxSignDedup([], makelist(subst(normalVar = 1, psiShapes[m]), m, 1, NM)),
+  V : ddl[1],
+  ddr : laxSignDedup(V, makelist(subst(normalVar = -1, psiShapes[m]), m, 1, NM)),
+  V : ddr[1],
+  [V,
+   makelist(ddl[2][fact[5][k] + 1], k, 1, NB),
+   makelist(ddr[2][fact[5][k] + 1], k, 1, NB),
+   makelist(ddl[3][fact[5][k] + 1], k, 1, NB),
+   makelist(ddr[3][fact[5][k] + 1], k, 1, NB)]
+)$
+
+/* Sizes [NA, NMV] of a surface's factor tables (NMV = shared V columns),
+   for the kernel emitters (deterministic: same dedup path as the tables). */
+laxFactorSizes(fact, normalVar) := block([ed],
+  ed : laxEdgeDedup(fact, normalVar),
+  [length(fact[1]), length(ed[1])]
+)$
+
+/* Column count of the psi-derivative matrix Vd for derivative variable dvar
+   (same dedup path as writePhaseFactorTables). */
+laxDerivSizes(fact, normalVar, dvar) := block([psiShapes, NM, dd, m],
+  psiShapes : fact[2], NM : length(psiShapes),
+  dd : laxSignDedup([], makelist(subst(normalVar = 1, diff(psiShapes[m], dvar)), m, 1, NM)),
+  dd : laxSignDedup(dd[1], makelist(subst(normalVar = -1, diff(psiShapes[m], dvar)), m, 1, NM)),
+  length(dd[1])
+)$
+
+emitTabIntArray(fh, name, vals) := block([k],
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const int ~a[~a] = { ~%", name, length(vals)),
+  for k : 1 thru length(vals) do printf(fh, "  ~a, ~%", vals[k]),
+  printf(fh, "}; ~%")
+)$
+
+emitTabDoubleArray(fh, name, vals) := block([k],
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a[~a] = { ~%", name, length(vals)),
+  for k : 1 thru length(vals) do printf(fh, "  ~a, ~%", float(expand(vals[k]))),
+  printf(fh, "}; ~%")
+)$
+
+/* Projection tables for the from-flux surface-update CONSUMERS
+   (vlasov_(boundary_)(ho_)surf{x,y,z,vx,vy,vz}): the nodal flux is projected
+   onto the p=polyOrder surface basis and applied to the volume increment as
+
+     g[k]   = sum_i Cw[i*NA + kamap[k]] * (sum_j Vw[j*NMV + kbmap[k]] * Fhat[i*NI + j])
+     out[m] += dv1*(out_cl[m']*g_l[k] + out_cr[m']*g_r[k])   (m in mode-group of k)
+
+   Cw/Vw are quadrature-weight-folded shape evaluations: because the flux
+   nodes are Gauss-Legendre nodes, w_i*chi_a(node_i) IS the exact inner
+   product <chi_a, cardinal_i> of the shape with the nodal (cardinal)
+   interpolation basis (per variable deg(chi) <= p and deg(cardinal) =
+   nPts-1, within the 2*nPts-1 GL exactness), so the table path computes
+   exactly the projection of the nodal interpolant the unrolled kernels
+   computed, factored over the outer (x) inner tensor-product node set.
+
+   The out maps encode the identity bP_m|_{normal=+/-1} = c * bSurfP_{s(m)}
+   (each volume basis fn restricts to a multiple of exactly ONE surface
+   basis fn; asserted exactly at generation time), with the surface-mode
+   coefficient coef_k and the increment signs folded in:
+     out_cl[.] =  <bSurfP_s, bP_m|_{-1}> * coef_s   (left-interface increment)
+     out_cr[.] = -<bSurfP_s, bP_m|_{+1}> * coef_s   (right-interface increment)
+   Boundary kernels reuse them: edge==-1 (skin evaluated at +1) uses out_cr,
+   edge==+1 (skin evaluated at -1) uses out_cl. The CSR grouping
+   (out_off/out_mode, ordered by surface mode k) makes distinct k write
+   DISJOINT out coefficients: one GPU thread per surface mode needs no
+   atomics. Returns [NK, NA, NMV, NO, NI]. */
+writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars, nPtsOuter, nPtsInner) := block(
+  [surfVars, NP, NK, factOuter, factInner, fact, chiShapes, psiShapes, coefL,
+   kamap, kbmap, NA, NMV, nodesO, wO, nodesI, wI, NO, NI, ow, refn, i, j, a, b,
+   d, k, m, q, s, sub, restL, restR, coeffsL, coeffsR, nzL, nzR, smode, clm,
+   crm, byK, offL, modeL, clL, crL, wsum],
+  surfVars : append(outerVars, innerVars),
+  NP : length(bP), NK : length(bSurfP),
+  /* laxFactorizeBasis needs nonempty var lists; a fresh dummy symbol makes
+     the degenerate factor exactly 1 (shape normalization divides it out). */
+  factOuter : if length(outerVars) = 0 then [prjdummy] else outerVars,
+  factInner : if length(innerVars) = 0 then [prjdummy] else innerVars,
+  fact : laxFactorizeBasis(bSurfP, factOuter, factInner),
+  chiShapes : fact[1], psiShapes : fact[2], coefL : fact[3],
+  kamap : fact[4], kbmap : fact[5],
+  NA : length(chiShapes), NMV : length(psiShapes),
+  /* Nodes and weights; gaussOrdWeight must reproduce gaussOrd's node
+     ordering (the Fhat flat layout) exactly. */
+  if length(outerVars) = 0 then (nodesO : [1], wO : [1]) else (
+    ow : gaussOrdWeight(nPtsOuter, length(outerVars)),
+    nodesO : ow[1], wO : ow[2],
+    refn : gaussOrd(nPtsOuter, length(outerVars)),
+    for i : 1 thru length(refn) do
+      for d : 1 thru length(outerVars) do
+        if abs(float(refn[i][d] - nodesO[i][d])) > 1.0e-14 then
+          error("writeConsumerProjTables: gaussOrdWeight/gaussOrd outer node order mismatch"),
+    wsum : float(apply("+", wO)),
+    if abs(wsum - float(2^length(outerVars))) > 1.0e-12 then
+      error("writeConsumerProjTables: outer weight sum mismatch")
+  ),
+  if length(innerVars) = 0 then (nodesI : [1], wI : [1]) else (
+    ow : gaussOrdWeight(nPtsInner, length(innerVars)),
+    nodesI : ow[1], wI : ow[2],
+    refn : gaussOrd(nPtsInner, length(innerVars)),
+    for i : 1 thru length(refn) do
+      for d : 1 thru length(innerVars) do
+        if abs(float(refn[i][d] - nodesI[i][d])) > 1.0e-14 then
+          error("writeConsumerProjTables: gaussOrdWeight/gaussOrd inner node order mismatch"),
+    wsum : float(apply("+", wI)),
+    if abs(wsum - float(2^length(innerVars))) > 1.0e-12 then
+      error("writeConsumerProjTables: inner weight sum mismatch")
+  ),
+  NO : length(nodesO), NI : length(nodesI),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_Cw[~a] = { ~%", prefix, NO*NA),
+  for i : 1 thru NO do (
+    sub : if listp(nodesO[i])
+          then makelist(outerVars[d] = nodesO[i][d], d, 1, length(outerVars))
+          else [],
+    for a : 1 thru NA do
+      printf(fh, "  ~a, ~%", float(expand(wO[i]*subst(sub, chiShapes[a]))))
+  ),
+  printf(fh, "}; ~%"),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_Vw[~a] = { ~%", prefix, NI*NMV),
+  for j : 1 thru NI do (
+    sub : if listp(nodesI[j])
+          then makelist(innerVars[d] = nodesI[j][d], d, 1, length(innerVars))
+          else [],
+    for b : 1 thru NMV do
+      printf(fh, "  ~a, ~%", float(expand(wI[j]*subst(sub, psiShapes[b]))))
+  ),
+  printf(fh, "}; ~%"),
+  emitTabIntArray(fh, sconcat(prefix, "_kamap"), kamap),
+  emitTabIntArray(fh, sconcat(prefix, "_kbmap"), kbmap),
+  /* Volume-increment maps: restriction of each bP_m to the two edges. */
+  smode : makelist(0, m, 1, NP),
+  clm : makelist(0, m, 1, NP),
+  crm : makelist(0, m, 1, NP),
+  for m : 1 thru NP do (
+    restL : subst(normalVar = -1, bP[m]),
+    restR : subst(normalVar =  1, bP[m]),
+    coeffsL : map(lambda([q], radcan(ratsimp(q))), calcInnerProdList(surfVars, 1, bSurfP, restL)),
+    coeffsR : map(lambda([q], radcan(ratsimp(q))), calcInnerProdList(surfVars, 1, bSurfP, restR)),
+    nzL : sublist_indices(coeffsL, lambda([q], q # 0)),
+    nzR : sublist_indices(coeffsR, lambda([q], q # 0)),
+    if length(nzL) # 1 or length(nzR) # 1 or nzL[1] # nzR[1] then
+      error("writeConsumerProjTables: volume mode does not restrict to a single surface mode, m =", m),
+    s : nzL[1],
+    if radcan(ratsimp(restL - coeffsL[s]*bSurfP[s])) # 0 then
+      error("writeConsumerProjTables: left restriction residual nonzero, m =", m),
+    if radcan(ratsimp(restR - coeffsR[s]*bSurfP[s])) # 0 then
+      error("writeConsumerProjTables: right restriction residual nonzero, m =", m),
+    smode[m] : s,
+    clm[m] : coeffsL[s]*coefL[s],
+    crm[m] : -coeffsR[s]*coefL[s]
+  ),
+  byK : makelist([], k, 1, NK),
+  for m : 1 thru NP do byK[smode[m]] : endcons(m, byK[smode[m]]),
+  offL : [0], modeL : [], clL : [], crL : [],
+  for k : 1 thru NK do (
+    if length(byK[k]) = 0 then
+      error("writeConsumerProjTables: surface mode with empty mode group, k =", k),
+    for m in byK[k] do (
+      modeL : endcons(m-1, modeL),
+      clL : endcons(clm[m], clL),
+      crL : endcons(crm[m], crL)
+    ),
+    offL : endcons(length(modeL), offL)
+  ),
+  if length(modeL) # NP then
+    error("writeConsumerProjTables: CSR mode count mismatch"),
+  emitTabIntArray(fh, sconcat(prefix, "_out_off"), offL),
+  emitTabIntArray(fh, sconcat(prefix, "_out_mode"), modeL),
+  emitTabDoubleArray(fh, sconcat(prefix, "_out_cl"), clL),
+  emitTabDoubleArray(fh, sconcat(prefix, "_out_cr"), crL),
+  /* Transposed per-VOLUME-mode maps (the volume-mode-ownership framing of
+     the GPU `_mode` functions): thread m owns out[m] exclusively across the
+     whole update -- pm_a/pm_b are the Cw/Vw shape columns of m's surface
+     mode s(m), pm_cl/pm_cr its increment coefficients (the CSR out_cl/out_cr
+     values reindexed by m). Volume modes sharing a surface mode recompute
+     the same projection; on GPU that removes every write conflict (no other
+     thread ever touches out[m], in any direction), but on CPU the redundant
+     recompute plus the lost cross-iteration sharing measured 1.5-5.8x
+     slower in hyper_dg -- so the CPU wrappers loop the CSR arrays above
+     (flop-minimal surface-mode framing, disjoint mode groups per
+     direction) and only the GPU launch composes the pm_ maps. */
+  emitTabIntArray(fh, sconcat(prefix, "_pm_a"), makelist(kamap[smode[m]], m, 1, NP)),
+  emitTabIntArray(fh, sconcat(prefix, "_pm_b"), makelist(kbmap[smode[m]], m, 1, NP)),
+  emitTabDoubleArray(fh, sconcat(prefix, "_pm_cl"), makelist(clm[m], m, 1, NP)),
+  emitTabDoubleArray(fh, sconcat(prefix, "_pm_cr"), makelist(crm[m], m, 1, NP)),
+  [NK, NA, NMV, NO, NI]
+)$
+
+/* FUTURE per-mode GPU parallelization: when true, the four consumer
+   emitters additionally write a `<name>_mode(int m, ...)` companion into
+   each kernel file -- the per-VOLUME-mode framing over the pm_ maps, in
+   which thread m owns out[m] exclusively in every direction, so a
+   (cells x np) GPU launch needs no atomics or barriers (this resolves the
+   cross-direction write collisions of surface-mode threading; nk is
+   direction-independent but np gives more threads). Kept OFF until that
+   launcher exists: the volume kernels need the same per-output-mode
+   decomposition before a per-mode hyper_dg launch is useful, and the CPU
+   path must NEVER loop the per-mode form -- the np/nk ~ 2x redundant
+   projections plus lost cross-iteration sharing measured 1.5-5.8x slower
+   in hyper_dg (2026-08). Flip to true and regenerate kernels + the
+   ms-vlasov-node-header.mac decl block when the GPU per-mode work starts;
+   the pm_ tables above are already emitted and waiting. */
+emitConsumerModeFns : false$
+
+/* Emit the factorized projection of the nodal flux for one surface mode,
+   whose (a,b) shape columns come from map arrays aname/bname at index
+   expression idx ("k" via kamap/kbmap in the wrapper's CSR loop, "m" via
+   pm_a/pm_b in the per-volume-mode GPU function): declares a, b and
+   g_l/g_r (two-sided; fluxR # false) or g (one-sided), with the
+   outer (i) x inner (j) contraction loops over Cw/Vw. Shared by all four
+   consumer kernel emitters so the two framings cannot drift apart. */
+emitPrjProjection(fh, pre, aname, bname, idx, NA, NMV, NO, NI, off, fluxL, fluxR) := (
+  printf(fh, "  const int a = ~a_~a[~a]; ~%", pre, aname, idx),
+  printf(fh, "  const int b = ~a_~a[~a]; ~%", pre, bname, idx),
+  if (fluxR = false) then (
+    printf(fh, "  double g = 0.0; ~%"),
+    printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
+    printf(fh, "    double t = 0.0; ~%"),
+    printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
+    printf(fh, "      t += ~a_Vw[j*~a + b]*~a[~a + i*~a + j]; ~%", pre, NMV, fluxL, off, NI),
+    printf(fh, "    } ~%"),
+    printf(fh, "    g += ~a_Cw[i*~a + a]*t; ~%", pre, NA),
+    printf(fh, "  } ~%")
+  ) else (
+    printf(fh, "  double g_l = 0.0; ~%"),
+    printf(fh, "  double g_r = 0.0; ~%"),
+    printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
+    printf(fh, "    double t_l = 0.0; ~%"),
+    printf(fh, "    double t_r = 0.0; ~%"),
+    printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
+    printf(fh, "      t_l += ~a_Vw[j*~a + b]*~a[~a + i*~a + j]; ~%", pre, NMV, fluxL, off, NI),
+    printf(fh, "      t_r += ~a_Vw[j*~a + b]*~a[~a + i*~a + j]; ~%", pre, NMV, fluxR, off, NI),
+    printf(fh, "    } ~%"),
+    printf(fh, "    g_l += ~a_Cw[i*~a + a]*t_l; ~%", pre, NA),
+    printf(fh, "    g_r += ~a_Cw[i*~a + a]*t_r; ~%", pre, NA),
+    printf(fh, "  } ~%")
+  )
+)$
+
+/* Phase-factor tables for one surface (prefix e.g. vst_<tag>_ph_v0):
+   Cm (outer shapes at outer nodes), CmD (their derivVar-derivative, for the
+   -grad_x(H) producers), Vl/Vr (edge-dedup'd inner shapes at inner nodes),
+   coef, cmap/vlmap/vrmap. With outerDerivVars a list (velocity-direction
+   surfaces) also CmDx<n> = d(chi)/d(outerDerivVars[n+1]) at the outer nodes,
+   for the triad Pi_px . grad_x(H) producers (all configuration directions,
+   not just the surface-paired one CmD covers). With psiDerivVars a list also
+   the psi-derivative edge matrices Vd<k> (sign-dedup'd across both edges)
+   with their maps/coefficient copies, for the phase-Hamiltonian dH/dv_k;
+   k indexes psiDerivVars, which both call sites pass as the FULL varsV so
+   Vd<k> pairs with global velocity direction k+1. */
+writePhaseFactorTables(fh, prefix, bP, outerVars, normalVar, innerVars,
+                       nodesOuter, nodesInner, derivVar, psiDerivVars, outerDerivVars) := block(
+  [fact, ed, chiShapes, psiShapes, coefL, NA, NM, NB, NO, NI, k, m, i, sub],
+  fact : laxFactorizeBasis(bP, outerVars, cons(normalVar, innerVars)),
+  ed : laxEdgeDedup(fact, normalVar),
+  chiShapes : fact[1], psiShapes : fact[2], coefL : fact[3],
+  NA : length(chiShapes), NM : length(psiShapes), NB : length(coefL),
+  NO : length(nodesOuter), NI : length(nodesInner),
+  emitTabMatrix(fh, sconcat(prefix, "_Cm"), chiShapes, outerVars, nodesOuter),
+  if not(derivVar = false) then
+    emitTabMatrix(fh, sconcat(prefix, "_CmD"),
+      makelist(diff(chiShapes[k], derivVar), k, 1, NA), outerVars, nodesOuter),
+  if not(outerDerivVars = false) then
+    for k : 1 thru length(outerDerivVars) do
+      emitTabMatrix(fh, sconcat(prefix, "_CmDx", k-1),
+        makelist(diff(chiShapes[m], outerDerivVars[k]), m, 1, NA), outerVars, nodesOuter),
+  /* One V matrix serves both edges: psi(-1,.) = +/- psi(+1,.) (parity of the
+     normal factor); the sign is folded into the per-edge coefficient copies. */
+  emitTabMatrix(fh, sconcat(prefix, "_V"), ed[1], innerVars, nodesInner),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_coefl[~a] = { ~%", prefix, NB),
+  for k : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(ed[4][k]*coefL[k]))),
+  printf(fh, "}; ~%"),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_coefr[~a] = { ~%", prefix, NB),
+  for k : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(ed[5][k]*coefL[k]))),
+  printf(fh, "}; ~%"),
+  emitTabIntArray(fh, sconcat(prefix, "_cmap"), fact[4]),
+  emitTabIntArray(fh, sconcat(prefix, "_vlmap"), ed[2]),
+  emitTabIntArray(fh, sconcat(prefix, "_vrmap"), ed[3]),
+  if not(psiDerivVars = false) then block([dd, dV, dcl, dcr, kk],
+    /* psi-derivative edge matrices for the phase-Hamiltonian dH/dv_k:
+       sign-aware dedup across BOTH edges into one matrix per k (most
+       derivative columns are zero or +/- repeats), signs folded into
+       per-edge coefficient copies. */
+    for k : 1 thru length(psiDerivVars) do (
+      dd : laxSignDedup([], makelist(subst(normalVar = 1, diff(psiShapes[m], psiDerivVars[k])), m, 1, NM)),
+      dV : dd[1],
+      dcl : dd,
+      dd : laxSignDedup(dV, makelist(subst(normalVar = -1, diff(psiShapes[m], psiDerivVars[k])), m, 1, NM)),
+      dV : dd[1],
+      emitTabMatrix(fh, sconcat(prefix, "_Vd", k-1), dV, innerVars, nodesInner),
+      emitTabIntArray(fh, sconcat(prefix, "_vld", k-1, "map"),
+        makelist(dcl[2][fact[5][kk] + 1], kk, 1, NB)),
+      emitTabIntArray(fh, sconcat(prefix, "_vrd", k-1, "map"),
+        makelist(dd[2][fact[5][kk] + 1], kk, 1, NB)),
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_dcoefl~a[~a] = { ~%", prefix, k-1, NB),
+      for kk : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(dcl[3][fact[5][kk] + 1]*coefL[kk]))),
+      printf(fh, "}; ~%"),
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_dcoefr~a[~a] = { ~%", prefix, k-1, NB),
+      for kk : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(dd[3][fact[5][kk] + 1]*coefL[kk]))),
+      printf(fh, "}; ~%")
+    )
+  ),
+  [NA, length(ed[1])]
+)$
+
+/* Write one lo- or ho-variant table set for a combo into fh. */
+writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
+  [varsC, bC, varsV, bV, varsP, bP, binfo, nPtsConf, nPtsVel, nodes_conf,
+   nodes_vel, d, k, vv, svv, sparseIdx, b],
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
+  /* Node counts per direction TYPE (anisotropic for the tensor p=1 hybrid:
+     conf 2/dim always, vel 3 lo / 4 ho; identical for ser/tensor). */
+  binfo : vlasovBasisInfo(basisFun, polyOrder, useHigherOrder),
+  nPtsConf : binfo[5],
+  nPtsVel : binfo[6],
+
+  nodes_conf : gaussOrd(nPtsConf, cdim),
+  emitTabMatrix(fh, sconcat("vst_", tag, "_conf_ev"), bC, varsC, nodes_conf),
+  for d : 1 thru min(cdim, vdim) do
+    emitTabMatrix(fh, sconcat("vst_", tag, "_conf_dx", d-1),
+      makelist(diff(bC[a], varsC[d]), a, 1, length(bC)), varsC, nodes_conf),
+
+  for d : 1 thru vdim do (
+    vv : varsV[d],
+    svv : delete(vv, varsV),
+    nodes_vel : if vdim > 1 then gaussOrd(nPtsVel, vdim-1) else [1],
+    emitTabMatrix(fh, sconcat("vst_", tag, "_vel_ev_v", d-1),
+      makelist(subst(vv = -1, bV[b]), b, 1, length(bV)), svv, nodes_vel),
+    if vdim > 1 then (
+      /* Reference coordinates of the transverse velocity nodes, for producers
+         that need v at the node (e.g. the triad omega = vTrans.Pi terms). */
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double vst_~a_vel_nodes_v~a[~a] = { ~%", tag, d-1, length(nodes_vel)*(vdim-1)),
+      for i : 1 thru length(nodes_vel) do
+        for k : 1 thru vdim-1 do
+          printf(fh, "  ~a, ~%", float(nodes_vel[i][k])),
+      printf(fh, "}; ~%")
+    ),
+    for k : 1 thru vdim do (
+      if k # d then
+        emitTabMatrix(fh, sconcat("vst_", tag, "_vel_dv", k-1, "_v", d-1),
+          makelist(subst(vv = -1, diff(bV[b], varsV[k])), b, 1, length(bV)), svv, nodes_vel)
+    )
+  ),
+
+  /* Sparse-Hamiltonian support: dense-layout indices of the velocity basis
+     functions a separable H = sum_i H_i(v_i) can populate. */
+  sparseIdx : [],
+  for b : 1 thru length(bV) do
+    if length(intersection(setify(listofvars(bV[b])), setify(varsV))) <= 1 then
+      sparseIdx : endcons(b-1, sparseIdx),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const int vst_~a_vel_sparse_idx[~a] = { ~%", tag, length(sparseIdx)),
+  for b : 1 thru length(sparseIdx) do
+    printf(fh, "  ~a, ~%", sparseIdx[b]),
+  printf(fh, "}; ~%"),
+
+  /* Phase-factor tables for the velocity-direction surfaces (lax +
+     hamil_phase producers). CmD only where the -grad_x(H) producer exists
+     (dir <= min(c,v)). A gkyl_vlasov_surf_meta instance accompanies each
+     surface's tables for the host-side launch logic. */
+  for d : 1 thru vdim do block([sz, szp],
+    vv : varsV[d],
+    svv : delete(vv, varsV),
+    nodes_vel : if vdim > 1 then gaussOrd(nPtsVel, vdim-1) else [1],
+    sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_v", d-1), bP,
+      varsC, vv, svv, nodes_conf, nodes_vel,
+      if d <= min(cdim, vdim) then varsC[d] else false, varsV, varsC),
+    printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_v~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
+      tag, d-1, length(bP), sz[1], sz[2], length(nodes_conf), length(nodes_vel), length(sparseIdx), (d-1)*length(nodes_conf)*length(nodes_vel))
+  ),
+
+  /* Configuration-direction surface tables (triad/phase conf-flux: lax +
+     hamil_{vel_dense,vel_sparse,phase} producers). Serendipity and the
+     tensor p=1 hybrid (which gets only the lax + phase producers). */
+  if (basisFun = "ser" or basisFun = "tensor") then block([surfCVars, nodes_crem, nodes_vvol, cv, sz],
+    nodes_vvol : gaussOrd(nPtsVel, vdim),
+    for k : 1 thru vdim do
+      emitTabMatrix(fh, sconcat("vst_", tag, "_vel_vol_dv", k-1),
+        makelist(diff(bV[b], varsV[k]), b, 1, length(bV)), varsV, nodes_vvol),
+    for d : 1 thru cdim do block([szp],
+      cv : varsC[d],
+      surfCVars : delete(cv, varsC),
+      nodes_crem : if cdim > 1 then gaussOrd(nPtsConf, cdim-1) else [1],
+      emitTabMatrix(fh, sconcat("vst_", tag, "_confsurf_x", d-1, "_ev_l"),
+        makelist(subst(cv = 1, bC[b]), b, 1, length(bC)), surfCVars, nodes_crem),
+      emitTabMatrix(fh, sconcat("vst_", tag, "_confsurf_x", d-1, "_ev_r"),
+        makelist(subst(cv = -1, bC[b]), b, 1, length(bC)), surfCVars, nodes_crem),
+      sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_x", d-1), bP,
+        surfCVars, cv, varsV, nodes_crem, nodes_vvol, false, varsV, false),
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_x~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
+        tag, d-1, length(bP), sz[1], sz[2], length(nodes_crem), length(nodes_vvol), length(sparseIdx), (d-1)*length(nodes_crem)*length(nodes_vvol))
+    )
+  )
+)$
+
+/* Write one lo- or ho-variant nodal->modal (consumer projection) table set
+   for a combo into fh: prj_{v,x}<d> tables + gkyl_vlasov_prj_meta instances
+   for every from-flux consumer surface (velocity directions for all bases;
+   configuration directions for Serendipity, mirroring the stream-consumer
+   coverage). Surface bases stay p=polyOrder in the ho variant; only the
+   node set widens. */
+writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
+  [varsC, bC, varsV, bV, varsP, bP, binfo, nPtsConf, nPtsVel, nodes_conf,
+   nodes_vel, nodes_crem, nodes_vvol, d, vv, svv, cv, surfCVars, szp],
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
+  binfo : vlasovBasisInfo(basisFun, polyOrder, useHigherOrder),
+  nPtsConf : binfo[5],
+  nPtsVel : binfo[6],
+  nodes_conf : gaussOrd(nPtsConf, cdim),
+  for d : 1 thru vdim do block([],
+    vv : varsV[d],
+    svv : delete(vv, varsV),
+    nodes_vel : if vdim > 1 then gaussOrd(nPtsVel, vdim-1) else [1],
+    szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_v", d-1), bP,
+      basisFromVars(vlasovBtype(basisFun, polyOrder), delete(vv, varsP), polyOrder),
+      varsC, vv, svv, nPtsConf, nPtsVel),
+    printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
+      tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
+  ),
+  if (basisFun = "ser" or basisFun = "tensor") then (
+    for d : 1 thru cdim do block([],
+      cv : varsC[d],
+      surfCVars : delete(cv, varsC),
+      nodes_crem : if cdim > 1 then gaussOrd(nPtsConf, cdim-1) else [1],
+      nodes_vvol : gaussOrd(nPtsVel, vdim),
+      szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_x", d-1), bP,
+        basisFromVars(vlasovBtype(basisFun, polyOrder), delete(cv, varsP), polyOrder),
+        surfCVars, cv, varsV, nPtsConf, nPtsVel),
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_x~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
+        tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
+    )
+  )
+)$
+
+/* Write the full modal->nodal (producer) header for a combo: lo tables
+   always; ho tables for ser p>1 (tensor kernels are generated at the higher
+   node count under the plain name, so tensor combos get a single set at
+   nPts = p+2). Lives in vlasov/ker/flux_vlasov next to its consumers, the
+   vlasov_{vel,conf}_flux_surf producer kernels. */
+writeFluxSurfTabHeader(fh, cdim, vdim, basisFun, polyOrder) := block([tag],
+  tag : sconcat(cdim, "x", vdim, "v_", basisFun, "_p", polyOrder),
+  printf(fh, "#pragma once ~%"),
+  printf(fh, "// Generated nodal surface-evaluation (MODAL->NODAL) tables for the ~%"),
+  printf(fh, "// alpha_quad producers and lax_flux_nodal kernels (see ~%"),
+  printf(fh, "// surf-eval-tables.mac). Header-static so both host and device ~%"),
+  printf(fh, "// instantiations of GKYL_CU_DH kernels can read them; unused arrays ~%"),
+  printf(fh, "// are elided per TU. ~%"),
+  printf(fh, "#include <gkyl_util.h> ~%"),
+  printf(fh, "#include <gkyl_vlasov_flux_surf_mod2nod_meta.h> ~%"),
+  if (basisFun = "tensor" and polyOrder > 1) then (
+    writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, true)
+  )
+  else (
+    /* ser (lo + ho at p>1) and the tensor p=1 hybrid (lo conf2/vel3 +
+       ho conf2/vel4, ho in velocity directions only). */
+    writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, false),
+    if (polyOrder > 1 or basisFun = "tensor") then
+      writeSurfTabVariant(fh, sconcat(tag, "_ho"), cdim, vdim, basisFun, polyOrder, true)
+  )
+)$
+
+/* Write the full nodal->modal (consumer projection) header for a combo,
+   same lo/ho variant logic. Lives in vlasov/ker/vlasov next to its
+   consumers, the vlasov_(boundary_)(ho_)surf* kernels. */
+writePrjTabHeader(fh, cdim, vdim, basisFun, polyOrder) := block([tag],
+  tag : sconcat(cdim, "x", vdim, "v_", basisFun, "_p", polyOrder),
+  printf(fh, "#pragma once ~%"),
+  printf(fh, "// Generated projection (NODAL->MODAL) tables for the from-flux ~%"),
+  printf(fh, "// vlasov_(boundary_)(ho_)surf* consumer kernels (see ~%"),
+  printf(fh, "// surf-eval-tables.mac). Header-static so both host and device ~%"),
+  printf(fh, "// instantiations of GKYL_CU_DH kernels can read them; unused arrays ~%"),
+  printf(fh, "// are elided per TU. ~%"),
+  printf(fh, "#include <gkyl_util.h> ~%"),
+  printf(fh, "#include <gkyl_vlasov_surf_nod2mod_meta.h> ~%"),
+  if (basisFun = "tensor" and polyOrder > 1) then (
+    writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, true)
+  )
+  else (
+    writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, false),
+    if (polyOrder > 1 or basisFun = "tensor") then
+      writePrjTabVariant(fh, sconcat(tag, "_ho"), cdim, vdim, basisFun, polyOrder, true)
+  )
+)$

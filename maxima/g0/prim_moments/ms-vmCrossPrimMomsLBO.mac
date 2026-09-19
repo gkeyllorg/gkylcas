@@ -4,7 +4,7 @@ load(stringproc)$
 /* ...... USER INPUTS........ */
 
 /* Serendipity basis. */
-minPolyOrder_Ser : 1$
+minPolyOrder_Ser : 2$ /* pure ser p=1 unsupported for the LBO */
 maxPolyOrder_Ser : 2$
 minCdim_Ser : 1$
 minVdim_Ser : 1$    /* but see v loop below. */
@@ -12,7 +12,7 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor order basis. */
-minPolyOrder_Tensor : 2$
+minPolyOrder_Tensor : 1$ /* tensor p=1 hybrid: conf-space prim moments at p=1 */
 maxPolyOrder_Tensor : 2$    /* BoundaryEval fails for polyOrder>2 for some reason. */
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* but see v loop below. */

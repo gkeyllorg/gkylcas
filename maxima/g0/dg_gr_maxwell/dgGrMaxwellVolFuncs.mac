@@ -7,6 +7,8 @@ fpprec : 24$
 
 /* Define variables and fluxes */
 dxInv : [dx0, dx1, dx2]$
+/* Constant per-direction inverse position-map Jacobians (C^0 linear map). */
+jacobPosInvSym : [jacob_pos_x_inv, jacob_pos_y_inv, jacob_pos_z_inv]$
 lhs : [outJDx, outJDy, outJDz, outJBx, outJBy, outJBz, outJphi, outJpsi]$
 
 calcDgGrMaxwellVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
@@ -24,7 +26,7 @@ calcDgGrMaxwellVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
   /* Include both headers since the regular maxwell creates the input func */
   printf(fh, "#include <gkyl_dg_gr_maxwell_kernels.h> ~%"),
 
-  printf(fh, "GKYL_CU_DH void ~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *w, const double *dx, const double *lapse_nodal, const double *shift_nodal,
+  printf(fh, "GKYL_CU_DH void ~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *w, const double *dx, const double *jacob_pos, const double *lapse_nodal, const double *shift_nodal,
   const double *h_ij_nodal, const double *h_ij_inv_nodal, const double *J_c, const double *fields, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
 
   /* Grab wave speeds for PHM */
@@ -305,7 +307,11 @@ calcDgGrMaxwellVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
     FD32=FD32_e, FD33=FD33_e, FB11=FB11_e, FB12=FB12_e, FB13=FB13_e, FB21=FB21_e, 
     FB22=FB22_e, FB23=FB23_e, FB31=FB31_e, FB32=FB32_e, FB33=FB33_e, FPhi1=FPhi1_e, 
     FPhi2=FPhi2_e, FPhi3=FPhi3_e, FPsi1=FPsi1_e, FPsi2=FPsi2_e, FPsi3=FPsi3_e], flux),
-  volTerms : sum(makelist(dxInv[d]*calcInnerProdList(varsC, 1, diff(bC,varsC[d]), fluxl[d][i]), i, 1, 8), d, 1, cdim),
+  /* Each d/dxi_d test-function derivative picks up the inverse position-map
+     (mesh) Jacobian of its own direction (cell constant for the C^0 map). */
+  for d : 1 thru cdim do
+    printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_pos[~a]; ~%", ["x","y","z"][d], (polyOrder+1)*(d-1)),
+  volTerms : sum(makelist(dxInv[d]*jacobPosInvSym[d]*calcInnerProdList(varsC, 1, diff(bC,varsC[d]), fluxl[d][i]), i, 1, 8), d, 1, cdim),
   for m : 1 thru 8 do (
     vt : volTerms[m],
     writeCIncrExprs1(lhs[m], vt),

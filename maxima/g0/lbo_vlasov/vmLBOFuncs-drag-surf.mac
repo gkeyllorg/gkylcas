@@ -60,7 +60,10 @@ calcVmLBODragUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := bl
   /* Surface basis. Equivalent to basis of one lower
      dimensionality without surface variable. */
   if polyOrder=1 then (  /* Force p=1 to use hybrid basis. */
-    bSurf : basisFromVars("hyb",surfVars,polyOrder)
+    bSurf : /* p=1 = TENSOR hybrid (p1 conf x p2 vel, graded ordering) -- the same basis
+       loadPhaseBasis("tensor",...,1) and core gkyl_cart_modal_hybrid use; the
+       retired "hyb" (Serendipity-flavored) mapping has a different mode set. */
+    basisFromVars("tenhyb",surfVars,polyOrder)
   ) else (
     bSurf : basisFromVars(basisFun,surfVars,polyOrder)
   ),

@@ -19,12 +19,14 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel); pure p=1 tensor
+   kernels still do not exist anywhere. */
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$
-maxVdim_Tensor : 1$
+maxCdim_Tensor : 3$
+maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
 
@@ -36,11 +38,12 @@ minVdim      : [minVdim_Ser, minVdim_Tensor]$
 maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 useHigherOrderList : [false, true]$
-velHamil     : [true, false]$
+/* Hamiltonian representations to generate magnetic-force kernels for.
+   "phase" (GR Vlasov-Maxwell coupling) is skipped for tensor p>1. */
+hamilReps : ["vel_dense", "vel_sparse", "phase"]$
 
 clabels : ["x","y","z"]$
 vlabels : ["vx","vy","vz"]$
-hamilLabels : ["vel", "phase"]$
 
 for bInd : 1 thru length(bName) do (
   for c : minCdim[bInd] thru maxCdim[bInd] do (
@@ -53,18 +56,17 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-
       /* Skip 2x3v tensor kernels: not used by the kernel tables and very
          expensive to generate. */
-      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 0,
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
 
         /* High-Order itegration Logic */
         for hoInd : 1 thru length(useHigherOrderList) do (
           useHigherOrder : useHigherOrderList[hoInd],
           if useHigherOrder then si : "ho_" else si : "",
-          if (not((bName[bInd] = "ser") and (polyOrder = 1) and (useHigherOrder = true)) and not((useHigherOrder = false) and (bName[bInd] = "tensor"))) then (
-            if (((bName[bInd] = "ser") and (polyOrder = 1) and (useHigherOrder = false)) or ((useHigherOrder = true) and (bName[bInd] = "tensor"))) then si : "",
+          if (not((bName[bInd] = "ser") and (polyOrder = 1) and (useHigherOrder = true)) and not((useHigherOrder = false) and (bName[bInd] = "tensor") and (polyOrder > 1))) then (
+            if (((bName[bInd] = "ser") and (polyOrder = 1) and (useHigherOrder = false)) or ((useHigherOrder = true) and (bName[bInd] = "tensor") and (polyOrder > 1))) then si : "",
 
             disp(printf(false,sconcat("Creating velocity flux ",bName[bInd]," ~ax~av_p~a"),c,v,polyOrder)),
             /* Can only have scalar potential force in directions where we can take configuration space gradients. */
@@ -86,20 +88,22 @@ for bInd : 1 thru length(bName) do (
 
               /* Magnetic force with velocity-space Hamiltonian volume component. Only valid for vdim > 1. */
               if (v > 1) then (
-                for vhamilInd : 1 thru length(velHamil) do (
-                  vel_hamil : velHamil[vhamilInd],
-                  if ((bName[bInd] = "tensor" and polyOrder > 1) and (not vel_hamil)) then (
-                    disp(printf(false,sconcat("Skipping B alpha ",vlabels[dir]," kernel for general hamil ",bName[bInd]," ~ax~avP~a"),c,v,polyOrder))
+                for hrInd : 1 thru length(hamilReps) do (
+                  hamilRep : hamilReps[hrInd],
+                  /* RULE: hamil_phase at c+v>=5 is p=1 only; also no
+                     phase-space Hamiltonian magnetic force for tensor p>1 (cubic rep). */
+                  if (((bName[bInd] = "tensor" and polyOrder > 1) or (c+v>=5 and polyOrder>1)) and (hamilRep = "phase")) then (
+                    disp(printf(false,sconcat("Skipping B alpha ",vlabels[dir]," kernel for phase hamil ",bName[bInd]," ~ax~avP~a"),c,v,polyOrder))
                   )
                   else (
-                    fname : sconcat("~/max-out/B_",si,"hamil_", hamilLabels[vhamilInd], "_alpha_quad_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+                    fname : sconcat("~/max-out/B_",si,"hamil_", hamilRep, "_alpha_quad_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                     fh : openw(fname),
-                    funcName : sconcat("B_",si,"hamil_", hamilLabels[vhamilInd], "_alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-                    if (bName[bInd] = "tensor" and polyOrder > 1) then (
-                      calcBHamilVelSurfForce(dir, fh, funcName, c, v, bName[bInd], polyOrder, vel_hamil, "cubic", useHigherOrder)
+                    funcName : sconcat("B_",si,"hamil_", hamilRep, "_alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+                    if (bName[bInd] = "tensor") then (
+                      calcBHamilVelSurfForce(dir, fh, funcName, c, v, bName[bInd], polyOrder, hamilRep, "cubic", useHigherOrder)
                     )
                     else (
-                      calcBHamilVelSurfForce(dir, fh, funcName, c, v, bName[bInd], polyOrder, vel_hamil, "linear", useHigherOrder)
+                      calcBHamilVelSurfForce(dir, fh, funcName, c, v, bName[bInd], polyOrder, hamilRep, "linear", useHigherOrder)
                     ),
                     close(fh)
                   )
@@ -111,17 +115,17 @@ for bInd : 1 thru length(bName) do (
               funcName : sconcat("rad_",si,"alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
               calcRadVelSurfForce(dir, fh, funcName, c, v, bName[bInd], polyOrder, useHigherOrder), 
               close(fh),
-              if (bName[bInd] = "tensor" and polyOrder > 1) then (
-                fname : sconcat("~/max-out/",si,"lax_flux_nodal_to_modal_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+              if (bName[bInd] = "tensor") then (
+                fname : sconcat("~/max-out/",si,"lax_flux_nodal_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                 fh : openw(fname),
-                funcName : sconcat(si,"lax_flux_nodal_to_modal_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+                funcName : sconcat(si,"lax_flux_nodal_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
                 calcNodalLaxToModalVelFlux(dir, fh, funcName, c, v, bName[bInd], polyOrder, "cubic", useHigherOrder), 
                 close(fh)  
               )
               else (
-                fname : sconcat("~/max-out/",si,"lax_flux_nodal_to_modal_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+                fname : sconcat("~/max-out/",si,"lax_flux_nodal_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                 fh : openw(fname),
-                funcName : sconcat(si,"lax_flux_nodal_to_modal_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+                funcName : sconcat(si,"lax_flux_nodal_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
                 calcNodalLaxToModalVelFlux(dir, fh, funcName, c, v, bName[bInd], polyOrder, "linear", useHigherOrder), 
                 close(fh)  
               )       
@@ -138,20 +142,21 @@ for bInd : 1 thru length(bName) do (
         for hoInd : 1 thru length(useHigherOrderList) do (
           useHigherOrder : useHigherOrderList[hoInd],
           if useHigherOrder then si : "ho_" else si : "",
-          if (not((bName[bInd] = "ser") and (polyOrder = 1) and (useHigherOrder = true)) and not((useHigherOrder = false) and (bName[bInd] = "tensor"))) then (
-            if (((bName[bInd] = "ser") and (polyOrder = 1) and (useHigherOrder = false)) or ((useHigherOrder = true) and (bName[bInd] = "tensor"))) then si : "",
+          if (not((bName[bInd] = "ser") and (polyOrder = 1) and (useHigherOrder = true)) and not((useHigherOrder = false) and (bName[bInd] = "tensor") and (polyOrder > 1))) then (
+            if (((bName[bInd] = "ser") and (polyOrder = 1) and (useHigherOrder = false)) or ((useHigherOrder = true) and (bName[bInd] = "tensor") and (polyOrder > 1))) then si : "",
 
             disp(printf(false,sconcat("Creating hamiltonian force velocity flux ",bName[bInd]," ~ax~av_p~a"),c,v,polyOrder)),
             /* Can only have Hamiltonian force in directions where we can take configuration space gradients. */
             maxC : c, /* Which directions are we generating surface kernels for? */
             if (v < c) then maxC : v, /* In 2x1v, only generate the vx surface kernel. */
             for dir : 1 thru maxC do (
-              /* Phase-space Hamiltonian surface component. Only generate with Serendipity basis for now. */
-              if (bName[bInd] = "ser") then (
-                fname : sconcat("~/max-out/hamil_",si,"alpha_quad_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+              /* Phase-space Hamiltonian surface component: Serendipity and the
+                 tensor p=1 hybrid (no phase rep for tensor p>1). */
+              if ((bName[bInd] = "ser" or bName[bInd] = "tensor") and not(c+v>=5 and polyOrder>1)) then (
+                fname : sconcat("~/max-out/hamil_phase_",si,"alpha_quad_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                 fh : openw(fname),
-                funcName : sconcat("hamil_",si,"alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-                calcHamilGenVelSurfForce(dir, fh, funcName, c, v, bName[bInd], polyOrder, useHigherOrder), 
+                funcName : sconcat("hamil_phase_",si,"alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+                calcHamilPhaseVelSurfForce(dir, fh, funcName, c, v, bName[bInd], polyOrder, useHigherOrder), 
                 close(fh)
               )
             )

@@ -19,11 +19,15 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel): usable by EVERY
+   Hamiltonian rep (vel_dense, vel_sparse, phase) on both the canonical and
+   triad paths (f_no_J flow, cubic-map volume representation and per-node
+   velocity-Jacobian indexing all validated). Tensor p>1 has no triad kernels. */
 minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -36,18 +40,20 @@ minVdim      : [minVdim_Ser, minVdim_Tensor]$
 maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 useHigherOrderList : [false, true]$
-velHamil     : [true, false]$
+/* Hamiltonian representations: the label is both the kernel-name segment and
+   the hamil_rep passed to the generators. vel_sparse is skipped in 1V (sparse
+   and dense are identical there; kernel tables alias 1V sparse to dense). */
+velHamil     : ["vel_dense", "vel_sparse", "phase"]$
 
 clabels : ["x","y","z"]$
 vlabels : ["vx","vy","vz"]$
-hamilLabels : ["vel", "phase"]$
+hamilLabels : ["vel_dense", "vel_sparse", "phase"]$
 
 for bInd : 1 thru length(bName) do (
   for c : minCdim[bInd] thru maxCdim[bInd] do (
     for v : max(c,minVdim[bInd]) thru maxVdim[bInd] do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-
       /* We do not generate 5D and 6D p>1 phase-space Hamiltonian kernels. */
       for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating hamiltonian force velocity flux ",bName[bInd]," ~ax~av_p~a"),c,v,polyOrder)),
@@ -57,14 +63,15 @@ for bInd : 1 thru length(bName) do (
             useHigherOrder : useHigherOrderList[hoInd],
             if useHigherOrder then si : "ho_" else si : "",
             for vhamilInd : 1 thru length(velHamil) do (
-              vel_hamil : velHamil[vhamilInd],
-              if not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) then (
+              hamil_rep : velHamil[vhamilInd],
+
+              if not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) and not(hamil_rep = "vel_sparse" and v = 1) and not(hamil_rep = "phase" and c+v>=5 and polyOrder>1) then (
                 if ((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = false)) then si : "",
                 /* Phase-space Hamiltonian surface component. Only generate with Serendipity basis for now. */
                 fname : sconcat("~/max-out/nc_hamil_", hamilLabels[vhamilInd],"_",si,"alpha_quad_", vlabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                 fh : openw(fname),
                 funcName : sconcat("nc_hamil_", hamilLabels[vhamilInd],"_",si,"alpha_quad_",vlabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-                calcHamilGenVelSurfForceNonCanonical(dir, fh, funcName, c, v, bName[bInd], polyOrder, vel_hamil, useHigherOrder), 
+                calcHamilVelSurfForceNonCanonical(dir, fh, funcName, c, v, bName[bInd], polyOrder, hamil_rep, useHigherOrder), 
                 close(fh)
               )
             )

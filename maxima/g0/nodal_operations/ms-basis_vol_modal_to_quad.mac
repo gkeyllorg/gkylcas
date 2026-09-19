@@ -38,10 +38,14 @@ maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
 minDim : [minDim_Ser, minDim_Tensor]$
 maxDim : [maxDim_Ser, maxDim_Tensor]$
 
-bNameHyb   : ["hyb","gkhyb"]$
-minCdimHyb : [minCdim_hyb, minCdim_gkhyb]$
-maxCdimHyb : [maxCdim_hyb, maxCdim_gkhyb]$
-vDims      : [vDims_hyb, vDims_gkhyb]$
+/* NOTE: the old Serendipity-flavored "hyb" outputs are RETIRED: the C
+   hybrid basis (gkyl_cart_modal_hybrid) is now the TENSOR hybrid, whose
+   kernels are the "tenhyb" outputs renamed _tenhyb_ -> _hyb_ on adoption
+   (the declarations in gkyl_basis_hyb_kernels.h are unchanged by this). */
+bNameHyb   : ["gkhyb","tenhyb"]$
+minCdimHyb : [minCdim_gkhyb, minCdim_hyb]$
+maxCdimHyb : [maxCdim_gkhyb, maxCdim_hyb]$
+vDims      : [vDims_gkhyb, vDims_hyb]$
 
 /* Generate kernels that take the f at Gauss-Legendre quadrature nodes,
    and do a nodal-to-modal transformation to yield the modal DG coefficients of f. */

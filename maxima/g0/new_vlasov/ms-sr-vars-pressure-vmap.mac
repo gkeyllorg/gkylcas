@@ -10,24 +10,31 @@ load(stringproc)$
 
 /* ...... USER INPUTS........ */
 
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
 /* Tensor product basis. */
-/* */
-minPolyOrder_Tensor : 2$
+minPolyOrder_Tensor : 1$
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 2$
-maxVdim_Tensor : 1$
+maxCdim_Tensor : 3$
+maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
 
-bName        : ["tensor"]$
-minPolyOrder : [minPolyOrder_Tensor]$
-maxPolyOrder : [maxPolyOrder_Tensor]$
-minCdim      : [minCdim_Tensor]$
-minVdim      : [minVdim_Tensor]$
-maxCdim      : [maxCdim_Tensor]$
-maxVdim      : [maxVdim_Tensor]$
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 for bInd : 1 thru length(bName) do (
   for c : minCdim[bInd] thru maxCdim[bInd] do (
     minVdim : c, 
@@ -43,7 +50,10 @@ for bInd : 1 thru length(bName) do (
         fname : sconcat("~/max-out/sr_vars_pressure_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
         fh : openw(fname),
         funcName : sconcat("sr_vars_pressure_",  c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-        calc_sr_pressure(fh, funcName, c, v, bName[bInd], polyOrder),
+        /* Velocity-map representation: C^1 cubic with tensor bases, C^0
+           piecewise linear with Serendipity bases. */
+        calc_sr_pressure(fh, funcName, c, v, bName[bInd], polyOrder,
+          if bName[bInd] = "tensor" then "cubic" else "linear"),
         close(fh)
       )
     )

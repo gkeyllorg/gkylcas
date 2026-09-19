@@ -50,7 +50,7 @@ PB_vol(f,g,x,y) := diff(f,x)*diff(g,y) - diff(g,x)*diff(f,y)$
    (rep = "linear", Serendipity bases) J_vi is constant in the cell so the
    division is an exact scalar multiplication by 1/J_vi. rep = "none"
    (phase-space Hamiltonian models, canonical-PB/Triads) applies no Jacobian. */
-calcHamilVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_vel, rep) := block(
+calcHamilVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, rep) := block(
   [varsC,bC,varsV,bV,varsP,bP,NP,
    bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi,
    cid,vid,pb_dim,hamil,f_e,
@@ -59,7 +59,7 @@ calcHamilVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_vel, rep) := blo
 
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
   NP : length(bP),
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder),
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)),
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   /* jacob_pos (configuration-space position-map Jacobian) is carried uniformly
@@ -67,15 +67,21 @@ calcHamilVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_vel, rep) := blo
      across models, exactly as jacob_vel is. It is only USED (the streaming term
      divided by 1/J_x) for the default-model reps (cubic/linear); for the
      phase-space Hamiltonian (rep = "none", canonical-PB) it is an unused arg. */
-  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv,
+  /* vmap: shared hamil_vol ABI (mesh maps); the vel/phase Hamiltonian vols
+     carry no explicit velocity-coordinate factors, so it is unused here. */
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *vmap,
   const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil,
-  const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
-  if (rep = "cubic") then printf(fh, "  double f_no_J[~a] = {0.0}; ~%", NP),
-  if (hamil_vel) then (
-    hamil : doExpand1(hamil, bV)
+  const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  if (rep = "cubic") then printf(fh, "  double f_no_Ji[~a] = {0.0}; ~%", NP),
+  if (hamil_rep = "phase") then (
+    hamil : doExpand1(hamil, bP)
   )
   else (
-    hamil : doExpand1(hamil, bP)    
+    /* Velocity-space Hamiltonian. The sparse (separable) representation keeps
+       the dense storage layout but only references the constant and
+       single-velocity-variable coefficients (cross terms are exactly zero). */
+    hamil : hamilExpand(hamil, bV, varsV, hamil_rep = "vel_sparse")
   ),
   f_e : doExpand1(f, bP),
   
@@ -96,8 +102,8 @@ calcHamilVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_vel, rep) := blo
       ), 
       f_no_J_c : calcInnerProdList(varsP, 1, bP, fl_v_ne), 
       clst_J : [jacob_vx[0], jacob_vx[1], jacob_vx[2], jacob_vx[3], jacob_vy[0], jacob_vy[1], jacob_vy[2], jacob_vy[3], jacob_vz[0], jacob_vz[1], jacob_vz[2], jacob_vz[3]],
-      writeCExprsCollect1(f_no_J, f_no_J_c, clst_J),
-      f_vol_e : doExpand1(f_no_J, bP), 
+      writeCExprsCollect1(f_no_Ji, f_no_J_c, clst_J),
+      f_vol_e : doExpand1(f_no_Ji, bP), 
       printf(fh, "~%") 
     ) 
     else if (rep = "linear") then (
@@ -146,12 +152,13 @@ calcPhiVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
   NC : length(bC), 
   NP : length(bP), 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv,
-  const double *jacob_pos, const double *jacob_vel, const double *phi, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  if (rep = "cubic") then printf(fh, "  double f_no_J[~a] = {0.0}; ~%", NP),
+  const double *jacob_pos, const double *jacob_vel, const double *phi, const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  if (rep = "cubic") then printf(fh, "  double f_no_Ji[~a] = {0.0}; ~%", NP),
   phi_e : doExpand1(phi, bC),
   f_e : doExpand1(f, bP),
   
@@ -172,27 +179,31 @@ calcPhiVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
       ), 
       f_no_J_c : calcInnerProdList(varsP, 1, bP, fl_v_ne), 
       clst_J : [jacob_vx[0], jacob_vx[1], jacob_vx[2], jacob_vx[3], jacob_vy[0], jacob_vy[1], jacob_vy[2], jacob_vy[3], jacob_vz[0], jacob_vz[1], jacob_vz[2], jacob_vz[3]],
-      writeCExprsCollect1(f_no_J, f_no_J_c, clst_J),
-      f_vol_e : doExpand1(f_no_J, bP) 
+      writeCExprsCollect1(f_no_Ji, f_no_J_c, clst_J),
+      f_vol_e_noJ : doExpand1(f_no_J, bP) 
     ) 
     else if (rep = "linear") then (
       /* C^0 linear map: constant Jacobian, division is an exact scalar
-         multiplication by 1/J_vi. */
+         multiplication by 1/J_vi folded into the hoisted prefactor below. */
       printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", clabels[dir], numJacobNodes*(dir-1)),
       printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_v~a[0]; ~%", clabels[dir], clabels[dir]),
-      f_vol_e : jacobConstInv_vi[dir]*f_e
+      f_vol_e_noJ : f_e
     )
     else (
-      f_vol_e : f_e
+      f_vol_e_noJ : f_e
     ),
     /* Transform the configuration-space gradient of phi to the mapped grid:
        grad_x(phi) = (1/J_x,dir) d/dxi_dir(phi). For the C^0 linear position map
        J_x,dir is the per-cell constant jacob_c<dir>[0]. */
     printf(fh, "  const double *jacob_c~a = &jacob_pos[~a]; ~%", clabels[dir], numJacobNodes*(dir-1)),
     printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_c~a[0]; ~%", clabels[dir], clabels[dir]),
-    incr_vol : calcInnerProdList(varsP, 1, diff(bP, varsV[dir]), -jacobConstInv_ci[dir]*diff(phi_e,varsC[dir])*f_vol_e),
+    /* Fold the constant inverse mesh Jacobians directly into the hoisted
+       dx/dv prefactor (the cubic velocity rep divides nodally via f_no_J, so
+       only the linear rep carries the velocity factor here). */
+    incr_vol : calcInnerProdList(varsP, 1, diff(bP, varsV[dir]), -diff(phi_e,varsC[dir])*f_vol_e_noJ),
     clst_vol : [phi[0], phi[1], phi[2], phi[3], phi[4], phi[5], phi[6], phi[7], phi[8]],
-    writeCIncrExprsCollectFactordx1(out, incr_vol, clst_vol, dx1[dir]*dv1[dir]),
+    writeCIncrExprsCollectFactordx1(out, incr_vol, clst_vol,
+      dx1[dir]*dv1[dir]*jacobConstInv_ci[dir]*(if (rep = "linear") then jacobConstInv_vi[dir] else 1)),
     printf(fh, "~%")
   ),
 
@@ -212,12 +223,13 @@ calcEVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
   NC : length(bC), 
   NP : length(bP), 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, 
-  const double *jacob_vel, const double *qmem, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  if (rep = "cubic") then printf(fh, "  double f_no_J[~a] = {0.0}; ~%", NP),
+  const double *jacob_vel, const double *qmem, const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  if (rep = "cubic") then printf(fh, "  double f_no_Ji[~a] = {0.0}; ~%", NP),
   Ex_e : doExpand1(Ex, bC), 
   Ey_e : doExpand1(Ey, bC), 
   Ez_e : doExpand1(Ez, bC), 
@@ -239,8 +251,8 @@ calcEVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
       ), 
       f_no_J_c : calcInnerProdList(varsP, 1, bP, fl_v_ne), 
       clst_J : [jacob_vx[0], jacob_vx[1], jacob_vx[2], jacob_vx[3], jacob_vy[0], jacob_vy[1], jacob_vy[2], jacob_vy[3], jacob_vz[0], jacob_vz[1], jacob_vz[2], jacob_vz[3]],
-      writeCExprsCollect1(f_no_J, f_no_J_c, clst_J),
-      f_vol_e : doExpand1(f_no_J, bP), 
+      writeCExprsCollect1(f_no_Ji, f_no_J_c, clst_J),
+      f_vol_e : doExpand1(f_no_Ji, bP), 
       printf(fh, "~%") 
     ) 
     else if (rep = "linear") then (
@@ -248,12 +260,14 @@ calcEVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
          multiplication by 1/J_vi. */
       printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", clabels[dir], numJacobNodes*(dir-1)),
       printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_v~a[0]; ~%", clabels[dir], clabels[dir]),
-      f_vol_e : jacobConstInv_vi[dir]*f_e
+      f_vol_e : f_e
     )
     else (
       f_vol_e : f_e
     ), 
-    /* Accumulate contribution from electric field/other external bulk forces. */
+    /* Accumulate contribution from electric field/other external bulk forces.
+       The constant inverse velocity-map Jacobian folds into the hoisted dv
+       prefactor (cubic rep divides nodally via f_no_J). */
     incr_vol : calcInnerProdList(varsP, 1, diff(bP, varsV[dir]), E_e[dir]*f_vol_e),
     if (dir = 1) then (
       clst_vol : [Ex[0], Ex[1], Ex[2], Ex[3], Ex[4], Ex[5], Ex[6], Ex[7], Ex[8]]
@@ -264,7 +278,8 @@ calcEVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
     else (
       clst_vol : [Ez[0], Ez[1], Ez[2], Ez[3], Ez[4], Ez[5], Ez[6], Ez[7], Ez[8]]
     ),
-    writeCIncrExprsCollectFactordx1(out, incr_vol, clst_vol, dv1[dir]), 
+    writeCIncrExprsCollectFactordx1(out, incr_vol, clst_vol,
+      dv1[dir]*(if (rep = "linear") then jacobConstInv_vi[dir] else 1)), 
     printf(fh, "~%") 
   ),
   printf(fh, "} ~%")
@@ -273,7 +288,7 @@ calcEVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
 /* Force arising due to a magnetic field grad_v(w) . (grad_v(H) x q/m*B) f 
    We separate the kernels based on the magnetic field direction to nicely group 
    the terms for factorizing the final product. */
-calcBVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_vel, Bdir, rep) := block(
+calcBVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, Bdir, rep) := block(
   [varsC,bC,varsV,bV,varsP,bP,NC,NV,NP,
    bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi,
    hamil,f_e,vid,
@@ -285,17 +300,21 @@ calcBVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_vel, Bdir, rep) := b
   NC : length(bC), 
   NV : length(bV), 
   NP : length(bP), 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, 
   const double *jacob_vel, const double *hamil,
-  const double *qmem, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  if (hamil_vel) then (
-    hamil : doExpand1(hamil, bV)
+  const double *qmem, const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  if (hamil_rep = "phase") then (
+    hamil : doExpand1(hamil, bP)
   )
   else (
-    hamil : doExpand1(hamil, bP)    
+    /* Velocity-space Hamiltonian. The sparse (separable) representation keeps
+       the dense storage layout but only references the constant and
+       single-velocity-variable coefficients (cross terms are exactly zero). */
+    hamil : hamilExpand(hamil, bV, varsV, hamil_rep = "vel_sparse")
   ),
   f_e : doExpand1(f, bP),
   
@@ -400,7 +419,9 @@ calcBVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_vel, Bdir, rep) := b
         ay_1 : diff(hamil, varsV[3])*Bx_e, 
         az_2 : -diff(hamil, varsV[2])*Bx_e, 
         f_vol_e : jacobConst_vi[1]*f_e,
-        clst_Bx_vol : [Bx[0], Bx[1], Bx[2], Bx[3], Bx[4], Bx[5], Bx[6], Bx[7], Bx[8]],
+        /* Collect the net cell-constant velocity-map Jacobian with the B
+           coefficients so it hoists out of the per-term sums. */
+        clst_Bx_vol : [Bx[0], Bx[1], Bx[2], Bx[3], Bx[4], Bx[5], Bx[6], Bx[7], Bx[8], jacob_vx[0]],
         incr_Bx_1 : calcInnerProdList(varsP, 1, diff(bP, varsV[2]), ay_1*f_vol_e), 
         incr_Bx_2 : calcInnerProdList(varsP, 1, diff(bP, varsV[3]), az_2*f_vol_e),
         writeCIncrExprsCollectFactordxSplit1(out, incr_Bx_1 + incr_Bx_2, clst_Bx_vol, dv1[2]*dv1[3]), 
@@ -414,7 +435,9 @@ calcBVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_vel, Bdir, rep) := b
         az_1 : diff(hamil, varsV[1])*By_e, 
         ax_2 : -diff(hamil, varsV[3])*By_e,
         f_vol_e : jacobConst_vi[2]*f_e,
-        clst_By_vol : [By[0], By[1], By[2], By[3], By[4], By[5], By[6], By[7], By[8]],
+        /* Collect the net cell-constant velocity-map Jacobian with the B
+           coefficients so it hoists out of the per-term sums. */
+        clst_By_vol : [By[0], By[1], By[2], By[3], By[4], By[5], By[6], By[7], By[8], jacob_vy[0]],
         incr_By_1 : calcInnerProdList(varsP, 1, diff(bP, varsV[3]), az_1*f_vol_e), 
         incr_By_2 : calcInnerProdList(varsP, 1, diff(bP, varsV[1]), ax_2*f_vol_e),
         writeCIncrExprsCollectFactordxSplit1(out, incr_By_1 + incr_By_2, clst_By_vol, dv1[1]*dv1[3]), 
@@ -428,7 +451,9 @@ calcBVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_vel, Bdir, rep) := b
         ax_1 : diff(hamil, varsV[2])*Bz_e, 
         ay_2 : -diff(hamil, varsV[1])*Bz_e,
         f_vol_e : jacobConst_vi[3]*f_e,
-        clst_Bz_vol : [Bz[0], Bz[1], Bz[2], Bz[3], Bz[4], Bz[5], Bz[6], Bz[7], Bz[8]],
+        /* Collect the net cell-constant velocity-map Jacobian with the B
+           coefficients so it hoists out of the per-term sums. */
+        clst_Bz_vol : [Bz[0], Bz[1], Bz[2], Bz[3], Bz[4], Bz[5], Bz[6], Bz[7], Bz[8], jacob_vz[0]],
         incr_Bz_1 : calcInnerProdList(varsP, 1, diff(bP, varsV[1]), ax_1*f_vol_e), 
         incr_Bz_2 : calcInnerProdList(varsP, 1, diff(bP, varsV[2]), ay_2*f_vol_e),
         writeCIncrExprsCollectFactordxSplit1(out, incr_Bz_1 + incr_Bz_2, clst_Bz_vol, dv1[1]*dv1[2]), 
@@ -492,12 +517,13 @@ calcRadVelVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
   [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
   NV : length(bV), 
   NP : length(bP), 
-  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, 
-  const double *jacob_vel, const double *rad, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  if (rep = "cubic") then printf(fh, "  double f_no_J[~a] = {0.0}; ~%", NP),
+  const double *jacob_vel, const double *rad, const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  if (rep = "cubic") then printf(fh, "  double f_no_Ji[~a] = {0.0}; ~%", NP),
   rad_vx_e : doExpand1(rad_vx, bV), 
   rad_vy_e : doExpand1(rad_vy, bV), 
   rad_vz_e : doExpand1(rad_vz, bV),
@@ -519,8 +545,8 @@ calcRadVelVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
       ), 
       f_no_J_c : calcInnerProdList(varsP, 1, bP, fl_v_ne), 
       clst_J : [jacob_vx[0], jacob_vx[1], jacob_vx[2], jacob_vx[3], jacob_vy[0], jacob_vy[1], jacob_vy[2], jacob_vy[3], jacob_vz[0], jacob_vz[1], jacob_vz[2], jacob_vz[3]],
-      writeCExprsCollect1(f_no_J, f_no_J_c, clst_J),
-      f_vol_e : doExpand1(f_no_J, bP) 
+      writeCExprsCollect1(f_no_Ji, f_no_J_c, clst_J),
+      f_vol_e : doExpand1(f_no_Ji, bP) 
     ) 
     else if (rep = "linear") then (
       /* C^0 linear map: constant Jacobian, division is an exact scalar

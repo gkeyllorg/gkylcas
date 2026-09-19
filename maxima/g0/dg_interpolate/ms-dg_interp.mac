@@ -12,11 +12,13 @@ maxPolyOrder_Ser : 2$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
 
-/* Tensor order basis. No need to generate p=1. */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+/* Tensor product basis: p=1 IS the tensor hybrid (p1 conf x p2 vel);
+   only the Vlasov phase-space kernels are generated (conf-space tensor
+   p=1 is identical to ser p=1, and the GK hybrid is separate). */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
-maxCdim_Tensor : 0$
+maxCdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
 
@@ -31,8 +33,10 @@ maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
 minCdim      : [minCdim_Ser, minCdim_Tensor]$
 maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 
-/* Generate configuration-space kernels. */
+/* Generate configuration-space kernels (ser only; tensor p=1 conf-space
+   is identical to ser p=1). */
 for bInd : 1 thru length(bName) do (
+  if (bName[bInd] = "ser") then
   for c : minCdim[bInd] thru maxCdim[bInd] do (
     for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
       fname : sconcat("~/max-out/dg_interpolate_", c, "x_", bName[bInd], "_p", polyOrder, ".c"),
@@ -76,8 +80,9 @@ for bInd : 1 thru length(bName) do (
   )
 )$
 
-/* Generate gyrokinetic kernels. */
+/* Generate gyrokinetic kernels (ser only). */
 for bInd : 1 thru length(bName) do (
+  if (bName[bInd] = "ser") then
   for c : minCdim[bInd] thru maxCdim[bInd] do (
     for gkV : 1 thru length(gkVdims[c]) do (
       v : gkVdims[c][gkV],

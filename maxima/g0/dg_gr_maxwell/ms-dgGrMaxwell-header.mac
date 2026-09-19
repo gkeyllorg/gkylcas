@@ -37,7 +37,7 @@ printPrototype(deco, ci, bStr, pi) := block([si],
   printf(fh, "~avoid dg_gr_maxwell_rescale_Jc_~ax_~a_p~a(const double *J, const double *fields_no_J, double* GKYL_RESTRICT Jfields); ~%", deco, ci, bStr, pi),
 
   /* Volume */
-  printf(fh, "~avoid gr_maxwell_vol_~ax_~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *w, const double *dx, const double *lapse_nodal, const double *shift_nodal,
+  printf(fh, "~avoid gr_maxwell_vol_~ax_~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *w, const double *dx, const double *jacob_pos, const double *lapse_nodal, const double *shift_nodal,
       const double *h_ij_nodal, const double *h_ij_inv_nodal, const double *J_c, const double *fields, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
 
   /* Geometric Sources */
@@ -48,12 +48,14 @@ printPrototype(deco, ci, bStr, pi) := block([si],
   for si : 1 thru ci do (
     /* 1. Lax Flux*/
     printf(fh, "~adouble lax_flux_~a_~ax_~a_p~a(const double *dxv, const int theta_pole,
+      const double *jacob_pos_l, const double *jacob_pos_r,
       const double *J_c, const double *flux_l, const double *flux_r, const double *max_alpha_quad, 
       const double *field_con_l, const double *field_con_r, const double *field_no_J_con_l, const double *field_no_J_con_r,
       double* GKYL_RESTRICT conf_flux_surf) ; ~%", deco, cvars[si], ci, bStr, pi),
     /* 2. Fluxes at Quad Points */
     printf(fh, "~avoid dg_gr_maxwell_alpha_quad_~a_~ax_~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *w, const double *dxv, 
-      const int theta_pole, const double *lapse_nodal, const double *shift_nodal, const double *h_ij_nodal, 
+      const int theta_pole, const double *jacob_pos_l, const double *jacob_pos_r,
+      const double *lapse_nodal, const double *shift_nodal, const double *h_ij_nodal, 
       const double *h_ij_inv_nodal, const double *J_c, const double *field_con_l, const double *field_con_r, 
       const double *field_no_J_con_l, const double *field_no_J_con_r, 
       double* GKYL_RESTRICT flux_l, double* GKYL_RESTRICT flux_r, double* GKYL_RESTRICT max_alpha_quad); ~%", deco, cvars[si], ci, bStr, pi),
@@ -66,7 +68,7 @@ printPrototype(deco, ci, bStr, pi) := block([si],
 )$
 
 printLorentzConfPrototype(deco, ci, vi, bStr, pi) := block([],
-  printf(fh, "~avoid dg_gr_maxwell_lorentz_conf_~ax~av_~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *dx, const double *lapse_nodal, const double *shift_nodal,
+  printf(fh, "~avoid dg_gr_maxwell_lorentz_conf_~ax~av_~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *dx, const double *jacob_pos, const double *lapse_nodal, const double *shift_nodal,
       const double *h_ij_nodal, const double *h_ij_inv_nodal, const double *J_c, const double *fields, const double *vierb_cov_nodal,
       const double *vierb_con_nodal, double* GKYL_RESTRICT E_conf_for_force, double* GKYL_RESTRICT B_conf_for_force); ~%",
     deco, ci, vi, bStr, pi)

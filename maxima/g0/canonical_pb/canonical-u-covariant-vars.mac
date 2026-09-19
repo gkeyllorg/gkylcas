@@ -25,7 +25,7 @@ calcCanonicalPbUCovariant(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   ),
 
   /* printf(fh, "#include <gkyl_euler_canonical_pb_kernels.h> ~%"), */
-  printf(fh, "#include <gkyl_canonical_pb_kernels.h>  ~%"),
+  printf(fh, "#include <gkyl_canonical_pb_vars_kernels.h>  ~%"),
   printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *h_ij, const double *v_j, const double *nv_i, double* GKYL_RESTRICT v_j_cov, double* GKYL_RESTRICT nv_i_cov) ~%{ ~%", funcNm, polyOrder),
   printf(fh, "  // h_ij:         Input volume expansion of the covariant components of the metric tensor.~%"),

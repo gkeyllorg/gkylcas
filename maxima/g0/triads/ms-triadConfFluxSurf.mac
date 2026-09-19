@@ -1,4 +1,4 @@
-load("triads/traidConfFluxSurfFuncs")$
+load("triads/triadConfFluxSurfFuncs")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    components of the modal DG expansion of the configuration space 
@@ -19,11 +19,13 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
-minCdim_Tensor : 2$
-minVdim_Tensor : 3$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$
+/* Tensor p=1 IS the tensor hybrid: generate the conf-direction lax and
+   PHASE-Hamiltonian producers at p=1 only. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* see begining of v loop below though. */
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -36,11 +38,14 @@ minVdim      : [minVdim_Ser, minVdim_Tensor]$
 maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 useHigherOrderList : [false, true]$
-velHamil     : [true, false]$
+/* Hamiltonian representations: the label is both the kernel-name segment and
+   the hamil_rep passed to the generators. vel_sparse is skipped in 1V (sparse
+   and dense are identical there; kernel tables alias 1V sparse to dense). */
+velHamil     : ["vel_dense", "vel_sparse", "phase"]$
 
 clabels : ["x","y","z"]$
 vlabels : ["vx","vy","vz"]$
-hamilLabels : ["vel", "phase"]$
+hamilLabels : ["vel_dense", "vel_sparse", "phase"]$
 
 for bInd : 1 thru length(bName) do (
   for c : minCdim[bInd] thru maxCdim[bInd] do (
@@ -51,7 +56,6 @@ for bInd : 1 thru length(bName) do (
       minPolyOrderB : minPolyOrder[bInd],
       maxPolyOrderB : maxPolyOrder[bInd],
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating configuration flux ",bName[bInd]," ~ax~av_p~a"),c,v,polyOrder)),
         /* Can only have scalar potential force in directions where we can take configuration space gradients. */
@@ -61,9 +65,9 @@ for bInd : 1 thru length(bName) do (
             if useHigherOrder then si : "ho_" else si : "",
             if not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) then (
               if ((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = false)) then si : "",
-              fname : sconcat("~/max-out/",si,"lax_flux_nodal_to_modal_", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+              fname : sconcat("~/max-out/",si,"lax_flux_nodal_", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
               fh : openw(fname),
-              funcName : sconcat(si,"lax_flux_nodal_to_modal_",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+              funcName : sconcat(si,"lax_flux_nodal_",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
               calcNodalLaxToModalVelFlux(dir, fh, funcName, c, v, bName[bInd], polyOrder, useHigherOrder), 
               close(fh)  
             )  
@@ -75,15 +79,18 @@ for bInd : 1 thru length(bName) do (
             useHigherOrder : useHigherOrderList[hoInd],
             if useHigherOrder then si : "ho_" else si : "",
             for vhamilInd : 1 thru length(velHamil) do (
-              vel_hamil : velHamil[vhamilInd],
-              if not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) then (
+              hamil_rep : velHamil[vhamilInd],
+
+              if not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) and not(hamil_rep = "vel_sparse" and v = 1) then (
                 if ((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = false)) then si : "",
-                /* Phase-space Hamiltonian surface component. Only generate with Serendipity basis for now. */
-                if (bName[bInd] = "ser") then (
+                /* Hamiltonian conf-flux producers: all reps for Serendipity
+                   and for the tensor p=1 hybrid (canonical and triad paths).
+                   RULE: hamil_phase at c+v>=5 is p=1 only. */
+                if not(hamil_rep = "phase" and c+v>=5 and polyOrder>1) then (
                   fname : sconcat("~/max-out/hamil_", hamilLabels[vhamilInd],"_",si,"alpha_quad_", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                   fh : openw(fname),
                   funcName : sconcat("hamil_", hamilLabels[vhamilInd],"_",si,"alpha_quad_",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-                  calcHamilGenVelSurfForceFlux(dir, fh, funcName, c, v, bName[bInd], polyOrder, vel_hamil, useHigherOrder), 
+                  calcHamilVelSurfForceFlux(dir, fh, funcName, c, v, bName[bInd], polyOrder, hamil_rep, useHigherOrder), 
                   close(fh)
                 )
               )

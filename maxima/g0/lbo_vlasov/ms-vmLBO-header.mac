@@ -3,7 +3,7 @@
 /* ...... USER INPUTS........ */
 
 /* Serendipity basis. */
-minPolyOrder_Ser : 1$
+minPolyOrder_Ser : 2$ /* pure ser p=1 unsupported for the LBO */
 maxPolyOrder_Ser : 2$
 minCdim_Ser : 1$
 minVdim_Ser : 1$    /* see begining of v loop below though. */
@@ -13,11 +13,11 @@ maxVdim_Ser : 3$
 /* Tensor product basis. */
 /* Note that Serendipity, p = 1, is equivalent to Tensor */
 /* Thus no need to calculate p = 1 Tensor basis */
-minPolyOrder_Tensor : 2$
+minPolyOrder_Tensor : 1$ /* tensor p=1 IS the tensor hybrid */
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 2$
+maxCdim_Tensor : 3$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -81,6 +81,7 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1, /* no tensor p2 at 2x3v */
 
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         printPrototypeDrag(decorator, c, v, bName[bInd], polyOrder),

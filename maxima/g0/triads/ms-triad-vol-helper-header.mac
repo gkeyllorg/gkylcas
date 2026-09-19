@@ -12,8 +12,12 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel): usable by EVERY
+   Hamiltonian rep (vel_dense, vel_sparse, phase) on both the canonical and
+   triad paths (f_no_J flow, cubic-map volume representation and per-node
+   velocity-Jacobian indexing all validated). Tensor p>1 has no triad kernels. */
 minPolyOrder_Tensor : 1$
-maxPolyOrder_Tensor : 0$
+maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
 maxCdim_Tensor : 3$
@@ -32,25 +36,42 @@ maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 velHamil     : [true, false]$
 
-hamilLabels : ["vel", "phase"]$
+/* All flavors use the comps machinery at c+v>=5 (see ms-triadVol.mac
+   policy); the sparse flavor inlines the exact bracket below 5D, so its
+   vol_alpha declarations are 5D/6D-only. */
+hamilLabels : ["vel_dense", "vel_sparse", "phase"]$
 
 printPrototype(comp, deco, ci, vi, bStr, hStr, pi) := block([si],
   if (ci <= vi and pi < 3) then (
-    if (comp = 0) then (
+    /* Sparse vol_alpha exists only at c+v>=5 (inline bracket below);
+       RULE: hamil_phase at c+v>=5 is p=1 only. */
+    if (comp = 0 and not(hStr = "vel_sparse" and ci+vi < 5)
+        and not(hStr = "phase" and ci+vi>=5 and pi>1)) then (
       printf(fh, "~avoid vlasov_nc_hamil_~a_vol_alpha_~ax~av_~a_p~a(const double *w, const double *dxv, const int dir,
+        const double *vmap, const double *jacob_pos, const double *jacob_vel,
         const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT out); ~%", deco, hStr, ci, vi, bStr, pi)
     ),
-    if (hStr = "vel") then (
+    /* The hamil_gen comps are Hamiltonian-agnostic and shared across the
+       flavors; emit their declarations once (on the vel_dense pass). */
+    if (hStr = "vel_dense") then (
       printf(fh, "~avoid vlasov_nc_hamil_gen_vol_comp~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int dir,
+        const double *jacob_pos, const double *jacob_vel,
         const double *alpha, double* GKYL_RESTRICT out); ~%", deco, comp, ci, vi, bStr, pi)
     )
   )
 )$
 
 /* ............ Write out the C header file ............ */
-fh : openw("~/max-out/gkyl_nc_hamil_vol_comps_kernels.h")$
+fh : openw("~/max-out/gkyl_nc_hamil_gen_vol_comps_kernels.h")$
 
 printf(fh, "#pragma once ~%")$
+printf(fh, "// These component kernels evaluate the volume-term Galerkin contraction ~%")$
+printf(fh, "// <grad(phi), alpha f> from a PRECOMPUTED modal phase-space alpha. They are ~%")$
+printf(fh, "// agnostic to the form of the Hamiltonian -- the alpha handed to them has ~%")$
+printf(fh, "// already been projected onto the dense phase basis -- hence the hamil_gen ~%")$
+printf(fh, "// naming. Every Hamiltonian flavor uses this machinery at 5D/6D; below ~%")$
+printf(fh, "// that the sparse (separable) Hamiltonian uses the inline exact-bracket ~%")$
+printf(fh, "// volume kernels instead. ~%")$
 printf(fh, "#include <math.h> ~%")$
 printf(fh, "#include <gkyl_util.h> ~%")$
 printf(fh, "EXTERN_C_BEG ~%")$
@@ -68,8 +89,11 @@ for bInd : 1 thru length(bName) do (
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
 
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
-        for vhamilInd : 1 thru length(velHamil) do (
-          if ((c+v>=4) or (v = 3) ) and ((( polyOrder > 1 and c+v < 6) or (c+v >= 5)) or (c+v = 4 and polyOrder = 2 ))then (
+        for vhamilInd : 1 thru length(hamilLabels) do (
+          /* Mirror ms-triadVolHelper.mac: comps at ser p2 1x3v/2x2v/2x3v, ser
+             p1 2x3v, 3x3v p1, and tensor p1 at every c+v>=4 combo. */
+          if (((c+v>=4) or (v = 3) ) and ((( polyOrder > 1 and c+v < 6) or (c+v >= 5)) or (c+v = 4 and polyOrder = 2 ))
+              or (bName[bInd] = "tensor" and c+v >= 4)) then (
             [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(bName[bInd], c, v, polyOrder), 
             for component : 0 thru (length(bP)-1) do( 
               printPrototype(component, decorator, c, v, bName[bInd], hamilLabels[vhamilInd], polyOrder)
