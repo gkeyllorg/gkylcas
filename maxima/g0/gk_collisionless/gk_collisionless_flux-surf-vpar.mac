@@ -11,7 +11,8 @@ buildGKFluxVparESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
    numVelNodes,tempVars,tempBasis,NSurfIndexing,numNodesIndexing,d,rdx2vec,rdv2vec,rdSurfVar2,
    bmagBasis,phi_e,bmag_e,vmap_e,vmapSq_e,vmap_prime_e,evPoint,hamil_e,hamil_c,replaceList,
    hamilCvar,hamilNoZero_c,JfL_e,JfR_e,JfL_c,JfR_c,JfL_nodes,JfR_nodes,vmap_prime_nodes,vpardim,
-   dH_dz_nodes,i,j,j0index,j1index,pOrderCFL,vprimeStr
+   yfieldL_c,yfieldR_c,yfieldL_e,yfieldR_e,yfieldSurfL_e,yfieldSurfR_e,
+   dH_dz_nodesL,dH_dz_nodesR,i,j,k,j0index,j1index,pOrderCFL,vprimeStr
   ],
 
   kill(varsC,varsP,bC,bP),
@@ -67,7 +68,7 @@ buildGKFluxVparESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
     const double *vmap_prime_l, const double *vmap_prime_r,
     const double *vmap, const double *vmapSq, const double q_, const double m_,
     const struct gkyl_dg_vol_geom *dgv, const struct gkyl_gk_dg_vol_geom *gkdgv,
-    const double *bmag, const double *yfield, const double *JfL, const double *JfR,
+    const double *bmag, const double *yfieldL, const double *yfieldR, const double *JfL, const double *JfR,
     double* GKYL_RESTRICT flux_surf) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]: cell-center.~%"),
   printf(fh, "  // dxv[NDIM]: cell length.~%"),
@@ -78,7 +79,8 @@ buildGKFluxVparESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   printf(fh, "  // dgv: volume DG geometry.~%"),
   printf(fh, "  // gkdgv: gyrokinetic volume DG geometry.~%"),
   printf(fh, "  // bmag: magnetic field amplitude.~%"),
-  printf(fh, "  // yfield: Yushmanov field (gradient of Yushmanov potential).~%"),
+  printf(fh, "  // yfieldL: Yushmanov field in the left cell.~%"),
+  printf(fh, "  // yfieldR: Yushmanov field in the right cell.~%"),
   printf(fh, "  // JfL: distribution times total jacobian in left cell.~%"),
   printf(fh, "  // JfR: distribution times total jacobian in right cell.~%"),
   printf(fh, "  // flux_surf: output surface phase space flux in each direction (cdim + 1 components).~%"),
@@ -149,21 +151,26 @@ buildGKFluxVparESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   vmap_prime_nodes : float(evAtNodes(vmap_prime_e[1],surfNodes,surfIntVars)),
 
   /* Yushmanov field. */
-  yfield_c : makelist( makelist(yfield[numP*(d-1)+k-1],k,1,numP) ,d,1,cdim),
-  yfield_e : makelist( doExpand(yfield_c[d],bP) ,d,1,cdim),
-  yfieldSurf_e : makelist( subst(surfVar=-1,yfield_e[d]) ,d,1,cdim),
+  yfieldL_c : makelist( makelist(yfieldL[numP*(d-1)+k-1],k,1,numP) ,d,1,cdim),
+  yfieldR_c : makelist( makelist(yfieldR[numP*(d-1)+k-1],k,1,numP) ,d,1,cdim),
+  yfieldL_e : makelist( doExpand(yfieldL_c[d],bP) ,d,1,cdim),
+  yfieldR_e : makelist( doExpand(yfieldR_c[d],bP) ,d,1,cdim),
+  yfieldSurfL_e : makelist( subst(surfVar=1,yfieldL_e[d]) ,d,1,cdim),
+  yfieldSurfR_e : makelist( subst(surfVar=-1,yfieldR_e[d]) ,d,1,cdim),
 
   vpardim : pDim-1,
   if vdim = 1 then ( vpardim : pDim ),
-  dH_dz_nodes : makelist(0, i, 1, pDim),  
+  dH_dz_nodesL : makelist(0, i, 1, pDim),
+  dH_dz_nodesR : makelist(0, i, 1, pDim),
   for i : 1 thru vpardim do (
     if i = vpardim then (
-      dH_dz_nodes[i] : float(evAtNodes(diff(hamil_e,varsP[i]),surfNodes,surfIntVars)),
-      dH_dz_nodes[i] : subst(surfVar=evPoint, dH_dz_nodes[i])
+      dH_dz_nodesL[i] : float(evAtNodes(diff(hamil_e,varsP[i]),surfNodes,surfIntVars)),
+      dH_dz_nodesL[i] : subst(surfVar=evPoint, dH_dz_nodesL[i]),
+      dH_dz_nodesR[i] : dH_dz_nodesL[i]
     )
     else (
-      /* yfield_e : diff(hamil_e*rdx2vec[i],varsP[i]), */
-      dH_dz_nodes[i] : float(evAtNodes(yfieldSurf_e[i],surfNodes,surfIntVars))
+      dH_dz_nodesL[i] : float(evAtNodes(yfieldSurfL_e[i],surfNodes,surfIntVars)),
+      dH_dz_nodesR[i] : float(evAtNodes(yfieldSurfR_e[i],surfNodes,surfIntVars))
     )
   ),
 
@@ -176,11 +183,16 @@ buildGKFluxVparESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   printf(fh, "  double Jc_quad = 0.0; ~%"),
   printf(fh, "  double dualcurlbhat_quad[3] = {0.0}; ~%"),
 
-  printf(fh, "  double alpha_quad = 0.0; ~%"),
+  printf(fh, "  double alphaL_quad = 0.0;~%"),
+  printf(fh, "  double alphaR_quad = 0.0;~%"),
+  printf(fh, "  double alpha_avg = 0.0;~%"),
+  printf(fh, "  double alpha_max = 0.0;~%"),
+  printf(fh, "  const double alpha_eps = 1.0e-2;~%"),
+  printf(fh, "  double sgn_alpha = 0.0;~%"),
   printf(fh, "  double JfL_quad = 0.0; ~%"),
   printf(fh, "  double JfR_quad = 0.0; ~%"),
-  printf(fh, "  double Jfavg_quad = 0.0; ~%"),
-  printf(fh, "  double Jfjump_quad = 0.0; ~%"),
+  printf(fh, "  double alphaJfL = 0.0;~%"),
+  printf(fh, "  double alphaJfR = 0.0;~%"),
   printf(fh, "~%"),
 
   for i : 1 thru numConfigNodes do (
@@ -196,32 +208,50 @@ buildGKFluxVparESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
       j1index : j+(i-1)*numVelNodes,
       printf(fh, "~%"),
       if no_by = true then (
-        printf(fh, "  alpha_quad = -(~a)/m_/bmag_quad * B3_quad ;~%", dH_dz_nodes[cdim][j1index])
+        printf(fh, "  alphaL_quad = -(~a)/m_/bmag_quad * B3_quad ;~%", dH_dz_nodesL[cdim][j1index]),
+        printf(fh, "  alphaR_quad = -(~a)/m_/bmag_quad * B3_quad ;~%", dH_dz_nodesR[cdim][j1index])
       ),
       if no_by = false then (
-        printf(fh, "  alpha_quad = -(~a)/m_/bmag_quad * B3_quad ", dH_dz_nodes[cdim][j1index]),
+        printf(fh, "  alphaL_quad = -(~a)/m_/bmag_quad * B3_quad ", dH_dz_nodesL[cdim][j1index]),
          if cdim = 3 then (
            for k : 1 thru cdim do (
-             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodes[k][j1index], k-1, dH_dz_nodes[vpardim][j1index]/vmap_prime_nodes[j1index])
+             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesL[k][j1index], k-1, dH_dz_nodesL[vpardim][j1index]/vmap_prime_nodes[j1index])
            )
          ),
          if cdim = 2 then (
-             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodes[1][j1index], 0, dH_dz_nodes[vpardim][j1index]/vmap_prime_nodes[j1index]),
-             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodes[2][j1index], 2, dH_dz_nodes[vpardim][j1index]/vmap_prime_nodes[j1index])
+             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesL[1][j1index], 0, dH_dz_nodesL[vpardim][j1index]/vmap_prime_nodes[j1index]),
+             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesL[2][j1index], 2, dH_dz_nodesL[vpardim][j1index]/vmap_prime_nodes[j1index])
          ),
          if cdim = 1 then (
-             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodes[1][j1index], 2, dH_dz_nodes[vpardim][j1index]/vmap_prime_nodes[j1index])
+             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesL[1][j1index], 2, dH_dz_nodesL[vpardim][j1index]/vmap_prime_nodes[j1index])
+         ),
+        printf(fh, ";~%"),
+        printf(fh, "  alphaR_quad = -(~a)/m_/bmag_quad * B3_quad ", dH_dz_nodesR[cdim][j1index]),
+         if cdim = 3 then (
+           for k : 1 thru cdim do (
+             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesR[k][j1index], k-1, dH_dz_nodesR[vpardim][j1index]/vmap_prime_nodes[j1index])
+           )
+         ),
+         if cdim = 2 then (
+             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesR[1][j1index], 0, dH_dz_nodesR[vpardim][j1index]/vmap_prime_nodes[j1index]),
+             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesR[2][j1index], 2, dH_dz_nodesR[vpardim][j1index]/vmap_prime_nodes[j1index])
+         ),
+         if cdim = 1 then (
+             printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesR[1][j1index], 2, dH_dz_nodesR[vpardim][j1index]/vmap_prime_nodes[j1index])
          ),
         printf(fh, ";~%")
       ),
 
       printf(fh, "~%"),
-      printf(fh, "  cfl = fmax(fabs(alpha_quad), fabs(cfl)) ;~%", j0index),
+      printf(fh, "  cfl = fmax(fmax(fabs(alphaL_quad), fabs(alphaR_quad)), fabs(cfl));~%"),
       printf(fh, "  JfL_quad =  (~a)/~a;~%", JfL_nodes[j1index], vmap_prime_l[surfDir-cdim-1]),
       printf(fh, "  JfR_quad =  (~a)/~a;~%", JfR_nodes[j1index], vmap_prime_r[surfDir-cdim-1]),
-      printf(fh, "  Jfavg_quad = (JfL_quad + JfR_quad)/2.0 ;~%"),
-      printf(fh, "  Jfjump_quad = (JfR_quad - JfL_quad)/2.0 ;~%"),
-      printf(fh, "  flux_surf_nodal[~a] = alpha_quad*Jfavg_quad - fabs(alpha_quad)*Jfjump_quad ;~%", j0index)
+      printf(fh, "  alpha_avg = 0.5*(alphaL_quad + alphaR_quad);~%"),
+      printf(fh, "  alpha_max = fmax(fabs(alphaL_quad), fabs(alphaR_quad));~%"),
+      printf(fh, "  sgn_alpha = fabs(alpha_avg) > alpha_eps*alpha_max ? gsign(alpha_avg) : 0.0;~%"),
+      printf(fh, "  alphaJfL = alphaL_quad*JfL_quad;~%"),
+      printf(fh, "  alphaJfR = alphaR_quad*JfR_quad;~%"),
+      printf(fh, "  flux_surf_nodal[~a] = 0.5*(alphaJfL + alphaJfR) - 0.5*sgn_alpha*(alphaJfR - alphaJfL);~%", j0index)
     ),
     printf(fh, "~%")
   ),

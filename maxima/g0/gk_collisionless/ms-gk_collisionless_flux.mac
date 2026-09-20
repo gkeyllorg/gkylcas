@@ -12,7 +12,7 @@ load("gk_collisionless/gk_collisionless_flux-surf-vpar")$
 minPolyOrder_Ser : 1$
 maxPolyOrder_Ser : 1$
 minCdim_Ser : 1$
-maxCdim_Ser : 3$
+maxCdim_Ser : 1$
 
 /* Tensor order basis. No need to generate p=1. */
 minPolyOrder_Tensor : 2$

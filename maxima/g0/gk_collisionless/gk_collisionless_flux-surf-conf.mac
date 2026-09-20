@@ -6,6 +6,17 @@ load("utilities_gyrokinetic")$
 load("nodal_operations/nodal_functions")$
 fpprec : 24$
 
+/* The configuration-space face kernels are also called in parallel on the
+   GPU. Neighboring faces contribute to the same cell's weak Yushmanov
+   derivative, so use a host/device helper which is an atomic add on device. */
+writeCYfieldIncrExprs1(lhs, rhs) := block([expr],
+  expr : float(expand(rhs)),
+  for i : 1 thru length(expr) do (
+    if expr[i] # 0.0 then
+      printf(fh, "  gkyl_gk_collisionless_yfield_add(&~a, ~a);~%", lhs[i-1], expr[i])
+  )
+)$
+
 buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no_by, is_bound, bound_side, bound_type) := block(
   [pDim,varsC,bC,varsP,bP,vSub,numC,numP,surfVar,varLabel,dirLabel,surfIntVars,surf_cvars,surf_vvars,
    surfNodes,nodeVars,bSurf,basisNodal,surfConfigNodes,numSurfNodes,numSurfConfigNodes,numVelNodes,
@@ -227,7 +238,7 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   /* Add volume contribution to Yushmanov field. */
   if not (is_bound = true and bound_side = "upper") then (
     ypot_der_vol_c : -rdx2vec[surfDir]*calcInnerProdList(varsP,1,diff(bP,surfVar),ypotR_e),
-    writeCIncrExprs1(ypotderR, ypot_der_vol_c)
+    writeCYfieldIncrExprs1(ypotderR, ypot_der_vol_c)
   ),
 
   /* Evaluate Yushmanov potential at nodes. */
@@ -351,11 +362,11 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   ypot_der_surf_e : doExpand1(ypot_der_surf_n,basisNodal),
   if not (is_bound = true and bound_side = "lower") then (
     ypot_der_surfL_c : fullratsimp(rdx2vec[surfDir]*calcInnerProdList(surfIntVars, 1, subst(surfVar=1,bP), ypot_der_surf_e)),
-    writeCIncrExprs1(ypotderL, ypot_der_surfL_c)
+    writeCYfieldIncrExprs1(ypotderL, ypot_der_surfL_c)
   ),
   if not (is_bound = true and bound_side = "upper") then (
     ypot_der_surfR_c : fullratsimp(rdx2vec[surfDir]*calcInnerProdList(surfIntVars, -1, subst(surfVar=-1,bP), ypot_der_surf_e)),
-    writeCIncrExprs1(ypotderR, ypot_der_surfR_c)
+    writeCYfieldIncrExprs1(ypotderR, ypot_der_surfR_c)
   ),
   printf(fh, "~%"),
 
