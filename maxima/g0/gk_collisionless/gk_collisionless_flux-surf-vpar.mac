@@ -222,9 +222,12 @@ buildGKFluxVparESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
              printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesL[1][j1index], 0, dH_dz_nodesL[vpardim][j1index]/vmap_prime_nodes[j1index]),
              printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesL[2][j1index], 2, dH_dz_nodesL[vpardim][j1index]/vmap_prime_nodes[j1index])
          ),
+          /**
+             MF 2026/09/21: the curvature term drives one-sided transport, which we don't want if we expect symmetric profiles in 1D.
          if cdim = 1 then (
              printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesL[1][j1index], 2, dH_dz_nodesL[vpardim][j1index]/vmap_prime_nodes[j1index])
          ),
+         **/
         printf(fh, ";~%"),
         printf(fh, "  alphaR_quad = -(~a)/m_/bmag_quad * B3_quad ", dH_dz_nodesR[cdim][j1index]),
          if cdim = 3 then (
@@ -236,9 +239,12 @@ buildGKFluxVparESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
              printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesR[1][j1index], 0, dH_dz_nodesR[vpardim][j1index]/vmap_prime_nodes[j1index]),
              printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesR[2][j1index], 2, dH_dz_nodesR[vpardim][j1index]/vmap_prime_nodes[j1index])
          ),
+          /**
+             MF 2026/09/21: the curvature term drives one-sided transport, which we don't want if we expect symmetric profiles in 1D.
          if cdim = 1 then (
              printf(fh, "-(~a)/m_/bmag_quad * 1/q_*dualcurlbhat_quad[~a]*(~a)", dH_dz_nodesR[1][j1index], 2, dH_dz_nodesR[vpardim][j1index]/vmap_prime_nodes[j1index])
          ),
+         **/
         printf(fh, ";~%")
       ),
 

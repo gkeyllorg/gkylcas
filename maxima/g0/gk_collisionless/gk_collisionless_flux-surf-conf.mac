@@ -339,7 +339,13 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
         ),
         if cdim = 1 then (
           printf(fh, "  alpha_quad = (mvpar_quad[~a]*B3_quad/(m_*bmag_quad))*area_elem_quad/Jc_quad; ~%", vparIdx0)
-        )
+          /**
+             MF 2026/09/21: the curvature term drives one-sided transport, which we don't want if we expect symmetric profiles in 1D.
+          /* Include the B-star curvature contribution, matching the
+             dualcurlbhatoverB_z term in the 1x volume characteristic. */
+          printf(fh, "  alpha_quad = (mvpar_quad[~a]*B3_quad/(m_*bmag_quad) + mvparsq_quad[~a]*normcurlbhat_quad/(bmag_quad*q_))*area_elem_quad/Jc_quad; ~%", vparIdx0, vparIdx0)
+          **/
+         )
       ),
 
       printf(fh, "~%"),

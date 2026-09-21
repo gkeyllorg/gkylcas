@@ -189,7 +189,7 @@ buildGKVolKernel(fh, funcNm, cdim, vdim, basisFun, polyOrder, varsInB, no_by) :=
         curvdriftdir : 3
       ),
 
-      if dir < vpardim then (
+      if dir > 1 and dir < vpardim then (
         alpha_e : alpha_e + dualcurlbhatoverB_list[curvdriftdir]*dH_dz_e[vpardim]/vmap_prime_e[1]*dH_dz_e[vpardim]/vmap_prime_e[1]/m_/q_
       ),
       if cdim = 3 then (
@@ -219,10 +219,13 @@ buildGKVolKernel(fh, funcNm, cdim, vdim, basisFun, polyOrder, varsInB, no_by) :=
         ),
         if cdim = 2 then (
             alpha_e : alpha_e - dualcurlbhatoverB_list[1]*dH_dz_e[1]*dH_dz_e[vpardim]/vmap_prime_e[1]/q_/m_ - dualcurlbhatoverB_list[3]*dH_dz_e[2]*dH_dz_e[vpardim]/vmap_prime_e[1]/q_/m_
-        ),
+        )
+          /**
+             MF 2026/09/21: the curvature term drives one-sided transport, which we don't want if we expect symmetric profiles in 1D.
         if cdim = 1 then (
             alpha_e : alpha_e - dualcurlbhatoverB_list[3]*dH_dz_e[1]*dH_dz_e[vpardim]/vmap_prime_e[1]/q_/m_
         )
+        **/
       )
 
     ),
