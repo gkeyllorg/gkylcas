@@ -16,7 +16,7 @@ maxCdim_Ser : 3$
 /* Thus no need to calculate p = 1 Tensor basis */
 minPolyOrder_Tensor : 2$
 maxPolyOrder_Tensor : 2$
-minCdim_Tensor : 1$
+minCdim_Tensor : 2$
 maxCdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
