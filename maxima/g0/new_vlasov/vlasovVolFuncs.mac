@@ -156,9 +156,8 @@ calcPhiVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv,
-  const double *jacob_pos, const double *jacob_vel, const double *phi, const double *f,
-  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  if (rep = "cubic") then printf(fh, "  double f_no_Ji[~a] = {0.0}; ~%", NP),
+  const double *jacob_pos, const double *jacob_vel, const double *phi, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  if (rep = "cubic") then printf(fh, "  double f_no_J[~a] = {0.0}; ~%", NP),
   phi_e : doExpand1(phi, bC),
   f_e : doExpand1(f, bP),
   
@@ -179,7 +178,7 @@ calcPhiVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
       ), 
       f_no_J_c : calcInnerProdList(varsP, 1, bP, fl_v_ne), 
       clst_J : [jacob_vx[0], jacob_vx[1], jacob_vx[2], jacob_vx[3], jacob_vy[0], jacob_vy[1], jacob_vy[2], jacob_vy[3], jacob_vz[0], jacob_vz[1], jacob_vz[2], jacob_vz[3]],
-      writeCExprsCollect1(f_no_Ji, f_no_J_c, clst_J),
+      writeCExprsCollect1(f_no_J, f_no_J_c, clst_J),
       f_vol_e_noJ : doExpand1(f_no_J, bP) 
     ) 
     else if (rep = "linear") then (
@@ -227,9 +226,8 @@ calcEVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, 
-  const double *jacob_vel, const double *qmem, const double *f,
-  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  if (rep = "cubic") then printf(fh, "  double f_no_Ji[~a] = {0.0}; ~%", NP),
+  const double *jacob_vel, const double *qmem, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  if (rep = "cubic") then printf(fh, "  double f_no_J[~a] = {0.0}; ~%", NP),
   Ex_e : doExpand1(Ex, bC), 
   Ey_e : doExpand1(Ey, bC), 
   Ez_e : doExpand1(Ez, bC), 
@@ -251,8 +249,8 @@ calcEVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
       ), 
       f_no_J_c : calcInnerProdList(varsP, 1, bP, fl_v_ne), 
       clst_J : [jacob_vx[0], jacob_vx[1], jacob_vx[2], jacob_vx[3], jacob_vy[0], jacob_vy[1], jacob_vy[2], jacob_vy[3], jacob_vz[0], jacob_vz[1], jacob_vz[2], jacob_vz[3]],
-      writeCExprsCollect1(f_no_Ji, f_no_J_c, clst_J),
-      f_vol_e : doExpand1(f_no_Ji, bP), 
+      writeCExprsCollect1(f_no_J, f_no_J_c, clst_J),
+      f_vol_e : doExpand1(f_no_J, bP), 
       printf(fh, "~%") 
     ) 
     else if (rep = "linear") then (
@@ -521,9 +519,8 @@ calcRadVelVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, 
-  const double *jacob_vel, const double *rad, const double *f,
-  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  if (rep = "cubic") then printf(fh, "  double f_no_Ji[~a] = {0.0}; ~%", NP),
+  const double *jacob_vel, const double *rad, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  if (rep = "cubic") then printf(fh, "  double f_no_J[~a] = {0.0}; ~%", NP),
   rad_vx_e : doExpand1(rad_vx, bV), 
   rad_vy_e : doExpand1(rad_vy, bV), 
   rad_vz_e : doExpand1(rad_vz, bV),
@@ -545,8 +542,8 @@ calcRadVelVol(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
       ), 
       f_no_J_c : calcInnerProdList(varsP, 1, bP, fl_v_ne), 
       clst_J : [jacob_vx[0], jacob_vx[1], jacob_vx[2], jacob_vx[3], jacob_vy[0], jacob_vy[1], jacob_vy[2], jacob_vy[3], jacob_vz[0], jacob_vz[1], jacob_vz[2], jacob_vz[3]],
-      writeCExprsCollect1(f_no_Ji, f_no_J_c, clst_J),
-      f_vol_e : doExpand1(f_no_Ji, bP) 
+      writeCExprsCollect1(f_no_J, f_no_J_c, clst_J),
+      f_vol_e : doExpand1(f_no_J, bP) 
     ) 
     else if (rep = "linear") then (
       /* C^0 linear map: constant Jacobian, division is an exact scalar
