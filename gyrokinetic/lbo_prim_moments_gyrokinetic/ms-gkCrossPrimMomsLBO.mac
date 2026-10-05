@@ -1,0 +1,61 @@
+load("lbo_prim_moments_gyrokinetic/GkCrossPrimMomsLBO")$
+
+load(stringproc)$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 0$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* Vdim possibilities for each of Cdim=[1,2,3]. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+
+    /* Gyrokinetic cross-collision primitive moments. */
+    for gkV : 1 thru length(gkVdims[c]) do (
+      v : gkVdims[c][gkV],
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c+v>4 and maxPolyOrderB > 2) then maxPolyOrderB : 2,
+
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        /* For gyrokinetic Lenard-Bernstein operator. */
+        disp(printf(false,sconcat("Creating GkLBOCrossPrimMoments ~ax~av p~a ", bName[bInd]),c,v,polyOrder)),
+        fname : sconcat("~/max-out/gyrokinetic_cross_prim_moments_", c, "x", v, "v_",bName[bInd],"_p", polyOrder, ".c"),
+        fh : openw(fname),
+  
+        printf(fh, "#include <gkyl_prim_lbo_gyrokinetic_kernels.h> ~%"),
+        printf(fh, " ~%"),
+  
+        funcName : sconcat("gyrokinetic_cross_prim_moments_", c, "x", v, "v_",bName[bInd],"_p", polyOrder),
+        calcCrossPrimMomsLBO(fh, funcName, c, v, bName[bInd], polyOrder),
+  
+        close(fh)
+      )
+    )
+  )
+);
+
+
