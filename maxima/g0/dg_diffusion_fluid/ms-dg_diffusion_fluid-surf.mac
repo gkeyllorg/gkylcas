@@ -5,13 +5,13 @@ load("dg_diffusion_fluid/diffFuncs-fluid-surf")$
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 3$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
 
 /* Tensor order basis. No need to generate p=1. */
 minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 3$
 minCdim_Tensor : 1$
 maxCdim_Tensor : 3$
 
@@ -28,7 +28,7 @@ dirVars      : [x,y,z]$
 for bInd : 1 thru length(bName) do (
   for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
     for cdim : minCdim[bInd] thru maxCdim[bInd] do (
-      for dir : 1 thru cdim do (
+      for dir : 1 thru cdim do if not (polyOrder > 2 and (cdim = 3 or (bName[bInd] = "tensor" and cdim = 1))) then (
         dirVar : dirVars[dir], 
         fname : sconcat("~/max-out/dg_diffusion_fluid_order2_surf", dirVar,"_", cdim, "x_", bName[bInd], "_p", polyOrder, ".c"),
         funcName : sconcat("dg_diffusion_fluid_order2_surf", dirVar,"_", cdim, "x_", bName[bInd], "_p", polyOrder),

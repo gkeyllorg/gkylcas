@@ -9,13 +9,13 @@ load("dg_diffusion_fluid/diffFuncs-fluid-vol")$
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 3$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
 
 /* Tensor order basis. No need to generate p=1. */
 minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 3$
 minCdim_Tensor : 1$
 maxCdim_Tensor : 3$
 
@@ -33,7 +33,7 @@ for bInd : 1 thru length(bName) do (
     minPolyOrderB : minPolyOrder[bInd],
     maxPolyOrderB : maxPolyOrder[bInd],
 
-    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do if not (polyOrder > 2 and (d = 3 or (bName[bInd] = "tensor" and d = 1))) then (
       disp(printf(false,sconcat("Creating volume diffusion",bName[bInd]," ~axp~a"),d,polyOrder)),
       fname : sconcat("~/max-out/dg_diffusion_fluid_order2_vol_",  d, "x_", bName[bInd], "_p", polyOrder, ".c"),
       fh : openw(fname),

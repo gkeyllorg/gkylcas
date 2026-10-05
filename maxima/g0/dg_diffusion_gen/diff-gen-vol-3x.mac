@@ -3,9 +3,18 @@ load("modal-basis")$
 load(stringproc)$
 fpprec : 24$
 
-genDiffusionGenVol3x(fh,bName,dim,polyOrder) := block([vars,ba,numBasis],
+/* Generate the kernel for the general diffusion volume term. It only computes the CFL
+   frequency, (p+1)^2 times the cell average of each diffusion tensor component over
+   the corresponding cell lengths. Off-diagonal components enter through their absolute
+   value since they raise the largest frequency regardless of their sign. */
+
+genDiffusionGenVol3x(fh,bName,dim,polyOrder) := block([vars,ba,numBasis,avgFac,pOrderFact],
   [vars,ba] : loadBasis(bName,dim,polyOrder),
   numBasis : length(ba),
+
+  /* Cell average of an expansion is its zeroth coefficient times the (constant) zeroth basis function. */
+  avgFac : float(ba[1]),
+  pOrderFact : float((polyOrder+1)^2),
 
   printf(fh, "GKYL_CU_DH double~%"),
   printf(fh, sconcat("dg_diffusion_gen_vol_3x_", bName, "_p", polyOrder,
@@ -31,6 +40,13 @@ genDiffusionGenVol3x(fh,bName,dim,polyOrder) := block([vars,ba,numBasis],
   printf(fh, "  const double* Dyz = &Dij[~a];~%", 4*numBasis),
   printf(fh, "  const double* Dzz = &Dij[~a];~%~%", 5*numBasis),
   
-  printf(fh, "  return Jxx*Dxx[0] + Jxy*Dxy[0] + Jxz*Dxz[0] + Jyy*Dyy[0] + Jyz*Dyz[0] + Jzz*Dzz[0];~%"),
+  printf(fh, "  const double Dxx_av = ~a*Dxx[0];~%", avgFac),
+  printf(fh, "  const double Dxy_av = ~a*Dxy[0];~%", avgFac),
+  printf(fh, "  const double Dxz_av = ~a*Dxz[0];~%", avgFac),
+  printf(fh, "  const double Dyy_av = ~a*Dyy[0];~%", avgFac),
+  printf(fh, "  const double Dyz_av = ~a*Dyz[0];~%", avgFac),
+  printf(fh, "  const double Dzz_av = ~a*Dzz[0];~%~%", avgFac),
+
+  printf(fh, "  return ~a*(Jxx*Dxx_av + Jxy*fabs(Dxy_av) + Jxz*fabs(Dxz_av) + Jyy*Dyy_av + Jyz*fabs(Dyz_av) + Jzz*Dzz_av);~%", pOrderFact),
   printf(fh, "}~%")
 )$

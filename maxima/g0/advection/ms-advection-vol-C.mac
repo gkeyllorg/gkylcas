@@ -7,7 +7,7 @@ load(stringproc)$
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 3$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
 
@@ -15,7 +15,7 @@ maxCdim_Ser : 3$
 /* Note that Serendipity, p = 1, is equivalent to Tensor */
 /* Thus no need to calculate p = 1 Tensor basis */
 minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 3$
 minCdim_Tensor : 2$
 maxCdim_Tensor : 3$
 
@@ -32,7 +32,8 @@ for bInd : 1 thru length(bName) do (
     minPolyOrderB : minPolyOrder[bInd],
     maxPolyOrderB : maxPolyOrder[bInd],
 
-    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+    /* p=3 kernels are limited to 1x and 2x: the core basis has no 3x p=3 nodal functions. */
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do if not (polyOrder > 2 and d = 3) then (
       disp(printf(false,sconcat("Creating volume Advection",bName[bInd]," ~axp~a"),d,polyOrder)),
       fname : sconcat("~/max-out/advection_vol_",  d, "x_", bName[bInd], "_p", polyOrder, ".c"),
       fh : openw(fname),

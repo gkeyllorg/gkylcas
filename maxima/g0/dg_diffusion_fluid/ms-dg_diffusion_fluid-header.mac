@@ -4,15 +4,15 @@ kill(all)$
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 3$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
 
 /* Tensor order basis. No need to generate p=1. */
 minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 3$
 minCdim_Tensor : 1$
-maxCdim_Tensor : 0$
+maxCdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
 
@@ -24,7 +24,8 @@ minCdim      : [minCdim_Ser     , minCdim_Tensor     ]$
 maxCdim      : [maxCdim_Ser     , maxCdim_Tensor     ]$
 dirVars      : [x,y,z]$
 
-coeffTypeStr : ["constcoeff","varcoeff"]$
+/* Only kernels for a constant diffusion coefficient are generated. */
+coeffTypeStr : ["constcoeff"]$
 varsPerDim : [[x],[x,y],[x,y,z]]$
 
 getDirCombos(varsIn) := block([pss,ps,combos],
@@ -45,7 +46,7 @@ printf(fh, "~%")$
 for bInd : 1 thru length(bName) do (
   for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
     if (polyOrder>1) then (diffOrders : [2, 4, 6]) else (diffOrders : [2, 4]),
-    for cdim : minCdim[bInd] thru maxCdim[bInd] do (
+    for cdim : minCdim[bInd] thru maxCdim[bInd] do if not (polyOrder > 2 and (cdim = 3 or (bName[bInd] = "tensor" and cdim = 1))) then (
 
       /* Write volume kernel declaration. */
       for dO in diffOrders do (

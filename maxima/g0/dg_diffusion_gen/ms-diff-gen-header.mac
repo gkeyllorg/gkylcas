@@ -4,17 +4,19 @@
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 3$
 minDim_Ser : 2$
 maxDim_Ser : 3$
 
 /* Tensor product basis. */
 /* Note that Serendipity, p = 1, is equivalent to Tensor */
 /* Thus no need to calculate p = 1 Tensor basis */
+/* Tensor kernels are only generated in 2x: the 3x p=2 cross-term kernels are
+   ~1.8 MB each and take over a minute each to compile. */
 minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 3$
 minDim_Tensor : 2$
-maxDim_Tensor : 0$
+maxDim_Tensor : 2$
 
 gkVdims : [[1,2], [2], [2]]$
 
@@ -57,7 +59,7 @@ for bInd : 1 thru length(bName) do (
     minPolyOrderB : minPolyOrder[bInd],
     maxPolyOrderB : maxPolyOrder[bInd],
 
-    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do if not (polyOrder > 2 and c = 3) then (
       printPrototype(decorator, c, bName[bInd], polyOrder)
     )
   )
