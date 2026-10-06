@@ -41,7 +41,7 @@ for bInd : 1 thru length(bName) do (
       print("pOrder = ",pOrder),
         vStr : "",
         if (v>0) then (vStr: sconcat(v,"v")),
-        fname : sconcat("/home/akash/max-out/bc_twistshift_gyrokinetic_", bName[bInd], "_", c, "x", vStr, "_p", pOrder, ".c"),
+        fname : sconcat("~/max-out/bc_twistshift_gyrokinetic_", bName[bInd], "_", c, "x", vStr, "_p", pOrder, ".c"),
         fh : openw(fname),
   
         disp(printf(false,sconcat("Creating ~ax", vStr, "P~a ", bName[bInd]),c,pOrder)),
