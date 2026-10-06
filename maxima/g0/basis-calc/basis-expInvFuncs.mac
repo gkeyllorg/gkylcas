@@ -19,8 +19,7 @@ calcDGInverse(fh, funcNm, cdim, basisFun, polyOrder) := block([bC, NC,
 
   /* Load basis of dimensionality requested. */
   [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
-
-  NC  : length(bC),
+  NC : length(bC),
 
   /* Function declaration with input/output variables. */
   printf(fh, "GKYL_CU_DH static inline void ~%"),
@@ -34,63 +33,72 @@ calcDGInverse(fh, funcNm, cdim, basisFun, polyOrder) := block([bC, NC,
   A_inv_e : doExpand1(A_inv, bC), 
   A_inv_c : makelist(A_inv[i],i,0,NC-1),
 
-  /*........... Matrix for inverse to compute A .............*/
-  eq : calcInnerProdList(varsC,A_inv_e,bC,A_e),
-  E  : fullratsimp(coefmatrix(eq,A_inv_c)),
-  det_E : determinant(E),
-  inv_E : invert(E),
+  if (polyOrder = 0) then (
 
-  /* Eliminate the exponents as needed. */
-  subList     : [],
-  maxExponent : NC,
-  for eI : 1 thru length(A_c) do (
-    /* Maximum number of elements of A_c (e.g. A_c[0], A_c[1], ...) whose
-       powers to search for. */
+      printf(fh, "  ~a = ~a; ~%", A_inv[0], 1.0/A[0]),
+      printf(fh, "~%")
 
-    for f : 2 thru maxExponent do (
-      /* Define a separate variable. */
-      newTempVar : sconcat(string(op(A_c[eI])),args(A_c[eI])[1],"R",f),
-      lhsS : sconcat("  const double ",newTempVar),
-      det_ES : sconcat("pow(",string(A_c[eI]),",",f,");~%"),
-      printf(fh, sconcat(lhsS," = ",det_ES)),
-      /* Add to the string substitution list, used in writing file. */
-      subList : append(subList,[[sconcat(string(A_c[eI]), "^",f), sconcat(sconcat(string(op(A_c[eI])),args(A_c[eI])[1]),"R",f)]])
-    )
-  ),
-  printf(fh, "~%"),
+  ) else (
 
-  if (polyOrder = 1) then (
-    expr_det : float(radcan(expand(det_E)))
-  )
-  else (
-    expr_det : float(expand(det_E))
-  ),
-  ep_det : string(expr_det),
-  outStr_det : ssubst(subList[1][2],subList[1][1],ep_det),
-  for s : 2 thru length(subList) do (
-    outStr_det : ssubst(subList[s][2],subList[s][1],outStr_det)
-  ),
-  printf(fh, "  double det = ~a; ~%", outStr_det),
-  printf(fh, " ~%"),
-
-  unit : calcInnerProdList(varsC, 1, bC, 1.0),
-  norm_inv_E : inv_E*det_E*unit[1],
-
-  if (polyOrder = 1) then (
-    expr : float(radcan(expand(norm_inv_E)))
-  )
-  else (
-    expr : float(expand(norm_inv_E))
-  ),
-  for i : 1 thru NC do (
-
-    ep : string(expr[i,1]/det),
-
-    outStr : ssubst(subList[1][2],subList[1][1],ep),
-    for s : 2 thru length(subList) do (
-      outStr : ssubst(subList[s][2],subList[s][1],outStr)
+    /*........... Matrix for inverse to compute A .............*/
+    eq : calcInnerProdList(varsC,A_inv_e,bC,A_e),
+    E  : fullratsimp(coefmatrix(eq,A_inv_c)),
+    det_E : determinant(E),
+    inv_E : invert(E),
+  
+    /* Eliminate the exponents as needed. */
+    subList     : [],
+    maxExponent : NC,
+    for eI : 1 thru length(A_c) do (
+      /* Maximum number of elements of A_c (e.g. A_c[0], A_c[1], ...) whose
+         powers to search for. */
+  
+      for f : 2 thru maxExponent do (
+        /* Define a separate variable. */
+        newTempVar : sconcat(string(op(A_c[eI])),args(A_c[eI])[1],"R",f),
+        lhsS : sconcat("  const double ",newTempVar),
+        det_ES : sconcat("pow(",string(A_c[eI]),",",f,");~%"),
+        printf(fh, sconcat(lhsS," = ",det_ES)),
+        /* Add to the string substitution list, used in writing file. */
+        subList : append(subList,[[sconcat(string(A_c[eI]), "^",f), sconcat(sconcat(string(op(A_c[eI])),args(A_c[eI])[1]),"R",f)]])
+      )
     ),
-    printf(fh, "  ~a = ~a; ~%", A_inv[i-1], outStr)
+    printf(fh, "~%"),
+  
+    if (polyOrder = 1) then (
+      expr_det : float(radcan(expand(det_E)))
+    )
+    else (
+      expr_det : float(expand(det_E))
+    ),
+    ep_det : string(expr_det),
+    outStr_det : ssubst(subList[1][2],subList[1][1],ep_det),
+    for s : 2 thru length(subList) do (
+      outStr_det : ssubst(subList[s][2],subList[s][1],outStr_det)
+    ),
+    printf(fh, "  double det = ~a; ~%", outStr_det),
+    printf(fh, " ~%"),
+  
+    unit : calcInnerProdList(varsC, 1, bC, 1.0),
+    norm_inv_E : inv_E*det_E*unit[1],
+  
+    if (polyOrder = 1) then (
+      expr : float(radcan(expand(norm_inv_E)))
+    )
+    else (
+      expr : float(expand(norm_inv_E))
+    ),
+
+    for i : 1 thru NC do (
+
+      ep : string(expr[i,1]/det),
+
+      outStr : ssubst(subList[1][2],subList[1][1],ep),
+      for s : 2 thru length(subList) do (
+        outStr : ssubst(subList[s][2],subList[s][1],outStr)
+      ),
+      printf(fh, "  ~a = ~a; ~%", A_inv[i-1], outStr)
+    )
   ),
 
   printf(fh, "} ~%"),
