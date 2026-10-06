@@ -5,7 +5,11 @@ description: Locate gkylcas code and understand solver dependencies when explori
 
 # Instructions
 
-* Use when exploring the repository, trying to find something, or deciding where new code belongs.
+* Limit your scope to the specific directory you are asked to work in, unless a
+  dependency leads you to other directories or if there is ambiguity as to where new code should be
+  placed (in which case you can ask the user).
+* A small number of core kernels are generated using GINAC, see core/ginac,
+  which requires ginac installation, see install-deps/.
 * Operate relative to the repository root (`git rev-parse --show-toplevel`).
 
 # gkylcas file structure

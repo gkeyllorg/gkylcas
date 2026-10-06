@@ -36,6 +36,6 @@ working directory. Links inside a skill are relative to that skill's directory.
 | --- | --- |
 | Locate code or decide where it belongs | [Directory structure](.agents/skills/directory-structure/SKILL.md) |
 | Create or modify CAS scripts | [Software design](.agents/skills/software-design/SKILL.md) |
-| Create, edit, or review CAS code | [Naming conventions](.agents/skills/naming-conventions/SKILL.md) |
+| Name new or existing CAS objects | [Naming conventions](.agents/skills/naming-conventions/SKILL.md) |
 | Run CAS code | [Running CAS](.agents/skills/running-cas/SKILL.md) |
 

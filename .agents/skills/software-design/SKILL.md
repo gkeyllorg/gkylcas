@@ -5,7 +5,11 @@ description: Consider established design practices when implementing new scripts
 
 # Instructions
 
-* Load this skill whenever new scripts are to be created, or when existing ones will be edited.
+* Follow existing software design, alert user when existing files don't adhere
+  to such design, and suggest improvements to the design.
+* When working with Maxima scripts, give preference to established approaches
+  already in our codebase, but also suggest improvements based on other Maxima knowledge (for
+  example what's in the Maxima documentation https://maxima.sourceforge.io/ext/maxima.pdf).
 
 ## Software design elements
 

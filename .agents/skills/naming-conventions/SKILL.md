@@ -5,7 +5,9 @@ description: Apply gkylcas naming conventions when creating, editing, or reviewi
 
 # Instructions
 
-* Apply these naming conventions when creating, editing, or reviewing CAS code.
+* Use naming conventions seen throught our code, and those listed below.
+* If you see an existing object that doesn't follow conventions, you may ask
+  the user if you can rename it.
 
 # Naming conventions
 
