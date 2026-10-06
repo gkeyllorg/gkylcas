@@ -1,0 +1,271 @@
+/* 
+   Create kernels for the surface term of the passive advection gyrokinetic collisionless terms.
+*/
+load("modal-basis")$
+load("out-scripts")$
+load(stringproc)$
+load("scifac")$
+load("utilities_gyrokinetic")$
+load("nodal_operations/nodal_functions")$
+fpprec : 24$
+
+/* Types of boundary stencils:
+     - domain_bound: Domain boundary.
+     - interblock_bound: Interblock boundary.
+*/
+bound_surf_bc_type : ["domain_bound","interblock_bound"]$
+
+/* Boundary sidex. */
+bound_side : ["lower","upper"]$
+
+gen_gk_passive_surf_update_in_dir(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, varsInB) := block(
+  [pDim,varsC,bC,varsP,bP,vSub,surfVar,varLabel,dirLabel,
+   surfIntVars,surf_cvars,surf_vvars,surfNodes,bSurf,basisStr,NSurf,numNodes,
+   tempVars,tempBasis,NSurfIndexing,numNodesIndexing,
+   rdx2vec,rdv2vec,rdSurfVar2,bmagBasis,ignoreVars,inFlds_e,cmag_e,b_x_e,b_y_e,b_z_e,jacobTotInv_e,
+   BstarXdBmag_e,BstarYdBmag_e,BstarZdBmag_e,BstardBmag_e,
+   hamil_e,alphaSurfL_e,alphaSurfR_e,
+   fl_e,fc_e,fr_e,fUpL_e,fUpR_e,GhatL_c,GhatR_c,GhatL_e,GhatR_e,incrL_c,incrR_c,pOrderCFL,
+   fnodal_l_e, fnodal_r_e, fmodproj_e],
+
+  kill(varsC,varsP,bC,bP),
+  pDim : cdim+vdim,
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  numC : length(bC),  numP : length(bP), 
+
+  surfVar  : varsP[surfDir],         /* Surface variable. */
+  varLabel : makelist(string(varsP[d]),d,1,pDim),
+  dirLabel : varLabel[surfDir],
+
+  surfIntVars : delete(surfVar,varsP), 
+  surf_cvars  : delete(surfVar, makelist(varsP[i],i,1,cdim)),
+  surf_vvars  : delete(surfVar, makelist(varsP[cdim+i],i,1,vdim)),
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    surfNodes : gaussOrdGkHyb(1+1, surf_cvars, surf_vvars),
+    bSurf     : basisFromVars("gkhyb",surfIntVars,polyOrder),
+    basisStr  : sconcat("gkhyb_", cdim, "x", vdim, "v", "_p", polyOrder)
+  ) else (
+    surfNodes : gaussOrd(polyOrder+1, pDim-1),
+    bSurf     : basisFromVars(basisFun,surfIntVars,polyOrder),
+    basisStr  : sconcat(basisFun, "_", cdim+vdim, "x", "_p", polyOrder) 
+  ),
+  NSurf : length(bSurf),
+  numNodes  : length(surfNodes),
+  /* if polyOrder = 1 and we're doing the vpar update, we need to be careful about
+     indexing input arrays since the surface hybrid basis has a different size at the
+     vparallel surfaces */
+  if (surfDir = cdim+1 and polyOrder = 1) then (
+    tempVars         : delete(x,varsP), 
+    tempBasis        : basisFromVars("gkhyb",tempVars,polyOrder),
+    NSurfIndexing    : length(tempBasis),
+    numNodesIndexing : length(tempBasis),
+    basisNodal  : getVarsNodalBasisWithNodesHyb("gkhyb", cdim, vdim-1, surfIntVars, surfNodes)
+  ) else (
+    NSurfIndexing    : NSurf,
+    numNodesIndexing : numNodes,
+    basisNodal  : getVarsNodalBasisWithNodesHyb("gkhyb", cdim-1, vdim, surfIntVars, surfNodes)
+  ),
+
+  print("Working on ", funcNm),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+    const double *vmap_prime_l, const double *vmap_prime_c, const double *vmap_prime_r,
+    const double *flux_surf_l, const double *flux_surf_r, 
+    double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]: cell-center.~%"),
+  printf(fh, "  // dxv[NDIM]: cell length.~%"),
+  printf(fh, "  // vmap_prime_l,vmap_prime_c,vmap_prime_r: velocity space mapping derivative in left, center and right cells.~%"),
+  printf(fh, "  // flux_surf_l: Surface expansion of phase space flux on the left.~%"),
+  printf(fh, "  // flux_surf_r: Surface expansion of phase space flux on the right.~%"),
+  printf(fh, "  // out: output increment in center cell.~%"),
+  printf(fh, "~%"),
+
+  /* Declare cell spacing for evaluating surface integrals. */
+  rdx2vec : makelist(eval_string(sconcat("rd",varLabel[i],"2")),i,1,cdim),
+  rdv2vec : makelist(eval_string(sconcat("rd",varLabel[i],"2")),i,cdim+1,pDim),
+
+  rdSurfVar2 : eval_string(sconcat("rd",dirLabel,"2")),
+  printf(fh, "  double ~a = 2.0/dxv[~a];~%", rdSurfVar2, surfDir-1),
+  printf(fh, "~%"),
+
+  vmap_prime_fac_l : 1,  vmap_prime_fac_c : 1,  vmap_prime_fac_r : 1,
+  if (surfDir > cdim) then (
+    vmap_prime_fac_l : subst(vmap_prime=vmap_prime_l, vmap_prime_e[surfDir-cdim]),
+    vmap_prime_fac_c : subst(vmap_prime=vmap_prime_c, vmap_prime_e[surfDir-cdim]),
+    vmap_prime_fac_r : subst(vmap_prime=vmap_prime_r, vmap_prime_e[surfDir-cdim])
+  ),
+
+  /* Do the quad nodal to modal ops directly here*/ 
+  printf(fh, "  double GhatL[~a]= {0.0}; ~%", NSurf),
+  printf(fh, "  double GhatR[~a]= {0.0}; ~%", NSurf),
+  printf(fh, "~%"),
+  printf(fh, "  const double *fnodal_l = &flux_surf_l[~a]; ~%", NSurfIndexing*(surfDir-1)),
+  printf(fh, "  const double *fnodal_r = &flux_surf_r[~a]; ~%", NSurfIndexing*(surfDir-1)),
+  fnodal_l_e : doExpand1(fnodal_l,basisNodal),
+  fmodproj_e : fullratsimp(calcInnerProdList(surfIntVars, 1, bSurf, fnodal_l_e)),
+  for i : 1 thru length(fmodproj_e) do (
+    printf(fh, "  GhatL[~a] = ~a; ~%", i-1, float(expand(fmodproj_e[i])))
+  ),
+  fnodal_r_e : doExpand1(fnodal_r,basisNodal),
+  fmodproj_e : fullratsimp(calcInnerProdList(surfIntVars, 1, bSurf, fnodal_r_e)),
+  for i : 1 thru length(fmodproj_e) do (
+    printf(fh, "  GhatR[~a] = ~a; ~%", i-1, float(expand(fmodproj_e[i])))
+  ),
+  printf(fh, "~%"),
+
+  GhatL_e : doExpand1(GhatL, bSurf), 
+  GhatR_e : doExpand1(GhatR, bSurf), 
+
+  incrL_c : calcInnerProdList(surfIntVars, 1.0, subst(surfVar=-1, bP), GhatL_e),
+  incrR_c : calcInnerProdList(surfIntVars, -1.0, subst(surfVar=1, bP), GhatR_e),
+
+  /* Write the actual increments to the left and right cells, which are
+     built with incr, dxv factors and some sign changes. */
+  writeCIncrExprsNoExpand1(out, rdSurfVar2*(incrL_c+incrR_c)),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "  return 0.0; ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%"),
+  flush_output(fh)
+
+)$
+
+gen_gk_passive_boundary_surf_update_in_dir(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, varsInB) := block(
+  [pDim,varsC,bC,varsP,bP,vSub,surfVar,varLabel,dirLabel,
+   surfIntVars,surf_cvars,surf_vvars,surfNodes,bSurf,basisStr,NSurf,numNodes,
+   tempVars,tempBasis,NSurfIndexing,numNodesIndexing,
+   rdx2vec,rdv2vec,rdSurfVar2,bmagBasis,ignoreVars,inFlds_e,cmag_e,b_x_e,b_y_e,b_z_e,jacobTotInv_e,
+   BstarXdBmag_e,BstarYdBmag_e,BstarZdBmag_e,BstardBmag_e,
+   hamil_e,alphaUpL_e,alphaSurfL_e,alphaUpSurfL_e,alphaUpR_e,alphaSurfR_e,alphaUpSurfR_e,
+   fEdge_e,fSkin_e,fUpL_e,fUpR_e,GhatL_c,GhatR_c,GhatL_e,GhatR_e,incrL_c,incrR_c,pOrderCFL],
+
+  kill(varsC,varsP,bC,bP),
+  pDim : cdim+vdim,
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  numC : length(bC),  numP : length(bP), 
+
+  surfVar  : varsP[surfDir],         /* Surface variable. */
+  varLabel : makelist(string(varsP[d]),d,1,pDim),
+  dirLabel : varLabel[surfDir],
+
+  surfIntVars : delete(surfVar,varsP), 
+  surf_cvars  : delete(surfVar, makelist(varsP[i],i,1,cdim)),
+  surf_vvars  : delete(surfVar, makelist(varsP[cdim+i],i,1,vdim)),
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    surfNodes : gaussOrdGkHyb(1+1, surf_cvars, surf_vvars),
+    bSurf     : basisFromVars("gkhyb",surfIntVars,polyOrder),
+    basisStr  : sconcat("gkhyb_", cdim, "x", vdim, "v", "_p", polyOrder)
+  ) else (
+    surfNodes : gaussOrd(polyOrder+1, pDim-1),
+    bSurf     : basisFromVars(basisFun,surfIntVars,polyOrder),
+    basisStr  : sconcat(basisFun, "_", cdim+vdim, "x", "_p", polyOrder) 
+  ),
+  NSurf    : length(bSurf),
+  numNodes : length(surfNodes),
+
+  /* if polyOrder = 1 and we're doing the vpar update, we need to be careful about
+     indexing input arrays since the surface hybrid basis has a different size at the
+     vparallel surfaces */
+  if (surfDir = cdim+1 and polyOrder = 1) then (
+    tempVars         : delete(x,varsP), 
+    tempBasis        : basisFromVars("gkhyb",tempVars,polyOrder),
+    NSurfIndexing    : length(tempBasis),
+    numNodesIndexing : length(tempBasis),
+    basisNodal  : getVarsNodalBasisWithNodesHyb("gkhyb", cdim, vdim-1, surfIntVars, surfNodes)
+  ) else (
+    NSurfIndexing    : NSurf,
+    numNodesIndexing : numNodes,
+    basisNodal  : getVarsNodalBasisWithNodesHyb("gkhyb", cdim-1, vdim, surfIntVars, surfNodes)
+  ),
+
+  print("Working on ", funcNm),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+    const double *vmap_prime_edge, const double *vmap_prime_skin,
+    const double *flux_surf_edge, const double *flux_surf_skin, 
+    const int edge, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]: cell-center.~%"),
+  printf(fh, "  // dxv[NDIM]: cell length.~%"),
+  printf(fh, "  // vmap_prime_edge,vmap_prime_skin: velocity space mapping derivative in edge and skin cells.~%"),
+  printf(fh, "  // flux_surf_edge: Surface expansion of phase space flux on the lower edges of the edge cell.~%"),
+  printf(fh, "  // flux_surf_skin: Surface expansion of phase space flux on the lower edges of the skin cell.~%"),
+  printf(fh, "  // edge: determines if the update is for the left edge (-1) or right edge (+1).~%"),
+  printf(fh, "  // out: output increment in center cell.~%"),
+  printf(fh, "~%"),
+
+  /* Declare cell spacing for evaluating surface integrals. */
+  rdx2vec : makelist(eval_string(sconcat("rd",varLabel[i],"2")),i,1,cdim),
+  rdv2vec : makelist(eval_string(sconcat("rd",varLabel[i],"2")),i,cdim+1,pDim),
+
+  rdSurfVar2 : eval_string(sconcat("rd",dirLabel,"2")),
+  printf(fh, "  double ~a = 2.0/dxv[~a];~%", rdSurfVar2, surfDir-1),
+  printf(fh, "~%"),
+
+  vmap_prime_fac_edge : 1,  vmap_prime_fac_skin : 1,
+  if (surfDir > cdim) then (
+    vmap_prime_fac_edge : subst(vmap_prime=vmap_prime_edge, vmap_prime_e[surfDir-cdim]),
+    vmap_prime_fac_skin : subst(vmap_prime=vmap_prime_skin, vmap_prime_e[surfDir-cdim])
+  ),
+  /* When we need the surface alpha at +1, we use alpha_edge 
+     (which stores the next interior edge surface alpha at -1 and alpha is continuous)
+     When we need the surface alpha at -1, we use alpha_skin 
+     (which stores the skin cell surface alpha at -1 and alpha is continuous) */
+
+  /* Do the quad nodal to modal ops directly here*/ 
+  printf(fh, "  double GhatL[~a]= {0.0}; ~%", NSurf),
+  printf(fh, "  double GhatR[~a]= {0.0}; ~%", NSurf),
+  printf(fh, "~%"),
+  printf(fh, "  const double *fnodal_l = &flux_surf_skin[~a]; ~%", NSurfIndexing*(surfDir-1)),
+  printf(fh, "  const double *fnodal_r = &flux_surf_edge[~a]; ~%", NSurfIndexing*(surfDir-1)),
+  fnodal_l_e : doExpand1(fnodal_l,basisNodal),
+  fmodproj_e : fullratsimp(calcInnerProdList(surfIntVars, 1, bSurf, fnodal_l_e)),
+  for i : 1 thru length(fmodproj_e) do (
+    printf(fh, "  GhatL[~a] = ~a; ~%", i-1, float(expand(fmodproj_e[i])))
+  ),
+  fnodal_r_e : doExpand1(fnodal_r,basisNodal),
+  fmodproj_e : fullratsimp(calcInnerProdList(surfIntVars, 1, bSurf, fnodal_r_e)),
+  for i : 1 thru length(fmodproj_e) do (
+    printf(fh, "  GhatR[~a] = ~a; ~%", i-1, float(expand(fmodproj_e[i])))
+  ),
+  /*printf(fh, "  const double *GhatL = &flux_surf_skin[~a];~%", (surfDir-1)*NSurfIndexing),
+  printf(fh, "  const double *GhatR = &flux_surf_edge[~a];~%", (surfDir-1)*NSurfIndexing),*/
+  printf(fh, "~%"),
+
+  /* if edge == -1, we are doing the left edge boundary and the skin cell needs to be evaluated at +1 */
+  printf(fh, "  if (edge == -1) { ~%~%"),
+
+  GhatR_e : doExpand1(GhatR, bSurf), 
+
+  incrR_c : calcInnerProdList(surfIntVars, -1.0, subst(surfVar=1, bP), GhatR_e),
+
+  /* Write the actual increments to the cell, which are
+     built with incr, dxv factors and some sign changes. */
+  writeCIncrExprsNoExpand1(out, rdSurfVar2*incrR_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Otherwise, edge == 1, and we are doing the right edge boundary and the skin cell needs to be evaluated at -1 */
+  printf(fh, "  } else { ~%~%"), 
+
+  GhatL_e : doExpand1(GhatL, bSurf), 
+
+  incrL_c : calcInnerProdList(surfIntVars, 1.0, subst(surfVar=-1, bP), GhatL_e),
+
+  /* Write the actual increments to the left and right cells, which are
+     built with incr, dxv factors and some sign changes. */
+  writeCIncrExprsNoExpand1(out, rdSurfVar2*incrL_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+  printf(fh, "  } ~%~%"), 
+
+  printf(fh, "  return 0.0; ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%"),
+  flush_output(fh)
+
+)$
+

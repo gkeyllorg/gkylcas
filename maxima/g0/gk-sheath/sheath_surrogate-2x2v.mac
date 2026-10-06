@@ -1,0 +1,198 @@
+/* 
+   Gyrokinetic sheath function for 1x2v kernel.
+*/
+load("modal-basis")$
+load("out-scripts")$
+load("nodal_operations/nodal_functions")$
+load("utilities_gyrokinetic")$
+load(stringproc)$
+fpprec : 24$
+
+genGkSheathVcutCalcKer2x2v(fh, cdim, vdim, basisFun, polyOrder, useSurrogate) := block(
+  [pdim,varsC,bC,varsP,bP,vSub,NP,varsV,d,vmap_e,vmapSq_e,vmap_prime_e,surfPerpVar,VarsX,
+   bMu,bX,bXMu,VarsXMu,nodesMu,nodesX,numNodesMu,numNodesX,j,i,bNMu,bNX,edge,surfPerpVal,sI,surfVarsCmu,
+   phi_e,phiWall_e,density_e,temperature_e,bmag_e,bimpactAngle_e,vcut_e,vcut_c,
+   phi_q,phiWall_q,density_q,temperature_q,bmag_q,bimpactAngle_q,vcut,vcutX_e],
+
+  pdim : cdim+vdim,
+
+  /* Get desired basis. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NP : length(bP),
+  varsV : copylist(varsP),  for d : 1 thru cdim do (varsV : delete(varsC[d],varsV)),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  /* Get name of last config space dimension, which is always assumed to be
+     the direction parallel to the magnetic field (z). */
+  surfPerpVar : varsC[cdim],
+  VarsX : delete(surfPerpVar, varsC),  /* = x. */
+  surfVarsCmu : append(VarsX, [mu]),  /* = x,mu. */
+
+  /* Set up mu basis and perp conf + mu basis. */
+  bMu : basisFromVars("ser",[mu],polyOrder),
+  bX : basisFromVars("ser",[x],polyOrder),
+  bXMu : basisFromVars("ser",surfVarsCmu,polyOrder),
+
+  VarsXMu : append(VarsX, [mu]),  /* = x,mu. */
+  /* Set up surface nodes. */
+  nodesMu  : gaussOrdGkHyb(polyOrder+1, [], [mu]),
+  nodesX   : gaussOrdGkHyb(polyOrder+1, VarsX, []),
+
+  numNodesMu  : length(nodesMu),
+  numNodesX   : length(nodesX),
+
+  /* Get nodal basis sets. */
+  bNMu : getVarsNodalBasisWithNodesHyb("gkhyb", 0, 1, [mu], nodesMu),
+  bNX  : getVarsNodalBasisWithNodesHyb("gkhyb", length(VarsX), polyOrder, VarsX, nodesX),
+
+  /* Generate separate kernels for lower/upper boundaries. */
+  edge        : ["lower", "upper"],
+  surfPerpVal : [-1, 1],
+
+  for sI : 1 thru length(edge) do (
+    printf(fh, "~%"),
+    if useSurrogate = 1 then (
+      /* vcut kernel: takes pre-computed NN output nn_out (numNodesX*SRGRZ_N_MU values),
+        evaluates vcut at mu nodes via interpolation per x-node, projects to DG. */
+      printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_vcutsq_surr_~a_~ax~av_~a_p~a(const double *vmap, const float *nn_out, int n_out, const double *temperature, const double *bmag, double *vcutsq_out) ~%{ ~%", edge[sI], cdim, vdim, basisFun, polyOrder),
+      /* Only temperature and bmag are needed: mu_ref = T/B varies per x-node. */
+      temperature_e : subst(surfPerpVar=surfPerpVal[sI],doExpand1(temperature, bC)),
+      bmag_e        : subst(surfPerpVar=surfPerpVal[sI],doExpand1(bmag, bC)),
+      temperature_q : evAtNodes(temperature_e, nodesX, VarsX),
+      bmag_q        : evAtNodes(bmag_e, nodesX, VarsX),
+      printf(fh, "  double temp_n; ~%"),
+      printf(fh, "  double bmag_n; ~%"),
+      printf(fh, "  double mu_ref; ~%"),
+      printf(fh, "  double vthSq; ~%"),
+      printf(fh, "  double mu;~%"),
+      printf(fh, "  double vcut;~%")
+    ) else (
+      /* vcut kernel: calculates vcut using conducting sheath model (no surrogate). */
+      printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_vcutsq_const_~a_~ax~av_~a_p~a(const double *phi, const double *phi_wall, double q2Dm, double *vcutsq_out) ~%{ ~%", edge[sI], cdim, vdim, basisFun, polyOrder),
+      phi_e         : subst(surfPerpVar=surfPerpVal[sI],doExpand1(phi, bC)),
+      phiWall_e     : subst(surfPerpVar=surfPerpVal[sI],doExpand1(phi_wall, bC)),
+      deltaPhi_e : phi_e - phiWall_e,
+      deltaPhi_q : evAtNodes(deltaPhi_e, nodesX, VarsX),
+      printf(fh, "  double deltaphi_n; ~%")
+    ),
+    for i : 1 thru numNodesX do (
+      printf(fh, "  double vcutsq_n_~a[~a] = {0.}; ~%", i-1, numNodesMu)
+    ),
+    printf(fh, "~%"),
+
+    vcutX_e : makelist(0,i,1,numNodesX),
+
+    for i : 1 thru numNodesX do (
+      printf(fh, "  // node (x)_~a ~%", i-1),
+      if useSurrogate = 1 then (
+        printf(fh, "    temp_n = ~a; ~%", gcfac(float(fullratsimp(temperature_q[i])))),
+        printf(fh, "    bmag_n = ~a; ~%", gcfac(float(fullratsimp(bmag_q[i])))),
+        printf(fh, "    mu_ref = temp_n/bmag_n;~%"),
+        printf(fh, "    vthSq = temp_n/GKYL_ELECTRON_MASS;~%")
+      ) else (
+        printf(fh, "    deltaphi_n = ~a; ~%", gcfac(float(fullratsimp(deltaPhi_q[i]))))
+      ),
+      printf(fh, "~%"),
+
+      for j : 1 thru numNodesMu do (
+        printf(fh, "    // node (mu)_~a ~%", j-1),
+        if useSurrogate = 1 then (
+          mu_e : subst(mu=nodesMu[j][1], vmap_e[2]),
+          printf(fh, "      mu = ~a; ~%", float(expand(mu_e))),
+          printf(fh, "      bc_sheath_gyrokinetic_surr_interpf(nn_out+~a*n_out, nn_out+~a*n_out+n_out/2, n_out/2, &mu, 1, mu_ref, &vcut);~%", i-1, i-1),
+          printf(fh, "      vcutsq_n_~a[~a] = vcut*vcut * vthSq;~%", i-1, j-1)
+        ) else (
+          printf(fh, "      vcutsq_n_~a[~a] = -q2Dm * deltaphi_n;~%", i-1, j-1)
+        ),
+        printf(fh, "~%")
+      ),
+
+      vcutX_e[i] : doExpand(makelist(concat(vcutsq_n_, i-1)[j-1], j, 1, numNodesMu), bNMu)
+    ),
+
+    /* We project the mu expansion at each x node onto the x,mu basis. */
+    vcut_c : gcfac(fullratsimp(calcInnerProdList(VarsX, 1, bX, doExpand(vcutX_e, bNX)))),
+    vcut_e : doExpand(vcut_c, bX),
+
+    /* Project expansion onto confperp + mu basis */
+    vcut_c : gcfac(fullratsimp(calcInnerProdList(VarsXMu, 1, bXMu, vcut_e))),
+
+    /* Write coefficients. */
+    writeCExprsWithZerosNoExpand1(vcutsq_out, vcut_c),
+
+    printf(fh, "}~%")
+  )
+)$
+
+/* Generate the infer kernel for 2x2v: loops over x-nodes, evaluates NN features
+   at each node, calls gkyl_kann_net_apply, writes SRGRZ_N_MU outputs per node
+   to out[node*SRGRZ_N_MU .. (node+1)*SRGRZ_N_MU - 1]. */
+genGkSheathInputKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
+  [pdim,varsC,bC,varsP,bP,vSub,NP,varsV,vmap_e,vmapSq_e,vmap_prime_e,surfPerpVar,VarsX,
+   bX,nodesX,numNodesX,i,edge,surfPerpVal,sI,
+   phi_e,phiWall_e,density_e,temperature_e,bmag_e,bimpactAngle_e,
+   phi_q,phiWall_q,density_q,temperature_q,bmag_q,bimpactAngle_q],
+
+  pdim : cdim+vdim,
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NP : length(bP),
+  varsV : copylist(varsP),  for d : 1 thru cdim do (varsV : delete(varsC[d],varsV)),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  surfPerpVar : varsC[cdim],
+  VarsX : delete(surfPerpVar, varsC),  /* = x. */
+
+  bX    : basisFromVars("ser",[x],polyOrder),
+  nodesX    : gaussOrdGkHyb(polyOrder+1, VarsX, []),
+  numNodesX : length(nodesX),
+
+  edge        : ["lower", "upper"],
+  surfPerpVal : [-1, 1],
+
+  for sI : 1 thru length(edge) do (
+    printf(fh, "~%"),
+    /* Input kernel: constructs NN input features at the sheath surface,
+       calls gkyl_kann_net_apply, stores SRGRZ_N_MU outputs to *out. */
+    printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_build_input_~a_~ax~av_~a_p~a(const double *phi, const double *phi_wall, const double *density, const double *temperature, const double *bmag, const double *bimpact_angle, int n_inp, float *nn_inp_out) ~%{ ~%", edge[sI], cdim, vdim, basisFun, polyOrder),
+
+    phi_e         : subst(surfPerpVar=surfPerpVal[sI],doExpand1(phi, bC)),
+    phiWall_e     : subst(surfPerpVar=surfPerpVal[sI],doExpand1(phi_wall, bC)),
+    density_e     : subst(surfPerpVar=surfPerpVal[sI],doExpand1(density, bC)),
+    temperature_e : subst(surfPerpVar=surfPerpVal[sI],doExpand1(temperature, bC)),
+    bmag_e        : subst(surfPerpVar=surfPerpVal[sI],doExpand1(bmag, bC)),
+    bimpactAngle_e : doExpand1(bimpact_angle, bX),  /* bimpact_angle lives on x basis */
+
+    phi_q         : evAtNodes(phi_e,         nodesX, VarsX),
+    phiWall_q     : evAtNodes(phiWall_e,     nodesX, VarsX),
+    density_q     : evAtNodes(density_e,     nodesX, VarsX),
+    temperature_q : evAtNodes(temperature_e, nodesX, VarsX),
+    bmag_q        : evAtNodes(bmag_e,        nodesX, VarsX),
+    bimpactAngle_q : evAtNodes(bimpactAngle_e, nodesX, VarsX),
+
+    printf(fh, "  double phi_n, phi_wall_n, dens_n, temp_n, bmag_n, angle_n;~%"),
+    printf(fh, "~%"),
+
+    for i : 1 thru numNodesX do (
+      printf(fh, "  // node (x)_~a ~%", i-1),
+      printf(fh, "    phi_n      = ~a; ~%", gcfac(float(fullratsimp(phi_q[i])))),
+      printf(fh, "    phi_wall_n = ~a; ~%", gcfac(float(fullratsimp(phiWall_q[i])))),
+      printf(fh, "    dens_n     = ~a; ~%", gcfac(float(fullratsimp(density_q[i])))),
+      printf(fh, "    temp_n     = ~a; ~%", gcfac(float(fullratsimp(temperature_q[i])))),
+      printf(fh, "    bmag_n     = ~a; ~%", gcfac(float(fullratsimp(bmag_q[i])))),
+      printf(fh, "    angle_n    = ~a; ~%", gcfac(float(fullratsimp(bimpactAngle_q[i])))),
+      printf(fh, "    nn_inp_out[0+n_inp*~a] = (float)(angle_n*(180.0/GKYL_PI));~%", i-1),
+      printf(fh, "    nn_inp_out[1+n_inp*~a] = (float)((1.0/bmag_n)*sqrt(GKYL_ELECTRON_MASS*fmax(0.0, dens_n)/GKYL_EPSILON0));~%", i-1),
+      printf(fh, "    nn_inp_out[2+n_inp*~a] = (float)(fmax(0.0, (GKYL_ELEMENTARY_CHARGE*(phi_n-phi_wall_n))/temp_n));~%", i-1),
+      /* Note: In the future we can easily extend this to more parameters by adding more nn_inp_out entries, like:
+        nn_inp_out[3+n_inp*~a] = (float)(tperp/tpar);  // temperature anisotropy
+      */
+      printf(fh, "~%")
+    ),
+
+    printf(fh, "}~%")
+  )
+)$
+

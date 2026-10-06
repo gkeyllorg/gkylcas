@@ -11,7 +11,7 @@ fpprec : 24$
 genGkSheathKer1x1v(fh, cdim, vdim, basisFun, polyOrder) := block(
   [pdim,varsC,bC,varsP,bP,vSub,NP,varsV,vmap_e,vmapSq_e,vmap_prime_e,vparLo_e,vparUp_e,surfPerpVar,
    surfVars,surfVarsC,bSurf,bV,bVpar,bMu,numBsurf,zvSurfVars,nodesMu,numNodesMu,bNMu,f_e,edge,
-   surfPerpVal,sI,phiSheath_e,phiWall_e,deltaPhi_e,deltaPhi_q,vcutSq_q,fSurf_c,fSurf_e,fSurfMu_q,
+   surfPerpVal,sI,phiSheath_e,phiWall_e,deltaPhi_e,deltaPhi_q,vcutsq_q,fSurf_c,fSurf_e,fSurfMu_q,
    fReflSurfMu_e,j,nodeIdx,fSurfMu_c,fSurfMu_e,intLims,fReflSurfMu_c,
    xBar_v,xSqBar_v,fReflSurf_c,fReflSurf_e,fRefl_c], 
 
@@ -54,24 +54,13 @@ genGkSheathKer1x1v(fh, cdim, vdim, basisFun, polyOrder) := block(
   for sI : 1 thru length(edge) do (
   
     printf(fh, "~%"),
-    printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_reflectedf_~a_~ax~av_~a_p~a(const double *vmap, const double q2Dm, const double *phi, const double *phiWall, const double *f, double *fRefl) ~%{ ~%", edge[sI], cdim, vdim, basisFun, polyOrder),
-    
-    /* Calculate expansion for deltaPhi = phiSheath - phiWall, evaluated at z=zVal, 
-       where zVal=-1 or 1 depending on if we're on the left or right edge of the global domain, respectively. */
-    phiSheath_e : subst(surfPerpVar=surfPerpVal[sI],doExpand1(phi, bC)),
-    phiWall_e   : subst(surfPerpVar=surfPerpVal[sI],doExpand1(phiWall, bC)),
-    deltaPhi_e  : phiSheath_e - phiWall_e,
-    
-    /* Evaluate vcutSqQ = vcut^2. q2Dm = q*2/m. */
-    deltaPhi_q : deltaPhi_e,
-    vcutSq_q   : gcfac(float(fullratsimp(-q2Dm*deltaPhi_q))),
-    
+    printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_reflectedf_~a_~ax~av_~a_p~a(const double *vmap, const double *vcutsq, const double *f, double *fRefl) ~%{ ~%", edge[sI], cdim, vdim, basisFun, polyOrder),
+
     /* Evaluate f at the z surface. */
     fSurf_c : calcInnerProdList(surfVars, 1, bSurf, subst(surfPerpVar=surfPerpVal[sI], f_e)),
     fSurf_e : doExpand(fSurf_c, bSurf),
 
     /* Variable declarations/allocations. */
-    printf(fh, "  double vcutSq;~%"),
     printf(fh, "  double fReflSurf[~a] = {0.}; ~%", length(bV)),
     printf(fh, "~%"),
     
@@ -85,13 +74,13 @@ genGkSheathKer1x1v(fh, cdim, vdim, basisFun, polyOrder) := block(
     printf(fh, "  double vparAbsSqUp = vmap[0]>0.? vparUp*vparUp : vparLo*vparLo;~%"),
     printf(fh, "~%"),
 
-    /* Write vcut^2 at boundary. */
-    printf(fh, "  vcutSq = ~a; ~%", vcutSq_q),
+    /* vcutsq is passed as a pre-computed DG field; read the single surface value. */
+    printf(fh, "  double vcutsq_n = vcutsq[0]; ~%"),
     printf(fh, "~%"),
     
     /* If vcut^2 at this node is below all vpar^2 in this cell, BC at this node should be absorbing
        so set coefficients of fRefl to 0 (no reflection from this node). */
-    printf(fh, "  if (vcutSq <= vparAbsSqLo) { // absorb (no reflection) ~%"),
+    printf(fh, "  if (vcutsq_n <= vparAbsSqLo) { // absorb (no reflection) ~%"),
     printf(fh, "~%"),
 
     writeCExprsWithZeros1(fReflSurf, makelist(0.,j,1,length(bV))),
@@ -99,7 +88,7 @@ genGkSheathKer1x1v(fh, cdim, vdim, basisFun, polyOrder) := block(
     
     /* If vcut^2 at this node is above all vpar^2 in this cell, BC at this node should be full reflection. */
     /* So set coefficients of fRefl to coefficients of f. */
-    printf(fh, "  } else if (vcutSq > vparAbsSqUp) { // full reflection ~%"),
+    printf(fh, "  } else if (vcutsq_n > vparAbsSqUp) { // full reflection ~%"),
     printf(fh, "~%"),
 
     /* Project f onto vpar basis (bV). */
@@ -124,7 +113,7 @@ genGkSheathKer1x1v(fh, cdim, vdim, basisFun, polyOrder) := block(
 
     printf(fh, "    if (wv > 0.) {~%"),
     printf(fh, "      // vcut in logical space.~%"),
-    printf(fh, "      double vcut_l = 2.*(sqrt(vcutSq)-wv)/dv;~%"),
+    printf(fh, "      double vcut_l = 2.*(sqrt(vcutsq_n)-wv)/dv;~%"),
     printf(fh, "~%"),
 
     intLims : [[-1,vcut_l]],
@@ -135,7 +124,7 @@ genGkSheathKer1x1v(fh, cdim, vdim, basisFun, polyOrder) := block(
 
     printf(fh, "    } else {~%"),
     printf(fh, "      // vcut in logical space.~%"),
-    printf(fh, "      double vcut_l = 2.*(-sqrt(vcutSq)-wv)/dv;~%"),
+    printf(fh, "      double vcut_l = 2.*(-sqrt(vcutsq_n)-wv)/dv;~%"),
     printf(fh, "~%"),
 
     intLims : [[vcut_l,1]],

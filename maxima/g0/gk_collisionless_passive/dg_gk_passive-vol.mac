@@ -1,0 +1,144 @@
+/*
+   Create kernels for the volume term of the gyrokinetic collisionless terms.
+*/
+
+load("modal-basis")$
+load("out-scripts")$
+load(stringproc)$
+load("scifac")$
+load("utilities_gyrokinetic")$
+load("utilities")$
+fpprec : 24$
+
+gen_gk_passive_vol_kernel(fh, funcNm, cdim, vdim, basisFun, polyOrder, varsInB) := block(
+  [pDim,varsC,bC,varsP,bP,varsV,vSub,numC,numP,varLabel,d,rdx2vec,rdv2vec,allVarLabelsC,
+   bmagBasis,ignoreVars,inFlds_e,cmag_e,b_x_e,b_y_e,b_z_e,jacobTotInv_e,vmap_e,BstardBmag_e,
+   pbAuxFlds,alphaSum_e,vd,dir,dirLabel,wDir,rdDirVar2,vmap_prime_fac,dirVar,
+   dirVar_phys,alpha_e,alpha_c,alphaLabel,alphaNoZero_c,alphaDotGradBasis_e,f_e,volTerm_c,
+   alphaJf_e, Jf_e],
+
+  kill(varsC,varsP,bC,bP),
+  pDim : cdim+vdim,
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  numC : length(bC),  numP : length(bP), 
+
+  varLabel : makelist(string(varsP[d]),d,1,pDim),
+
+  print("Working on ", funcNm),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *vmap, const double *vmapSq,
+    const double q_, const double m_, const double *bmag, const double *speeds,
+    const double *dualcurlbhatoverB, const double *rtg33inv, const double *bioverJB,
+    const double *fin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]: cell-center.~%"),
+  printf(fh, "  // dxv[NDIM]: cell length.~%"),
+  printf(fh, "  // vmap: velocity space mapping.~%"),
+  printf(fh, "  // vmapSq: velocity space mapping squared.~%"),
+  printf(fh, "  // q_,m_: species charge and mass.~%"),
+  printf(fh, "  // bmag: magnetic field amplitude.~%"),
+  printf(fh, "  // speeds: passive advection speeds.~%"),
+  printf(fh, "  // fin: Distribution function.~%"),
+  printf(fh, "  // out: output increment.~%"),
+  printf(fh, "~%"),
+
+  /* Declare cell-center variables and variables multiplying gradients. */
+  for d : 1 thru pDim do (
+    printf(fh, "  double rd~a2 = 2.0/dxv[~a];~%", varLabel[d], d-1)
+  ),
+  printf(fh, "~%"),
+  rdx2vec : makelist(eval_string(sconcat("rd",varLabel[i],"2")),i,1,cdim),
+  rdv2vec : makelist(eval_string(sconcat("rd",varLabel[i],"2")),i,cdim+1,pDim),
+
+  /* Declare variables with squared of cell centers and rdx2 variables (only need vpar^2). */
+  printf(fh, "  double rdvpar2Sq = rdvpar2*rdvpar2;~%"),
+  printf(fh, "  double dvparSq = dxv[~a]*dxv[~a];~%", cdim, cdim),
+  printf(fh, "~%"),
+  replaceList : [rdvpar2^2=rdvpar2Sq,dxv[cdim]^2=dvparSq,rdvpar2Sq=4/dvparSq],
+  dvparSimp : append(makelist(dxv[i-1]=2/eval_string(sconcat("rd",varLabel[i],"2")),i,1,pDim),
+                     [dvparSq=4/rdvpar2Sq]),
+
+  /* Create pointers to the components of b_i. */
+  allVarLabelsC : ["x","y","z"],
+  for d : 1 thru 3 do (
+    printf(fh, "  const double *bioverJB_~a = &bioverJB[~a]; ~%", allVarLabelsC[d], numC*(d-1))
+  ),
+  printf(fh, "~%"),
+
+  /* Create pointers to the components of dualcurlbhatoverB. */
+  allVarLabelsC : ["x","y","z"],
+  for d : 1 thru 3 do (
+    printf(fh, "  const double *dualcurlbhatoverB_~a = &dualcurlbhatoverB[~a]; ~%", allVarLabelsC[d], numC*(d-1))
+  ),
+  printf(fh, "~%"),
+
+  /* Axisymmetric basis (independent of y). */
+  bmagBasis : getAxisymmetricConfBasis(bC),
+  bmag_e : doExpand1(bmag, bmagBasis),
+  dualcurlbhatoverB_x_e : doExpand1(dualcurlbhatoverB_x, bmagBasis),
+  dualcurlbhatoverB_y_e : doExpand1(dualcurlbhatoverB_y, bmagBasis),
+  dualcurlbhatoverB_z_e : doExpand1(dualcurlbhatoverB_z, bmagBasis),
+  rtg33inv_e : doExpand1(rtg33inv, bmagBasis),
+  bioverJB_x_e : doExpand1(bioverJB_x, bmagBasis),
+  bioverJB_y_e : doExpand1(bioverJB_y, bmagBasis),
+  bioverJB_z_e : doExpand1(bioverJB_z, bmagBasis),
+
+  dualcurlbhatoverB_list : [dualcurlbhatoverB_x_e, dualcurlbhatoverB_y_e, dualcurlbhatoverB_z_e],
+  bioverJB_list : [bioverJB_x_e, bioverJB_y_e, bioverJB_z_e],
+
+  /* Velocity mapping fields. */
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  /* Redefine vmap_prime to exploit the relationship between it and vmap. */
+  vmap_prime_e : makelist(diff(vmap_e[d],varsP[cdim+d]),d,1,vdim),
+
+  /*Expand Jf*/
+  Jf_e : doExpand1(fin,bP),
+
+  /* Calculate expressions for dericatives of the hamiltonian*/
+  vpardim : pDim-1,
+  if vdim = 1 then ( vpardim : pDim ),
+
+  /* Note: no contribution from vpar or mu. */
+  for dir : 1 thru cdim do (
+
+    dirLabel : varLabel[dir],
+
+    wDir      : eval_string(sconcat("w",dirLabel)),
+    rdDirVar2 : eval_string(sconcat("rd",dirLabel,"2")),
+  
+    dirVar    : varsP[dir],         /* Variable in current direction. */
+
+    speed_c   : makelist(speeds[(dir-1)*numC+i-1],i,1,numC),
+    speed_e   : doExpand(speed_c,bC),
+
+    alpha_e : speed_e*rdx2vec[dir],
+
+    /* Project alpha on basis and write to array. */
+    printf(fh, "  double alpha~a[~a] = {0.}; ~%", dirLabel, numP),
+    alpha_c : fullratsimp(calcInnerProdList(varsP, 1, bP, alpha_e)),
+    alpha_c : subst(replaceList, alpha_c),
+    alpha_c : subst(dvparSimp, alpha_c),
+    alphaLabel : eval_string(sconcat(alpha, dirLabel)),
+    clst : [rdx2vec, rdv2vec, m_, q_, wvpar, rdvpar2Sq,
+            makelist(dxv[i-1],i,1,pDim), makelist(vmap[i-1],i,1,2*length(vmap_e[1]))],
+    writeCExprsCollect1(alphaLabel, alpha_c, clst),
+    printf(fh, "~%"),
+    flush_output(fh),
+    alphaNoZero_c : makelistNoZeros1(alpha_c, alphaLabel),
+    alpha_e       : doExpand(alphaNoZero_c, bP),
+
+    alphaJf_e : alpha_e*Jf_e,
+
+    printf(fh, "~%"),
+    volTerm_c : fullratsimp(calcInnerProdList(varsP, 1, diff(bP,varsP[dir]), alphaJf_e)),
+    volTerm_c : subst(replaceList, volTerm_c),
+    writeCIncrExprsNoExpand(gcfac(float(expand(volTerm_c)))),
+    flush_output(fh),
+    printf(fh, "~%")
+
+  ),
+
+  printf(fh, "  return 0.; ~%"),
+  printf(fh, "} ~%")
+
+)$
