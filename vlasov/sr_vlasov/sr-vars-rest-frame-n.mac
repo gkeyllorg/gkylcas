@@ -13,9 +13,9 @@
     9. Construct Gamma_inv = sqrt(1 - |V_drift_lobatto|^2). 
     10. Return n = Gamma_inv*M0 with weak multiplication. */
 
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/nodal_functions")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
 load(stringproc)$
 fpprec : 24$
 

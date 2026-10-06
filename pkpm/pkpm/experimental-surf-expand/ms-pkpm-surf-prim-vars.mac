@@ -1,4 +1,4 @@
-load("pkpm/pkpm-surf-prim-vars")$
+load("pkpm/pkpm/experimental-surf-expand/pkpm-surf-prim-vars.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the *surface* primitive 
    variables required to update the PKPM system. Surface primitive variables include:

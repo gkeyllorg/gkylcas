@@ -1,5 +1,5 @@
-load("modal-basis")$
-load("basis-precalc/basisSer1x")$
+load("core/modal-basis.mac")$
+load("core/basis-precalc/basisSer1x.lisp")$
 bC : basisC[1]$
 eta(xc,dx,b) := subst(x=(z-xc)/(dx/2), b)$
 pL : eta(-1/2,1,bC)$
@@ -18,7 +18,7 @@ hsol : makelist(S[i][1], i, 1, 2*N)$
 h1d : subst(makelist(hn[i]=hsol[i+1],i,0,length(hsol)-1), h)$
 
 kill(basisC)$
-load("basis-precalc/basisSer2x")$
+load("core/basis-precalc/basisSer2x.lisp")$
 bC2 : basisC[1]$
 fh : doExpand(f, bC2)$
 hcoeff : calcInnerProdList([x], 1, bC, fh)$
@@ -28,4 +28,3 @@ fRs : subst(makelist(f[i]=FR[i],i,length(bC2)), hcoeff)$
 hsol2 : subst(append(makelist(fL[i]=fLs[i], i, 1, N), makelist(fR[i]=fRs[i], i, 1, N)), hsol)$
 
 h2d : sum(hsol2[i]*x^(i-1), i, 1, 2*N)$
-

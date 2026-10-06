@@ -1,8 +1,8 @@
-load("modal-basis")$
-load("out-scripts");
-load("nodal_operations/nodal_functions")$
-load("recovery")$
-load("utilities")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/recovery.mac")$
+load("util_maxima/utilities.mac")$
 load(stringproc)$
 fpprec : 24$
 
@@ -200,4 +200,3 @@ calcVmLBODragUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := bl
 
   printf(fh, "} ~%")
 );
-

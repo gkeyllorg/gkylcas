@@ -3,8 +3,8 @@
 
   The functions called in this file are in gkFuncs-alpha-surf.mac.
 */
-load("gk_collisionless/gk_collisionless_flux-surf-conf")$
-load("gk_collisionless/gk_collisionless_flux-surf-vpar")$
+load("gyrokinetic/gk_collisionless/gk_collisionless_flux-surf-conf.mac")$
+load("gyrokinetic/gk_collisionless/gk_collisionless_flux-surf-vpar.mac")$
 
 /* ...... USER INPUTS........ */
 

@@ -1,5 +1,5 @@
 /* Create header file for perpendicular Helmholtz/Poisson solver. */
-load("bvp_utilities/bvp-util")$
+load("moments/bvp_utilities/bvp-util.mac")$
 
 /* ...... USER INPUTS........ */
 
@@ -71,7 +71,7 @@ findCombos(fhIn, funcTypeStr, funcNameStr, funcArgsStr, basisFun, dim, polyOrder
 
   dimPerp : dim-1,
 
-  load(sconcat("basis-precalc/basis", basisFun, dim, "x")),
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x", ".lisp")),
 
   /* Associative list between stencil location (-1,0,1) and variable
      strings used in kernel names. */
@@ -145,7 +145,7 @@ findStencilCombosInUpOnly(fhIn, funcTypeStr, funcNameStr, funcArgsStr, basisFun,
 
   dimPerp : dim-1,
 
-  load(sconcat("basis-precalc/basis", basisFun, dim, "x")),
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x", ".lisp")),
 
   /* Associative list between stencil location (-1,0,1) and variable
      strings used in kernel names. */

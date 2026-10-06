@@ -3,11 +3,11 @@
 
   *hamil* is assumed to be written in canonical coordinates
 */
-load("out-scripts")$
+load("util_maxima/out-scripts.mac")$
 load("vect")$
-load("nodal_operations/nodal_functions")$
-load("nodal_operations/quadrature_functions")$
-load("utilities")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("util_maxima/utilities.mac")$
 
 /* Helper functions for expanding in basis functions a quantity we know should be sparse  */
 doMakeExprLst(vals, S)  := makelist(if vals[i] # 0 then S[i-1] else 0, i, 1, length(vals))$

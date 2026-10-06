@@ -1,4 +1,4 @@
-load("lbo_gyrokinetic/gkLBOFuncs-diff-surf")$
+load("gyrokinetic/lbo_gyrokinetic/gkLBOFuncs-diff-surf.mac")$
 load(stringproc)$
 
 /* This script calls the functions which calculate the
@@ -67,5 +67,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 );
-
-

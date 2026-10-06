@@ -1,4 +1,4 @@
-load("maxwell/em-div-b")$
+load("vlasov/maxwell/em-div-b.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating div(b) and the max(|b_i|) penalization.
 

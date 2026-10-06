@@ -1,8 +1,8 @@
 /* Compute the cartesian components of
 bmag unit vector using dual vectors. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 

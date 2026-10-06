@@ -5,7 +5,7 @@
 
   The functions called in this file are in canonicalFuncs-surf.mac.
 */
-load("canonical_pb/canonicalFuncs-surf")$
+load("vlasov/canonical_pb/canonicalFuncs-surf.mac")$
 ratprint: false;
 
 /* ...... USER INPUTS........ */

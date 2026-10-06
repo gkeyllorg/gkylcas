@@ -1,7 +1,7 @@
 /* Generate kernels for the TwistShift operation. */
 
 load(stringproc)$
-load("twistShift-calc/twistShiftFuncs.mac")$
+load("gyrokinetic/twist_shift_calc/twistShiftFuncs.mac")$
 
 /* ...... USER INPUTS........ */
 
@@ -83,4 +83,3 @@ for bInd : 1 thru length(bName) do (
   
   
 )$
-

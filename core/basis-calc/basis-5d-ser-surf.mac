@@ -1,4 +1,4 @@
-load("modal-basis");
+load("core/modal-basis.mac");
 fpprec : 24$
 
 writeExprs(fh, rhs) := block([expr],

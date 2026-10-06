@@ -1,7 +1,7 @@
 /* Generate CX cross section (vSigmaCX) kernels for charge
    exchange operator */
 
-load("charge_exchange/sigma-cx-calc.mac");
+load("gyrokinetic/charge_exchange/sigma-cx-calc.mac");
 load(stringproc)$
 fpprec : 24$
 

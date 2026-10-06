@@ -9,13 +9,13 @@
    basis and then projecting the nodal basis onto our modal basis. 
 */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
-load("nodal_operations/quadrature_functions")$
-load("utilities_gyrokinetic")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
 fpprec : 24$
 
 buildGKRadNuKernel(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(

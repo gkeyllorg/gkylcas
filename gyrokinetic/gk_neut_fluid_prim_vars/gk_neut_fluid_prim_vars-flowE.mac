@@ -1,11 +1,11 @@
 /* This script generates the kernels for calculating the flow energy
    using weak division. */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 /* Special set of kernels which analytically invert the matrix for 1/rho 
@@ -184,4 +184,3 @@ gk_neut_fluid_prim_vars_flowE_get_sol(fh, funcNm, cdim, basisFun, polyOrder) := 
   printf(fh, "} ~%"),
   printf(fh, " ~%")
 )$
-

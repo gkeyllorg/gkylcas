@@ -5,7 +5,7 @@
    For the accumulation, generate two sets of kernels, one with 
    parallelization over components and one without. */
 
-load("bin_op/binOp-mul-cross")$
+load("core/bin_op/binOp-mul-cross.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

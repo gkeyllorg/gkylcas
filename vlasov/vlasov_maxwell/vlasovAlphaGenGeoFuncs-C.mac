@@ -1,11 +1,11 @@
 /* Compute the surface expansion of v^i = v . e^i for use in
    surface fluxes of general geometry neutrals. */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("vlasov/vlasovUtil")$
+load("vlasov/vlasov_maxwell/vlasovUtil.mac")$
 fpprec : 24$
 
 dvdx : [dv0dx0, dv1dx1, dv2dx2]$

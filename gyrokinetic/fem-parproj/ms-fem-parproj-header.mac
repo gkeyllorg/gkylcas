@@ -1,5 +1,5 @@
 /* Create the header file for the fem_parproj kernels. */
-load("bvp_utilities/bvp-util")$
+load("moments/bvp_utilities/bvp-util.mac")$
 
 /* ...... USER INPUTS........ */
 
@@ -74,7 +74,7 @@ findCombos(fhIn, funcTypeStr, funcNameStr, funcArgsStr, basisFun, dim, polyOrder
        inloOnly: differentiate between upper and other locations in the grid (=true), or between lower, interior and upper (=false).
   */
 
-  load(sconcat("basis-precalc/basis", basisFun, dim, "x")),
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x", ".lisp")),
 
   /* Associative list between stencil location (-1,0,1) and variable
      strings used in kernel names. */

@@ -2,7 +2,7 @@
   Generate kernels for an updater that forces the skin
   surface to match the corresponding ghost surface.
 */
-load("skin_surf_from_ghost/ssfg.mac")$
+load("core/skin_surf_from_ghost/ssfg.mac")$
 
 /* ...... USER INPUTS........ */
 

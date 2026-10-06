@@ -1,10 +1,10 @@
 /* This script generates the kernels for the surface term of the advection equation df/dt + div(uf) = 0 */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 cvars : [x, y, z]$
@@ -17,7 +17,7 @@ calcAdvection1xUpdateInDir(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
 
   kill(varsC, basisC),
 
-  load(sconcat("basis-precalc/basis", basisFun, cdim, "x")),
+  load(sconcat("core/basis-precalc/basis", basisFun, cdim, "x", ".lisp")),
 
   bC : basisC[polyOrder],
   NC : length(bC),
@@ -95,7 +95,7 @@ calcAdvectionUpdateInDir(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
 
   kill(varsC, basisC),
 
-  load(sconcat("basis-precalc/basis", basisFun, cdim, "x")),
+  load(sconcat("core/basis-precalc/basis", basisFun, cdim, "x", ".lisp")),
 
   bC : basisC[polyOrder],
   NC : length(bC),

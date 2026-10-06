@@ -1,4 +1,4 @@
-load("advection/advectionFuncs-vol-C")$
+load("vlasov/advection/advectionFuncs-vol-C.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the volume term due to an advection equation. */

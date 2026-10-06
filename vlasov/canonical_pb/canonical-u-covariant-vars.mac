@@ -2,8 +2,8 @@
    the covariant components of u either from M1i (Jnu^i) or u^i
 */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
 fpprec : 24$

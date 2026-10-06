@@ -1,4 +1,4 @@
-load("gk_neut_fluid_prim_vars/gk_neut_fluid_prim_vars-flowE")$
+load("gyrokinetic/gk_neut_fluid_prim_vars/gk_neut_fluid_prim_vars-flowE.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the flow 
    energy using weak division. */

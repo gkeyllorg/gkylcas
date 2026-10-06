@@ -22,9 +22,9 @@ bName        : ["Ser", "Tensor"]$
 minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
 maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
 
-load("gk-sheath/g2/sheath-1x1v");
-load("gk-sheath/g2/sheath-1x2v");
-load("gk-sheath/g2/sheath-3x2v");
+load("gyrokinetic/gk-sheath/g2/sheath-1x1v.mac");
+load("gyrokinetic/gk-sheath/g2/sheath-1x2v.mac");
+load("gyrokinetic/gk-sheath/g2/sheath-3x2v.mac");
 
 /* Create the sheath kernels. */
 for bInd : 1 thru length(bName) do (

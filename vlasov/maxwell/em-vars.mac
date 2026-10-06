@@ -11,9 +11,9 @@
     3. Copy the solution and perform remaining operations. Note for computing b from bb, we use: 
     basis_sqrt_with_sign (obtain expansion of sqrt(A^2) for a DG field A, keeping the sign of A) */
 
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/nodal_functions")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
 load(stringproc)$
 fpprec : 24$
 

@@ -1,5 +1,5 @@
-load("basis-precalc/basisSer2x")$
-load("modal-basis")$
+load("core/basis-precalc/basisSer2x.lisp")$
+load("core/modal-basis.mac")$
 
 bc3 : basisC[3]$
 nodes : [ [-1,-1], [-1,1], [1,-1], [1,1] ]$

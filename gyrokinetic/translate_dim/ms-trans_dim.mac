@@ -18,7 +18,7 @@
  * When down projecting, we create kernels for evaluating
  * the removed direction at -1,0 or 1).
  */
-load("translate_dim/trans_dim.mac")$
+load("gyrokinetic/translate_dim/trans_dim.mac")$
 
 /* ...... USER INPUTS........ */
 

@@ -1,4 +1,4 @@
-load("nodal_operations/quadrature_functions")$
+load("core/nodal_operations/quadrature_functions.mac")$
 
 /* Location of Serendipity nodes in logical [-1,1]^d space,
    with d the number of dimensions.

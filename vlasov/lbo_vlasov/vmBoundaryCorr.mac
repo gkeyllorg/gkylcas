@@ -3,8 +3,8 @@
    This is used to correct u and vtSq in the primMoments updater. */
 
 /* IMPORTANT: p=1 code below assumes vMin is negative and vMax positive. */
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 
@@ -115,5 +115,3 @@ calcBoundaryIntegral(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "} ~%"),
   printf(fh, " ~%")
 )$
-
-

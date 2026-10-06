@@ -1,7 +1,7 @@
 /* Create kernels to calculate derived geometric quantities from the
    metric coefficients and magnetic field strength. This is specialized
    to numerical geometry (tokamaks or mirrors) where J is already known*/
-load("derived_geo_calculation/calc-rz-derived_geo.mac")$
+load("gyrokinetic/derived_geo_calculation/calc-rz-derived_geo.mac")$
 load(stringproc)$
 
 

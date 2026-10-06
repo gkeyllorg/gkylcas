@@ -1,7 +1,7 @@
 /* Compute the volume term for scalar advection equation df/dt + div(u f) = 0. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 
@@ -12,7 +12,7 @@ calcAdvectionVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
 
   kill(varsC, basisC),
 
-  load(sconcat("basis-precalc/basis", basisFun, cdim, "x")),
+  load(sconcat("core/basis-precalc/basis", basisFun, cdim, "x", ".lisp")),
 
   printf(fh, "#include <gkyl_advection_kernels.h> ~%"),
 

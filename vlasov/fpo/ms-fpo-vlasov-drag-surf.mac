@@ -1,4 +1,4 @@
-load("fpo/funcs-fpo-vlasov-drag-surf-1x3v")$
+load("vlasov/fpo/funcs-fpo-vlasov-drag-surf-1x3v.mac")$
 load(stringproc)$
 
 /* This script calls the functions which calculate the
@@ -74,5 +74,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 );
-
-

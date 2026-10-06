@@ -4,10 +4,10 @@
 /* To avoid the expensive algebraic matrix inversion in
    Maxima we use a linear solver (openBLAS or cuBLAS) to solve the system. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 
 fpprec : 24$
 
@@ -143,5 +143,3 @@ calcBinOpConfDivide(fh, funcNm, cdim, basisFun, polyOrder) := block(
 
   printf(fh, "} ~%")
 )$
-
-

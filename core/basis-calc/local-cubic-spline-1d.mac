@@ -1,7 +1,7 @@
 /* Constructing local cubic spline basis */
 
-load("basis-precalc/basisSer1x")$
-load("modal-basis")$
+load("core/basis-precalc/basisSer1x.lisp")$
+load("core/modal-basis.mac")$
 
 mkCubic(a) := a[0] + sum(a[i]*x^i,i,1,3)$
 

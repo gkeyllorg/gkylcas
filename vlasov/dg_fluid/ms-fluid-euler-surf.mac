@@ -1,4 +1,4 @@
-load("dg_fluid/fluid-euler-surf")$
+load("vlasov/dg_fluid/fluid-euler-surf.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the surface term due to Euler's equations. */

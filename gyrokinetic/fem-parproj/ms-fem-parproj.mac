@@ -5,13 +5,13 @@
    wish to find, and rho is the RHS discontinuous DG field. */
 
 load(stringproc)$
-load("fem-parproj/fem-parproj-num_nodes")$
-load("fem-parproj/fem-parproj-local_to_global")$
-load("fem-parproj/fem-parproj-lhs_stencil")$
-load("fem-parproj/fem-parproj-src_stencil")$
-load("fem-parproj/fem-parproj-sol_stencil")$
-load("fem-parproj/fem-parproj-bias_lhs")$
-load("fem-parproj/fem-parproj-bias_src")$
+load("gyrokinetic/fem-parproj/fem-parproj-num_nodes.mac")$
+load("gyrokinetic/fem-parproj/fem-parproj-local_to_global.mac")$
+load("gyrokinetic/fem-parproj/fem-parproj-lhs_stencil.mac")$
+load("gyrokinetic/fem-parproj/fem-parproj-src_stencil.mac")$
+load("gyrokinetic/fem-parproj/fem-parproj-sol_stencil.mac")$
+load("gyrokinetic/fem-parproj/fem-parproj-bias_lhs.mac")$
+load("gyrokinetic/fem-parproj/fem-parproj-bias_src.mac")$
 
 /* ...... USER INPUTS........ */
 

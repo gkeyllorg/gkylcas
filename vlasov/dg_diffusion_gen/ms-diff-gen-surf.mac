@@ -1,8 +1,8 @@
-load("dg_diffusion_gen/diff-gen-surfx-2x")$
-load("dg_diffusion_gen/diff-gen-surfy-2x")$
-load("dg_diffusion_gen/diff-gen-surfx-3x")$
-load("dg_diffusion_gen/diff-gen-surfy-3x")$
-load("dg_diffusion_gen/diff-gen-surfz-3x")$
+load("vlasov/dg_diffusion_gen/diff-gen-surfx-2x.mac")$
+load("vlasov/dg_diffusion_gen/diff-gen-surfy-2x.mac")$
+load("vlasov/dg_diffusion_gen/diff-gen-surfx-3x.mac")$
+load("vlasov/dg_diffusion_gen/diff-gen-surfy-3x.mac")$
+load("vlasov/dg_diffusion_gen/diff-gen-surfz-3x.mac")$
 load(stringproc)$
 
 /* Generate general diffusion x surface kernels. */
@@ -43,4 +43,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 )$
-

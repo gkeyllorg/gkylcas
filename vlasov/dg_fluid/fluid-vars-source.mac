@@ -3,8 +3,8 @@
    Note: these kernels are only used for neutral fluids where there is some specified external
    force (such as external gravity). For fluid-em coupling, see fluid-vars-implicit-source.mac. */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 calcEulerSource(fh, funcNm, cdim, basisFun, polyOrder) := block(

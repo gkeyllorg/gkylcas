@@ -4,7 +4,7 @@
 
   The functions called in this file are in fluid-canonical-source.mac.
 */
-load("canonical_pb/fluid-canonical-source")$
+load("vlasov/canonical_pb/fluid-canonical-source.mac")$
 ratprint: false;
 
 /* ...... USER INPUTS........ */

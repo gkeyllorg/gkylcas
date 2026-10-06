@@ -18,8 +18,8 @@
  * When down projecting, we create kernels for evaluating
  * the removed direction at -1,0 or 1).
 */
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 fpprec : 24$
 
 gen_trans_dim_kernel(fh, funcNm, cdim_do, basisFun, polyOrder_do) := block(

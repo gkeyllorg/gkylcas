@@ -1,4 +1,4 @@
-load("lbo_prim_moments_vlasov/VmCrossPrimMomsLBO")$
+load("vlasov/lbo_prim_moments_vlasov/VmCrossPrimMomsLBO.mac")$
 
 load(stringproc)$
 
@@ -61,5 +61,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 );
-
-

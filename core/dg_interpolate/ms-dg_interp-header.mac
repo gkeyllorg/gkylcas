@@ -3,7 +3,7 @@
   a DG field from one grid to another (dimensionality of the grids is
   the same, only resolution varies).
 */
-load("modal-basis")$
+load("core/modal-basis.mac")$
 
 /* ...... USER INPUTS........ */
 

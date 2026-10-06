@@ -7,11 +7,11 @@
    2. We are using limiters, which need u to construct the correct slopes
       of the stress tensor S_ij = P_ij + rho u_i u_j */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 /* Special set of kernels which analytically invert the matrix for 1/rho 

@@ -1,4 +1,4 @@
-load("basis-calc/basis-expSqFuncs")$
+load("core/basis-calc/basis-expSqFuncs.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
     DG expansion of A^2 where A is a DG field */

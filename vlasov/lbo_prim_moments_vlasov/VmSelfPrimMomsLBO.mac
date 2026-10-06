@@ -5,9 +5,9 @@
    Note that this Maxima only sets the requisite matrices for the linear
    system to solve and an external *batched* linear solve is performed. */
 
-load("modal-basis")$
-load("out-scripts")$
-load("nodal_operations/nodal_functions")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
 load(stringproc)$
 fpprec : 24$
 
@@ -245,5 +245,3 @@ calcSelfPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "} ~%"),
   printf(fh, " ~%")
 )$
-
-

@@ -1,6 +1,6 @@
-load("modal-basis")$
-load("recovery")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("core/recovery.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 genDGdiffVlasovKernelSurf(fh, funcNm, cdim, vdim, basisType, polyOrder, dir, diffOrder) := block(

@@ -1,8 +1,8 @@
 /* Functions (called by moment-calc.mac) that compute the
    moments of the distribution function in Vlasov model. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 
@@ -28,7 +28,7 @@ dvTrans : [vx*dv1/2, vy*dv2/2, vz*dv3/2]$
 
 calcFPOVolumeCorrection(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block([],
   kill(varsC, varsP, basisC, basisP),
-  modNm : sconcat("basis-precalc/basis", basisFun, cdim, "x", vdim, "v"),
+  modNm : sconcat("core/basis-precalc/basis", basisFun, cdim, "x", vdim, "v", ".lisp"),
   load(modNm),
   bP : basisP[polyOrder],
   bC : basisC[polyOrder],

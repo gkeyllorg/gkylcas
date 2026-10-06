@@ -1,4 +1,4 @@
-load("maxwell/em-vars")$
+load("vlasov/maxwell/em-vars.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the various 
    derived quantities from the electromagnetic fields including:

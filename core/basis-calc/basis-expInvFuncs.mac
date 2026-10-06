@@ -4,8 +4,8 @@
    Since the weak division is simpler (rhs is just 1),
    analytically invert the matrix and write the resulting kernels. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 

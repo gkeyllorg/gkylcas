@@ -2,10 +2,10 @@
 moments that differ from their Vlasov counterparts for the can-pb
 model. */
 
-load("modal-basis");
-load("out-scripts");
-load("utilities")$
-load("canonical_pb/canonicalUtils.mac")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
+load("vlasov/canonical_pb/canonicalUtils.mac")$
 load(stringproc)$
 fpprec : 24$
 

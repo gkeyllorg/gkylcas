@@ -1,6 +1,6 @@
 kill(all) $
-load("recovery") $
-load ("modal-basis") $
+load("core/recovery.mac") $
+load ("core/modal-basis.mac") $
 load(stringproc)$
 
 minPolyOrder : 1 $
@@ -32,7 +32,7 @@ writeF(recov, dirFace, derDir, numDer, vars, bas, nm, fh) := block(
   ) $
 
 for polyOrder : minPolyOrder thru maxPolyOrder do (
-  load(sconcat("basis-precalc/basisSer1x3v")),
+  load(sconcat("core/basis-precalc/basisSer1x3v", ".lisp")),
   ba : basisP[polyOrder],
   numBasis : length(ba),
   

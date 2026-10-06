@@ -1,11 +1,11 @@
 /* Generate kernels that take the upwinded f at quadrature nodes,
    and does a nodal-to-modal transformation to yield the DG
    coefficients of the upwinded f. */
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 /* ...... USER INPUTS........ */

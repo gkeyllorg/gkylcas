@@ -1,9 +1,9 @@
 /* 
    Gyrokinetic sheath function for 3x2v kernel.
 */
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/nodal_functions")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
 load(stringproc)$
 fpprec : 24$
 
@@ -207,4 +207,3 @@ calcGkSheathFuncs3x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
   writeCExprsWithZerosNoExpand1(fRefl, fRefl_c),
   printf(fh, "}~%")
 )$
-

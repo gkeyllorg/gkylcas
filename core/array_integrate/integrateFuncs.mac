@@ -2,8 +2,8 @@
  * Operators applied inside the integral of the array_integrate updater. 
  *
  */
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 fpprec : 24$
 
 arrayIntegrate_none(fh, funcNm, dim, basisFun, polyOrder) := block(

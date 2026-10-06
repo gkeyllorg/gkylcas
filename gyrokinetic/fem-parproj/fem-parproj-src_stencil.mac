@@ -4,11 +4,11 @@
    where T is a modal-to-nodal operation and rho is the source.
 */
 
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/nodal_functions");
-load("bvp_utilities/bvp-util");
-load("fem/fem-util");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac");
+load("moments/bvp_utilities/bvp-util.mac");
+load("moments/fem/fem-util.mac");
 fpprec : 24$
 
 generate_fem_parproj_src_stencil(fh, funcNm, dim, basisFun, pMin, pMax, isweighted) := block(

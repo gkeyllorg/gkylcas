@@ -2,11 +2,11 @@
 
    div(b) is computed with averaging to ensure phase space incompressibility in the weak sense. */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 cvars : [x, y, z]$
 

@@ -1,4 +1,4 @@
-load("lbo_gyrokinetic/gkLBOFuncs-drag-surf")$
+load("gyrokinetic/lbo_gyrokinetic/gkLBOFuncs-drag-surf.mac")$
 load(stringproc)$
 
 /* This script calls the functions which calculate the

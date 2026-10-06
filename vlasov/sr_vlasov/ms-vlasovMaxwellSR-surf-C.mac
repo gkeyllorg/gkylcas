@@ -1,4 +1,4 @@
-load("sr_vlasov/vlasovMaxwellSRFuncs-surf-C")$
+load("vlasov/sr_vlasov/vlasovMaxwellSRFuncs-surf-C.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the surface term for the v . grad(f) and

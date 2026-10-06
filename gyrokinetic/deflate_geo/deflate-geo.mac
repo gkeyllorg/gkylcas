@@ -1,6 +1,6 @@
-load("modal-basis")$
+load("core/modal-basis.mac")$
 load(stringproc)$
-load("out-scripts")$
+load("util_maxima/out-scripts.mac")$
 
 /* These kernels take 3d DG fields (intended to be geometric quantities
 and deflate them to either 1d or 2d DG fields.

@@ -1,5 +1,5 @@
-load("modal-basis")$
-load("basis-precalc/basisSer1x")$
+load("core/modal-basis.mac")$
+load("core/basis-precalc/basisSer1x.lisp")$
 bC : basisC[1]$
 N : length(bC)$
 
@@ -20,4 +20,3 @@ S : fullratsimp(invert(A) . RHS)$
 hsol : makelist(S[i][1], i, 1, 2*N)$
 
 h0 : hsol[1][1]$
-

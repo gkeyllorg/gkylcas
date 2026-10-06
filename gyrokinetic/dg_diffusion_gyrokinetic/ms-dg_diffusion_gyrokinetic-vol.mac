@@ -1,5 +1,5 @@
 kill(all)$
-load("dg_diffusion_gyrokinetic/diffFuncs-gyrokinetic-vol")$
+load("gyrokinetic/dg_diffusion_gyrokinetic/diffFuncs-gyrokinetic-vol.mac")$
 
 /* Generate kernels for a diffusion volume term. It only computes the CFL frequency.
    Supports diffusion types: D_i*d^n f/dx_i^n (summation implied) for n=2,4,6.

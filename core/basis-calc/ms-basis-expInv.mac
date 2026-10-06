@@ -1,4 +1,4 @@
-load("basis-calc/basis-expInvFuncs")$
+load("core/basis-calc/basis-expInvFuncs.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
     DG expansion of 1/A where A is a DG field */

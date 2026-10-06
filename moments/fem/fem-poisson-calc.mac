@@ -5,8 +5,8 @@
    finite element method (FEM). */
 
 load(stringproc)$
-load("fem/fem-num_nodes")$
-load("fem/fem-local_to_global")$
+load("moments/fem-poisson/fem-poisson-num_nodes.mac")$
+load("moments/fem-poisson/fem-poisson-local_to_global.mac")$
 /*
 load("fem-calc/femNonzeroEntries")$
 */
@@ -71,4 +71,3 @@ for bInd : 1 thru length(bName) do (
   
   
 )$
-

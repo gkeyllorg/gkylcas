@@ -5,10 +5,10 @@
    NOTE: kernels expect phi and A to be scaled by appropriate factors
    i.e., q/m for plasmas, and G*m for self-gravitation systems. */
 
-load("modal-basis")$
-load("utilities")$
-load("out-scripts")$
-load("utilities")$
+load("core/modal-basis.mac")$
+load("util_maxima/utilities.mac")$
+load("util_maxima/out-scripts.mac")$
+load("util_maxima/utilities.mac")$
 load(stringproc)$
 fpprec : 24$
 

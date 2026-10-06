@@ -2,8 +2,8 @@
    Limiter is a characteristic limiter that computes the waves and 
    limits the slopes based on the characteristic variables. */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 calcEulerLimiter(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(

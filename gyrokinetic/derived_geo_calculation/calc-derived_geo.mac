@@ -1,8 +1,8 @@
-load("modal-basis")$
-load("recovery")$
-load("nodal_operations/nodal_functions")$
+load("core/modal-basis.mac")$
+load("core/recovery.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
 load(stringproc)$
-load("out-scripts")$
+load("util_maxima/out-scripts.mac")$
 
 /* Taking DG fields g_ij and |B| as inputs, this kernel will calculate the other
 geometric quantities such as J = det(g_ij)) and b_i = g_iz/sqrt(g_zz)
@@ -16,7 +16,7 @@ calcDerivedGeo(fh, ndim,basisName, polyOrder) := block(
   evNodes : getNodes(basisName, ndim, polyOrder),
   numCoeffs : length(evNodes),
 
-  load(sconcat("basis-precalc/basis", basisName, ndim, "x")),
+  load(sconcat("core/basis-precalc/basis", basisName, ndim, "x", ".lisp")),
   [vars,basis] : [varsC, basisC[polyOrder]],
 
   N2M : calcNodToModWithNodes(basisName, ndim, polyOrder, evNodes),
@@ -313,7 +313,7 @@ calcDerivedGeo_quad(fh, ndim,basisName, polyOrder) := block(
   evNodes : apply('matrix,getQuadNodes(3,polyOrder)),
   numCoeffs : length(evNodes),
 
-  load(sconcat("basis-precalc/basis", basisName, ndim, "x")),
+  load(sconcat("core/basis-precalc/basis", basisName, ndim, "x", ".lisp")),
   [vars,basis] : [varsC, basisC[polyOrder]],
 
   N2M : calcNodToModWithNodes(basisName, ndim, polyOrder, evNodes),

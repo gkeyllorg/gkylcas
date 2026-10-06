@@ -1,5 +1,5 @@
 kill(all)$
-load("dg_diffusion_vlasov/diffFuncs-vlasov-vol")$
+load("vlasov/dg_diffusion_vlasov/diffFuncs-vlasov-vol.mac")$
 
 /* Generate kernels for a vlasov diffusion volume term. It only computes the CFL frequency.
    Supports diffusion types: d^(n/2)(D_i*d^(n/2)(f)/dx_i^(n/2))/dx_i^(n/2)

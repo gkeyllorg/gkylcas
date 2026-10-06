@@ -6,7 +6,7 @@
 
   The functions called in this file are in fluid-canonical-funcs-surf.mac.
 */
-load("canonical_pb/fluid-canonical-funcs-surf")$
+load("vlasov/canonical_pb/fluid-canonical-funcs-surf.mac")$
 ratprint: false;
 
 /* ...... USER INPUTS........ */

@@ -1,4 +1,4 @@
-load("euler/eulerIso-diff-surf")$
+load("vlasov/euler/eulerIso-diff-surf.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

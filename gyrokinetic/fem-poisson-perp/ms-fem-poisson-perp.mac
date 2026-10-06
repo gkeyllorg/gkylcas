@@ -6,13 +6,13 @@
    Poisson equation (kSq=0). */
 
 load(stringproc)$
-load("fem-poisson-perp/fem-poisson-perp-num_nodes")$
-load("fem-poisson-perp/fem-poisson-perp-local_to_global")$
-load("fem-poisson-perp/fem-poisson-perp-lhs_stencil")$
-load("fem-poisson-perp/fem-poisson-perp-src_stencil")$
-load("fem-poisson-perp/fem-poisson-perp-sol_stencil")$
-load("fem-poisson-perp/fem-poisson-perp-bias_lhs")$
-load("fem-poisson-perp/fem-poisson-perp-bias_src")$
+load("gyrokinetic/fem-poisson-perp/fem-poisson-perp-num_nodes.mac")$
+load("gyrokinetic/fem-poisson-perp/fem-poisson-perp-local_to_global.mac")$
+load("gyrokinetic/fem-poisson-perp/fem-poisson-perp-lhs_stencil.mac")$
+load("gyrokinetic/fem-poisson-perp/fem-poisson-perp-src_stencil.mac")$
+load("gyrokinetic/fem-poisson-perp/fem-poisson-perp-sol_stencil.mac")$
+load("gyrokinetic/fem-poisson-perp/fem-poisson-perp-bias_lhs.mac")$
+load("gyrokinetic/fem-poisson-perp/fem-poisson-perp-bias_src.mac")$
 
 /* ...... USER INPUTS........ */
 

@@ -1,6 +1,6 @@
-load("modal-basis")$
+load("core/modal-basis.mac")$
 load(stringproc)$
-load("out-scripts")$
+load("util_maxima/out-scripts.mac")$
 
 /* Taking a 2d or 3d DG field as an input, these kernels will
 deflate the field onto a surface of constant "z" (the last coordinate)

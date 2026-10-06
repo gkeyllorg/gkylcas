@@ -4,9 +4,9 @@
     These quantities are derived from the grid and must be continuous, 
     so they are projected onto basis functions using Gauss-Lobatto nodes. */
 
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/nodal_functions")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
 load(stringproc)$
 fpprec : 24$
 
@@ -96,4 +96,3 @@ calcLorentz(fh, funcNm, vdim, basisFun, polyOrder) := block(
 
   printf(fh, "} ~%")
 )$  
-

@@ -1,7 +1,7 @@
 /* Generate kernels for the dg_interpolate updater
    which interpolates a DG field from one grid to another. */
 
-load("dg_interpolate/dg_interp.mac")$
+load("core/dg_interpolate/dg_interp.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */
@@ -101,4 +101,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 )$
-

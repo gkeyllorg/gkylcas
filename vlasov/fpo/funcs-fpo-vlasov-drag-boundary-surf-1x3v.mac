@@ -1,8 +1,8 @@
-load("modal-basis")$
-load("out-scripts");
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
-load("nodal_operations/nodal_functions")$
-load("recovery")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/recovery.mac")$
 
 fpprec : 24$
 
@@ -22,7 +22,7 @@ calcBoundaryDragUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, is
   if (basisFun="tensor") then basisFun:"Tensor",
   kill(varsC, varsP, basisC, basisP),
   /* Load basis of dimensionality requested. */
-  load(sconcat("basis-precalc/basis", basisFun, cdim, "x", vdim, "v")),
+  load(sconcat("core/basis-precalc/basis", basisFun, cdim, "x", vdim, "v", ".lisp")),
   pDim : cdim+vdim,
   /* Variables. */
   vid  : vidx(cdim,vdim),
@@ -238,5 +238,3 @@ calcBoundaryDragUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, is
   printf(fh, "  } ~%"),
   printf(fh, "} ~%")
 );
-
-

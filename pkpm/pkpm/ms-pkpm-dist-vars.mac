@@ -1,4 +1,4 @@
-load("pkpm/pkpm-dist-vars")$
+load("pkpm/pkpm/pkpm-dist-vars.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the pkpm distribution function variables including:
    1. Compute div(p_par b) from the streaming term div(v_par b F_0) for a consistent pressure force which

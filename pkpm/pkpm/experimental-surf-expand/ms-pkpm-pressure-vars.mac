@@ -1,4 +1,4 @@
-load("pkpm/pkpm-pressure-vars")$
+load("pkpm/pkpm/pkpm-pressure-vars.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the
    pressure tensor p_ij = (p_par - p_perp) b_i b_j + p_perp g_ij via weak multiplication.

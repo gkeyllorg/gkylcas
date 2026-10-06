@@ -1,6 +1,6 @@
 /* Create kernels to deflate 3D DG fields
 (geometric quantities) into lower dimensions. */
-load("deflate_geo/deflate-geo.mac")$
+load("gyrokinetic/deflate_geo/deflate-geo.mac")$
 load(stringproc)$
 
 

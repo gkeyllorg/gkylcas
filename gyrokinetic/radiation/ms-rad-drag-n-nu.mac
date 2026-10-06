@@ -3,7 +3,7 @@
 
   The functions called in this file are in radFuncs-drag-n-nu.mac.
 */
-load("radiation/radFuncs-drag-n-nu")$
+load("gyrokinetic/radiation/radFuncs-drag-n-nu.mac")$
 
 /* ...... USER INPUTS........ */
 

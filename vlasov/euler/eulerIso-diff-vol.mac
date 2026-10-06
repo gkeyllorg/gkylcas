@@ -1,5 +1,5 @@
-load("modal-basis")$
-load("recovery")$
+load("core/modal-basis.mac")$
+load("core/recovery.mac")$
 load(stringproc)$
 
 lhs : [outrho, outrhou0, outrhou1, outrhou2]$

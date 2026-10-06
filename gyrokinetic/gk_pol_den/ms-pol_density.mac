@@ -3,7 +3,7 @@
    calculation with a single inner product / volume term (no integration by parts or
    recovery. It's presently only meant for ICs. */
 
-load("gk_pol_den/pol_density")$
+load("gyrokinetic/gk_pol_den/pol_density.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

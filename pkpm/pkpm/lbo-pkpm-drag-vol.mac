@@ -1,9 +1,9 @@
 /* This script generates the kernels for the volume drag term
    contribution from Lenard Bernstein operator. */
 
-load("modal-basis")$
-load("out-scripts");
-load("utilities");
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac");
 load(stringproc)$
 fpprec : 24$
 
@@ -91,5 +91,3 @@ calcVlasovPKPMLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := 
   printf(fh, "~%"),
   printf(fh, "} ~%")
 );
-
-

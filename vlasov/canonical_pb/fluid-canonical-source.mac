@@ -6,12 +6,12 @@
    (vorticity in Hasegawa-Mima and Hasegawa-Wakatani)
 */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("canonical_pb/canonicalUtils")$
-load("utilities")$
+load("vlasov/canonical_pb/canonicalUtils.mac")$
+load("util_maxima/utilities.mac")$
 fpprec : 24$
 
 buildFluidCanonicalPBSourceHasegawaMimaKernel(fh, funcNm, cdim, basisFun, polyOrder) := block(
@@ -120,4 +120,4 @@ buildFluidCanonicalPBSubtractZonalKernel(fh, funcNm, cdim, basisFun, polyOrder) 
 
   printf(fh, "} ~%"),
   flush_output(fh)
-);  
+);

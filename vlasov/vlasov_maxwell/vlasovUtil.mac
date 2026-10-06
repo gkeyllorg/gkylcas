@@ -19,9 +19,9 @@
         +------+------+
            alpha_surf
 */
-load("nodal_operations/nodal_functions")$
-load("nodal_operations/quadrature_functions")$
-load("utilities")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("util_maxima/utilities.mac")$
 
 /* Determine the upwinded distribution function in Vlasov */
 calcAndWrite_VlasovfUpwind(file_handle,surfDir,surfVar,surfIntVars,bSurf,NSurf,fl_e,fr_e,basisStr,sideStr,gen_geo) := block(

@@ -1,4 +1,4 @@
-load("sr_vlasov/SRGammaFuncs")$
+load("vlasov/sr_vlasov/SRGammaFuncs.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate various 
    quantities related to the Lorentz boost factor, including

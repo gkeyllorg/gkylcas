@@ -1,6 +1,6 @@
-load("modal-basis")$
-load("out-scripts")$
-load("utilities_gyrokinetic")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
 
 writeCIncrExprsNoExpand1atomicadd(lhs, rhs) := block([expr],
   expr : float(rhs),

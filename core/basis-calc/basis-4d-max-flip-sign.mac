@@ -1,5 +1,5 @@
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 fpprec : 24$
 
 var : [z1, z2, z3, z4]$

@@ -1,5 +1,5 @@
 kill(all)$
-load("gk_anomalous_diff/gk_anom_diff-surf.mac")$
+load("gyrokinetic/gk_anomalous_diff/gk_anom_diff-surf.mac")$
 
 /* ...... USER INPUTS........ */
 

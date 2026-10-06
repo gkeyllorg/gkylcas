@@ -1,7 +1,7 @@
 /* Generate kernels that compute the moments of the gyrocenter distribution function
    for use by the gyrokinetic solver. */
 
-load("moments/gkMomentsFuncs")$
+load("gyrokinetic/gk_moments/gkMomentsFuncs.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

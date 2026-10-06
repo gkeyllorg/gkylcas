@@ -1,5 +1,5 @@
 kill(all)$
-load("gk_anomalous_diff/gk_anom_diff-vol.mac")$
+load("gyrokinetic/gk_anomalous_diff/gk_anom_diff-vol.mac")$
 
 /* Generate kernels for the anomalous diffusion volume term. */
 

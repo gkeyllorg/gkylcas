@@ -1,4 +1,4 @@
-load("sr_vlasov/sr-vars-pressure")$
+load("vlasov/sr_vlasov/sr-vars-pressure.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the rest frame pressure = n*T
    in the special relativistic Vlasov-Maxwell system of equations. */

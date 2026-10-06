@@ -1,10 +1,10 @@
 /* Generate kernels that perform weak multiplication of two
    fields, say if C = A*B where A, B, and C are DG fields. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 
 fpprec : 24$
 

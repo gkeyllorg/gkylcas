@@ -1,5 +1,5 @@
 /* Code to work with modal basis functions */
-load("utilities")$
+load("util_maxima/utilities.mac")$
 
 /* In the following "vars" is the list of independent variables */
 
@@ -280,9 +280,9 @@ loadBasis(basisType, dim, pOrder) := block(
 
   kill(varsC, varsP, basisC, basisP),
   if (dim < 4) then (
-    load(sconcat("basis-precalc/basis", btype, dim, "x"))
+    load(sconcat("core/basis-precalc/basis", btype, dim, "x", ".lisp"))
   ) else (
-    load(sconcat("basis-precalc/basis", btype, dim-3, "x", 3, "v"))
+    load(sconcat("core/basis-precalc/basis", btype, dim-3, "x", 3, "v", ".lisp"))
   ),
 
   
@@ -309,20 +309,20 @@ loadPhaseBasis(basisType, cdim, vdim, pOrder) := block(
   if vdim>0 then (
     if cdim>0 then (
       if pOrder = 1 and btype = "Ser" then /* Forcing p=1 to hybrid. */
-        modNm : sconcat("basis-precalc/basisHybrid", cdim, "x", vdim, "v")
+        modNm : sconcat("core/basis-precalc/basisHybrid", cdim, "x", vdim, "v", ".lisp")
       else
-        modNm : sconcat("basis-precalc/basis", btype, cdim, "x", vdim, "v")
+        modNm : sconcat("core/basis-precalc/basis", btype, cdim, "x", vdim, "v", ".lisp")
     ) else (
       if btype = "Tensor" then 
-        modNm : sconcat("basis-precalc/basisTensor", vdim, "x")
+        modNm : sconcat("core/basis-precalc/basisTensor", vdim, "x", ".lisp")
       else
-        modNm : sconcat("basis-precalc/basisSer", vdim, "x")
+        modNm : sconcat("core/basis-precalc/basisSer", vdim, "x", ".lisp")
     )
   ) else (
     if btype = "Tensor" then 
-      modNm : sconcat("basis-precalc/basisTensor", cdim, "x")
+      modNm : sconcat("core/basis-precalc/basisTensor", cdim, "x", ".lisp")
     else
-      modNm : sconcat("basis-precalc/basisSer", cdim, "x")
+      modNm : sconcat("core/basis-precalc/basisSer", cdim, "x", ".lisp")
   ),
   load(modNm),
 
@@ -361,24 +361,24 @@ loadGkBasis(basisType, cdim, vdim, pOrder) := block(
         /* MF 2022/07/15: In principle we could make GK use Hybrid instead
            of GkHybrid. Consider that later (which would require changes further
            down in this function and in many other parts/files. */
-        modNm : sconcat("basis-precalc/basisGkHybrid", cdim, "x", vdim, "v")
+        modNm : sconcat("core/basis-precalc/basisGkHybrid", cdim, "x", vdim, "v", ".lisp")
       else
-        modNm : sconcat("basis-precalc/basis", btype, cdim, "x", vdim, "v")
+        modNm : sconcat("core/basis-precalc/basis", btype, cdim, "x", vdim, "v", ".lisp")
     ) else (
       if ((btype = "GkHybrid") or (pOrder = 1 and btype = "Ser")) then (
-        modNm : sconcat("basis-precalc/basisGkHybridVel", vdim, "v")
+        modNm : sconcat("core/basis-precalc/basisGkHybridVel", vdim, "v", ".lisp")
       ) else (
         if btype = "Tensor" then
-          modNm : sconcat("basis-precalc/basisTensor", vdim, "x")
+          modNm : sconcat("core/basis-precalc/basisTensor", vdim, "x", ".lisp")
         else
-          modNm : sconcat("basis-precalc/basisSer", vdim, "x")
+          modNm : sconcat("core/basis-precalc/basisSer", vdim, "x", ".lisp")
       )
     )
   ) else (
     if btype = "tensor" then
-      modNm : sconcat("basis-precalc/basisTensor", cdim, "x")
+      modNm : sconcat("core/basis-precalc/basisTensor", cdim, "x", ".lisp")
     else
-      modNm : sconcat("basis-precalc/basisSer", cdim, "x")
+      modNm : sconcat("core/basis-precalc/basisSer", cdim, "x", ".lisp")
   ),
   load(modNm),
 
@@ -448,20 +448,20 @@ loadGkHybBasisFromVars(varsIn) := block(
 
   if hasvpar then (
     if cdim=0 then (
-      load(sconcat("basis-precalc/basisGkHybridVel",vdim,"v")),
+      load(sconcat("core/basis-precalc/basisGkHybridVel",vdim,"v", ".lisp")),
       basis : subst([vx=vpar,vy=mu],basisV[1]),
       vars  : subst([vx=vpar,vy=mu],varsV)
     ) else (
       if vdim=1 then (
-        load(sconcat("basis-precalc/basisHybrid",cdim,"x",vdim,"v"))
+        load(sconcat("core/basis-precalc/basisHybrid",cdim,"x",vdim,"v", ".lisp"))
       ) elseif vdim=2 then (
-        load(sconcat("basis-precalc/basisGkHybrid",cdim,"x",vdim,"v"))
+        load(sconcat("core/basis-precalc/basisGkHybrid",cdim,"x",vdim,"v", ".lisp"))
       ),
       basis : subst([vx=vpar,vy=mu],basisP[1]),  vars : subst([vx=vpar,vy=mu],varsP)
     )
   ) else (
     if cdim=0 then (
-      load(sconcat("basis-precalc/basisSer", 1, "x")),
+      load(sconcat("core/basis-precalc/basisSer", 1, "x", ".lisp")),
       basis : subst(x=mu,basisC[1]),  vars : subst(x=mu,varsC)
     ) else (
       [vars, basis] : loadBasis("ser", cdim+vdim, 1),
@@ -512,11 +512,11 @@ basisFromVars(basisType, varsIn, pOrder) := block(
        and one has p=2 (vpar) while the other p=1 (mu). Sort this out. */
     [vars, basis] : loadGkHybBasisFromVars(varsIn)
   ) elseif dimIn > 3 then (
-    load(sconcat("basis-precalc/basis", btype, dimIn-3, "x", 3, "v")),
+    load(sconcat("core/basis-precalc/basis", btype, dimIn-3, "x", 3, "v", ".lisp")),
     basis : basisP[pOrder],
     vars  : varsP
   ) elseif dimIn > 0 then (
-    load(sconcat("basis-precalc/basis", btype, dimIn, "x")),
+    load(sconcat("core/basis-precalc/basis", btype, dimIn, "x", ".lisp")),
     basis : basisC[pOrder],
     vars  : varsC
   ) else (

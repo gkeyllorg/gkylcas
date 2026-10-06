@@ -1,6 +1,6 @@
-load("modal-basis")$
-load("out-scripts");
-load("utilities")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
 load(stringproc)$
 
 fpprec : 24$
@@ -20,7 +20,7 @@ calcVmLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block([]
   /* Load basis of dimensionality requested. */
   if (basisFun="ser") then basisFun:"Ser",
   if (basisFun="tensor") then basisFun:"Tensor",
-  modNm : sconcat("basis-precalc/basis", basisFun, cdim, "x", vdim, "v"),
+  modNm : sconcat("core/basis-precalc/basis", basisFun, cdim, "x", vdim, "v", ".lisp"),
   load(modNm),
   /* Polynomial basis and its derivatives. */
   bP : basisP[polyOrder],
@@ -91,5 +91,3 @@ calcVmLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block([]
   printf(fh, "~%"),
   printf(fh, "} ~%")
 );
-
-

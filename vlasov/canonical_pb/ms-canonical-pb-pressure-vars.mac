@@ -1,4 +1,4 @@
-load("canonical_pb/canonical-pressure-vars")$
+load("vlasov/canonical_pb/canonical-pressure-vars.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the
    scalar pressure (times dimension, d, and volume element, Jv)  

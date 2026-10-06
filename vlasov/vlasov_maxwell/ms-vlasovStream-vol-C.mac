@@ -1,4 +1,4 @@
-load("vlasov_maxwell/vlasovStreamFuncs-vol-C")$
+load("vlasov/vlasov_maxwell/vlasovStreamFuncs-vol-C.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the volume term due to the streaming

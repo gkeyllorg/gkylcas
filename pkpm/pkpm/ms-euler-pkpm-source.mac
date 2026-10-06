@@ -1,4 +1,4 @@
-load("pkpm/euler-pkpm-source")$
+load("pkpm/pkpm/euler-pkpm-source.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    source terms for the Euler equations in the 

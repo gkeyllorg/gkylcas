@@ -1,6 +1,6 @@
 cdim : 1$
 
-load("modal-basis")$
+load("core/modal-basis.mac")$
 [varsC,bC] : loadBasis("Tensor", cdim, 1)$
 [varsC,bC_p2] : loadBasis("Tensor", cdim, 2)$
 NC : length(bC)$

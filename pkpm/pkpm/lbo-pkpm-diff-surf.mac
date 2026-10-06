@@ -1,9 +1,9 @@
 /* This script generates the kernels for the surface term
    diffusion contribution from Lenard Bernstein operator. */
 
-load("modal-basis")$
-load("out-scripts");
-load("recovery")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("core/recovery.mac")$
 load(stringproc)$
 fpprec : 24$
 
@@ -97,5 +97,3 @@ calcVlasovPKPMLBODiffSurfUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) :=
 
   printf(fh, "} ~%")
 );
-
-

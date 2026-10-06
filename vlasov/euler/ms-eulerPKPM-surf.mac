@@ -1,4 +1,4 @@
-load("euler/eulerPKPMFuncs-surf")$
+load("vlasov/euler/eulerPKPMFuncs-surf.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the surface term due to an euler equation

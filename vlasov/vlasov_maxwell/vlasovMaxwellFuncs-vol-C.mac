@@ -1,9 +1,9 @@
 /* This script generates the kernels for the volume term contribution from 
    the Vlasov equation (full EM, both streaming and acceleration) */
 
-load("modal-basis");
-load("out-scripts");
-load("utilities")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
 load ("scifac")$
 load(stringproc)$
 fpprec : 24$

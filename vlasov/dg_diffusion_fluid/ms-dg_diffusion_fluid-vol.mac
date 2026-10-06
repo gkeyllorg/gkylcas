@@ -1,5 +1,5 @@
 kill(all)$
-load("dg_diffusion_fluid/diffFuncs-fluid-vol")$
+load("vlasov/dg_diffusion_fluid/diffFuncs-fluid-vol.mac")$
 
 /* Generate kernels for a fluid diffusion volume term. It only computes the CFL frequency.
    Supports diffusion types: D_i*d^n f/dx_i^n (summation implied) for n=2,4,6.

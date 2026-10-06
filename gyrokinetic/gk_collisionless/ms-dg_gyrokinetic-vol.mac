@@ -3,7 +3,7 @@
 
   The functions called in this file are in gkFuncs-vol.mac.
 */
-load("gk_collisionless/dg_gk-vol")$
+load("gyrokinetic/gk_collisionless/dg_gk-vol.mac")$
 
 /* ...... USER INPUTS........ */
 

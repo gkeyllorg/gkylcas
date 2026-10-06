@@ -1,4 +1,4 @@
-load("dg_fluid/fluid-vars-implicit-source")$
+load("vlasov/dg_fluid/fluid-vars-implicit-source.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for the source terms in the
    fluid equations of different fluid models: isothermal Euler, Euler/5 moment, and 10 moment

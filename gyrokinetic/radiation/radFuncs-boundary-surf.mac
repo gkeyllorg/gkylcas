@@ -2,9 +2,9 @@
    Create kernels for the boundary surface term of the radiation drag operator.
 */
 
-load("modal-basis")$
-load("out-scripts");
-load("utilities_gyrokinetic")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("gyrokinetic/utilities_gyrokinetic.mac")$
 load(stringproc)$
 fpprec : 24$
 

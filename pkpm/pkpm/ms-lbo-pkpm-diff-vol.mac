@@ -1,6 +1,6 @@
 /* This script calls the functions which calculate the
    updates from the diff portion of the volume contributions. */
-load("pkpm/lbo-pkpm-diff-vol")$
+load("pkpm/pkpm/lbo-pkpm-diff-vol.mac")$
 
 /* ...... USER INPUTS........ */
 
@@ -40,5 +40,3 @@ for bInd : 1 thru length(bName) do (
     ) 
   )
 );
-
-

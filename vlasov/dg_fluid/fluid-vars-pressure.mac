@@ -3,8 +3,8 @@
    Isothermal Euler -> p = vth*rho 
    Euler -> p = (gas_gamma - 1)*(E - 1/2 rho u^2)*/
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
 fpprec : 24$

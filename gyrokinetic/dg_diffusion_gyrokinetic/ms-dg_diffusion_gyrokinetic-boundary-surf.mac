@@ -1,5 +1,5 @@
 kill(all)$
-load("dg_diffusion_gyrokinetic/diffFuncs-gyrokinetic-boundary-surf")$
+load("gyrokinetic/dg_diffusion_gyrokinetic/diffFuncs-gyrokinetic-boundary-surf.mac")$
 
 /* ...... USER INPUTS........ */
 

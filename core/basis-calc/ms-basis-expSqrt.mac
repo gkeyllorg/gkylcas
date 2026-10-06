@@ -1,4 +1,4 @@
-load("basis-calc/basis-expSqrtFuncs")$
+load("core/basis-calc/basis-expSqrtFuncs.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
     DG expansion of sqrt(A) where A is a DG field

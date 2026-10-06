@@ -1,4 +1,4 @@
-load("pkpm/pkpm-io-vars")$
+load("pkpm/pkpm/pkpm-io-vars.mac")$
 load(stringproc)$
 /* This script calls the functions which construct the output fluid arrays for PKPM, including the conserved fluid variables: 
    [rho, rho ux, rho uy, rho uz, Pxx + rho ux^2, Pxy + rho ux uy, Pxz + rho ux uz, Pyy + rho uy^2, Pyz + rho uy uz, Pzz + rho uz^2]  

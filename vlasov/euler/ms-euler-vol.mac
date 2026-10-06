@@ -1,4 +1,4 @@
-load("euler/eulerFuncs-vol")$
+load("vlasov/euler/eulerFuncs-vol.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the volume term due to an euler equation. */

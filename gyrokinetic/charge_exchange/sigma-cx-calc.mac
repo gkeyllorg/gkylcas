@@ -1,8 +1,8 @@
 /* Generate CX cross section (vSigmaCX) kernels for charge
    exchange operator */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 

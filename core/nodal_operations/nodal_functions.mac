@@ -1,13 +1,13 @@
 /* Functions to work with nodes and nodal expansions,
    and to interface modal algorithms with nodal ones. */
-load("nodal_operations/node_locations")$
-load("modal-basis")$
-load("out-scripts")$
+load("core/nodal_operations/node_locations.mac")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 fpprec : 24$
 load("eigen")$
 load("scifac")$
-load("utilities")$
+load("util_maxima/utilities.mac")$
 
 /* Given a set of an expression and a set of nodes, evaluate the expression at the nodes.
    Must also provide the variables of the functional space exprIn is defined in. */
@@ -47,11 +47,11 @@ calcBasisNodToModWithNodesAndBasis(nodes, modalBasis, vars) := block(
 calcBasisNodToModWithNodes(basisType, dim, p, nodes) := block(
   [basis, vars, basisNodToMod, varsC, varsP, basisC, basisP, basisConstant],
   if (dim < 4) then (
-    load(sconcat("basis-precalc/basis", basisType, dim, "x")),
+    load(sconcat("core/basis-precalc/basis", basisType, dim, "x", ".lisp")),
     basis : basisC[p],
     vars  : varsC
   ) else (
-    load(sconcat("basis-precalc/basis", basisType, dim-3, "x3v")),
+    load(sconcat("core/basis-precalc/basis", basisType, dim-3, "x3v", ".lisp")),
     basis : basisP[p],
     vars  : varsP
   ),
@@ -179,11 +179,11 @@ getNodalBasisWithNodesAndBasis(nodes, modalBasis, vars) := block(
 getNodalBasisWithNodes(basisType, dim, p, nodes) := block(
   [varsC,basisC,varsP,basisP,basisConstant,basis,vars,nodalBasis],
   if (dim < 4) then (
-    load(sconcat("basis-precalc/basis", basisType, dim, "x")),
+    load(sconcat("core/basis-precalc/basis", basisType, dim, "x", ".lisp")),
     basis : basisC[p],
     vars  : varsC
   ) else (
-    load(sconcat("basis-precalc/basis", basisType, dim-3, "x3v")),
+    load(sconcat("core/basis-precalc/basis", basisType, dim-3, "x3v", ".lisp")),
     basis : basisP[p],
     vars  : varsP
   ),
@@ -196,11 +196,11 @@ getVarsNodalBasisWithNodes(basisType, dim, p, varsIn, nodes) := block(
   [varsC,basisC,varsP,basisP,basisConstant,basis,vars,replaceList,nodalBasis],
   dimIn : length(varsIn),
   if (dim < 4) then (
-    load(sconcat("basis-precalc/basis", basisType, dim, "x")),
+    load(sconcat("core/basis-precalc/basis", basisType, dim, "x", ".lisp")),
     basis : basisC[p],
     vars  : varsC
   ) else (
-    load(sconcat("basis-precalc/basis", basisType, dim-3, "x3v")),
+    load(sconcat("core/basis-precalc/basis", basisType, dim-3, "x3v", ".lisp")),
     basis : basisP[p],
     vars  : varsP
   ),
@@ -216,15 +216,15 @@ getVarsNodalBasisWithNodesHyb(basisType, cdim, vdim, varsIn, nodes) := block(
   [varsC,basisC,varsP,basisP,basisConstant,dimIn,basis,vars,replaceList,nodalBasis],
   dimIn : length(varsIn),
   if vdim=0 then (
-    load(sconcat("basis-precalc/basisSer", cdim, "x")),
+    load(sconcat("core/basis-precalc/basisSer", cdim, "x", ".lisp")),
     basis : basisC[1],  vars : varsC
   ) else (
     if basisType="hyb" then (
       if cdim=0 then (
-        load(sconcat("basis-precalc/basisTensor", vdim, "x")),
+        load(sconcat("core/basis-precalc/basisTensor", vdim, "x", ".lisp")),
         basis : subst([x=vx,y=vy,z=vz],basisC[2]),  vars : subst([x=vx,y=vy,z=vz],varsC)
       ) else (
-        load(sconcat("basis-precalc/basisTensorHybrid", cdim, "x", vdim, "v")),
+        load(sconcat("core/basis-precalc/basisTensorHybrid", cdim, "x", vdim, "v", ".lisp")),
         basis : basisP[1],  vars : varsP
       )
     ) elseif (basisType="gkhyb" or basisType="gkhyb_vel") then (
@@ -245,4 +245,3 @@ getNodalBasis(basisType, dim, p) := block(
   nodalBasis : getNodalBasisWithNodes(basisType, dim, p, nodes),
   return(nodalBasis)
 )$
-

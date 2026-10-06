@@ -14,12 +14,12 @@
    4. p_perp_source (pressure source for higher Laguerre moments -> bb : grad(u) - div(u) - 2 nu)
    5. p_perp_div_b (p_perp/rho*div(b) = T_perp/m*div(b)) */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("recovery")$
-load("nodal_operations/nodal_functions")$
+load("core/recovery.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 cvars : [x, y, z]$
 

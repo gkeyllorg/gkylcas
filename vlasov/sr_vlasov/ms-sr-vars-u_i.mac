@@ -1,4 +1,4 @@
-load("sr_vlasov/sr-vars-u_i")$
+load("vlasov/sr_vlasov/sr-vars-u_i.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate 
    the bulk four-velocity (GammaV, GammaV*V_drift) using weak division

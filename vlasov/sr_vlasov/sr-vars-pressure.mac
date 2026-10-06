@@ -7,8 +7,8 @@
    p is the spatial component of the particle four-velocity, 
    and gamma = sqrt(1 + p^2) is the particle Lorentz boost factor. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 

@@ -1,6 +1,6 @@
 /* Generate kernels for updater averaging a gkyl_array in given dimensions .*/
 
-load("array_average/array_average")$
+load("core/array_average/array_average.mac")$
 
 /* ...... USER INPUTS........ */
 

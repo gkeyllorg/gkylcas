@@ -2,8 +2,8 @@
 
 /* This script generates the kernels for the volume terms of Euler's equations */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 lhs : [outrho, outrhoux, outrhouy, outrhouz, outenergy]$

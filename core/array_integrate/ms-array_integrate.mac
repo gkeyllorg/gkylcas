@@ -1,7 +1,7 @@
 /* Generate kernels for updater integrating a gkyl_array over the
    whole domain, optionally applying an operator inside the integral .*/
 
-load("array_integrate/integrateFuncs")$
+load("core/array_integrate/integrateFuncs.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

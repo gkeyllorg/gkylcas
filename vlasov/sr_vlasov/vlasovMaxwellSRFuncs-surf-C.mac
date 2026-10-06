@@ -3,11 +3,11 @@
    for the relativistic Vlasov equation where v = d/dp (gamma) = p/gamma and 
    gamma = sqrt(1 + p^2) is the particle Lorentz boost factor. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 varsV : [vx, vy, vz]$

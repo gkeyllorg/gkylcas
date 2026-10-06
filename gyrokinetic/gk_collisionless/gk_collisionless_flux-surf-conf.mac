@@ -1,9 +1,9 @@
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("utilities_gyrokinetic")$
-load("nodal_operations/nodal_functions")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no_by, edge, mb_bound) := block(

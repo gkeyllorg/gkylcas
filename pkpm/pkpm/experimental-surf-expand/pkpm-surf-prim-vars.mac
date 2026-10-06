@@ -8,8 +8,8 @@
    In 2D/3D, these surface expansions require weak division and with p=1, we can
    still use the basis_inv method for increased computational efficiency. */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
 fpprec : 24$

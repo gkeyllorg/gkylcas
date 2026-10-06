@@ -1,5 +1,5 @@
-load("dg_diffusion_gen/diff-gen-vol-2x")$
-load("dg_diffusion_gen/diff-gen-vol-3x")$
+load("vlasov/dg_diffusion_gen/diff-gen-vol-2x.mac")$
+load("vlasov/dg_diffusion_gen/diff-gen-vol-3x.mac")$
 load(stringproc)$
 
 /* Generate general diffusion volume kernels. */

@@ -5,7 +5,7 @@
 
   The functions called in this file are in fluid-canonical-alpha-surf.mac.
 */
-load("canonical_pb/fluid-canonical-alpha-surf")$
+load("vlasov/canonical_pb/fluid-canonical-alpha-surf.mac")$
 ratprint: false;
 
 /* Serendipity basis. */

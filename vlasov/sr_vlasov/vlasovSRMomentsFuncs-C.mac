@@ -1,9 +1,9 @@
 /* Functions (called by moment-calc.mac) that compute the
    moments of the distribution function in Vlasov model. */
 
-load("modal-basis");
-load("out-scripts");
-load("utilities")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
 load(stringproc)$
 fpprec : 24$
 

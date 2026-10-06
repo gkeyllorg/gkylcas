@@ -1,4 +1,4 @@
-load("lbo_prim_moments_vlasov/VmSelfPrimMomsLBO")$
+load("vlasov/lbo_prim_moments_vlasov/VmSelfPrimMomsLBO.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */
@@ -49,5 +49,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 );
-
-

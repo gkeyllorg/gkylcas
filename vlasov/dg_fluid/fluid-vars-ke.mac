@@ -2,8 +2,8 @@
    1/2 (rho ux^2 + rho uy^2 + rho uz^2) for use as a diagnostic and
    in the implicit source solve to compute the energy at the new time step. */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
 fpprec : 24$

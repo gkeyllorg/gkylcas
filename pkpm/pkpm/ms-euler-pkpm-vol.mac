@@ -1,4 +1,4 @@
-load("pkpm/euler-pkpm-vol")$
+load("pkpm/pkpm/euler-pkpm-vol.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the volume term due to an euler equation

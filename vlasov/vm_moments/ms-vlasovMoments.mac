@@ -1,6 +1,6 @@
 /* Generate kernels that compute the moments of the distribution function. */
 
-load("moments/vlasovMomentsFuncs")$
+load("vlasov/vm_moments/vlasovMomentsFuncs.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

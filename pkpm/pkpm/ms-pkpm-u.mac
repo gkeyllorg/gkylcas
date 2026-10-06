@@ -1,4 +1,4 @@
-load("pkpm/pkpm-u")$
+load("pkpm/pkpm/pkpm-u.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the 
    flow velocity using weak division required to update the PKPM system. 

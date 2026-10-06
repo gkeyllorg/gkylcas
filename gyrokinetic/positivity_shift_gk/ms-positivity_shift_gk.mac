@@ -3,7 +3,7 @@
   to make it positive at certain "check" nodes (e.g. gauss-legendre,
   gauss-lobatto, or positivity control nodes).
 */
-load("positivity_shift_gk/pos_shift_gk.mac")$
+load("gyrokinetic/positivity_shift_gk/pos_shift_gk.mac")$
 
 /* ...... USER INPUTS........ */
 

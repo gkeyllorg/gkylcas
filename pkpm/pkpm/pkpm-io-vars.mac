@@ -4,8 +4,8 @@
    [ux, uy, uz, T_perp/m, m/T_perp, div(b), 1/rho div(p_par b), T_perp/m div(b), bb : grad(u),
    vperp configuration space characteristics = bb : grad(u) - div(u) - 2 nu] */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 calcPKPMIoVars(fh, funcNm, cdim, basisFun, polyOrder) := block(

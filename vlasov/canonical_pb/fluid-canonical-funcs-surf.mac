@@ -9,11 +9,11 @@
    grad^2 phi = f, where f is (one of) the evolved quantities
    (vorticity in incompressible Euler and Hasegawa-Wakatani)
 */
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("canonical_pb/canonicalUtils.mac")$
+load("vlasov/canonical_pb/canonicalUtils.mac")$
 fpprec : 24$
 
 calcFluidCanonicalPBSurfUpdateInDir(surfDir, fh, funcNm, cdim, basisFun, polyOrder) := block(

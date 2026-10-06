@@ -1,7 +1,7 @@
 /* Create kernels to compute the sheath potential and the potential
    everywhere via quadrature assuming ambipolar sheath fluxes
    and electron adiabaticity. */
-load("ambi_bolt_potential/ambi_bolt_potential_funcs")$
+load("gyrokinetic/ambi_bolt_potential/ambi_bolt_potential_funcs.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

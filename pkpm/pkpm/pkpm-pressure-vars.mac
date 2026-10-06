@@ -4,8 +4,8 @@
    the corresponding surfaces 
    (Pxx, Pxy, Pxz and x surfaces, Pxy, Pyy, Pyz at y surfaces, Pxz, Pyz, Pzz at z surfaces) */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
 fpprec : 24$

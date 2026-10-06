@@ -2,9 +2,9 @@
    diffusion contribution from Lenard Bernstein operator to the
    Vlasov equation. */
 
-load("modal-basis")$
-load("out-scripts");
-load("utilities")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
 load(stringproc)$
 fpprec : 24$
 
@@ -58,5 +58,3 @@ calcVlasovPKPMLBODiffVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := 
   printf(fh, "} ~%")
 
 );
-
-

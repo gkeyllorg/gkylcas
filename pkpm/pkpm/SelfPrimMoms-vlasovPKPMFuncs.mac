@@ -12,11 +12,11 @@
 /* In the comments we refer to the rank 3 tensor E_M. This is
    E_{M,i,j,k} = InnerProd(varsC,bC[i],bC[j],bC[k]). */
 
-load("modal-basis");
+load("core/modal-basis.mac");
 
-load("out-scripts");
+load("util_maxima/out-scripts.mac");
 
-load("nodal_operations/node_locations");
+load("core/nodal_operations/node_locations.mac");
 
 load(stringproc)$
 
@@ -220,5 +220,3 @@ calcSelfPrimMoms(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block([bP,bC,NP
   printf(fh, "} ~%"),
   printf(fh, " ~%")
 )$
-
-

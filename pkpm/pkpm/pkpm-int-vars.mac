@@ -1,8 +1,8 @@
 /* This script generates the kernels for integrating the fluid variables
    for diagnostic purposed. Integrates rho, p_parallel, p_perp, rho ux^2, rho uy^2, rho uz^2 */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 calcPKPMIntVars(fh, funcNm, cdim, basisFun, polyOrder) := block(

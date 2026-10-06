@@ -3,9 +3,9 @@
     These quantities are derived from the grid and must be continuous, 
     so they are projected onto basis functions using Gauss-Lobatto nodes. */
 
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/nodal_functions")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
 load(stringproc)$
 fpprec : 24$
 
@@ -28,7 +28,7 @@ calcHamil(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   vi_sq_e : [vx_sq_e, vy_sq_e, vz_sq_e],
 
   /* Load basis of dimensionality requested. */
-  modNm : sconcat("basis-precalc/basis", basisFun, cdim, "x", vdim, "v"),
+  modNm : sconcat("core/basis-precalc/basis", basisFun, cdim, "x", vdim, "v", ".lisp"),
   load(modNm),
   bP : basisP[polyOrder],
   bC : basisC[polyOrder],	

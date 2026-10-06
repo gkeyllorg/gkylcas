@@ -1,4 +1,4 @@
-load("pkpm/pkpm-int-vars")$
+load("pkpm/pkpm/pkpm-int-vars.mac")$
 load(stringproc)$
 /* This script calls the functions which integrate the fluid variables for diagnostic purposed. 
    Integrates rho, p_parallel, p_perp, rho ux^2, rho uy^2, rho uz^2,  */

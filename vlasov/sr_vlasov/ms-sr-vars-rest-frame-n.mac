@@ -1,4 +1,4 @@
-load("sr_vlasov/sr-vars-rest-frame-n")$
+load("vlasov/sr_vlasov/sr-vars-rest-frame-n.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate 
    the rest frame density n = Gamma_inv*M0 where 

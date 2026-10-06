@@ -4,11 +4,11 @@
     so the second moment is the parallel pressure and third moment is parallel heat
     flux (no Reynolds stress for example). */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 cvars : [x, y, z]$

@@ -1,8 +1,8 @@
 /* This script generates the kernels for integrating the fluid variables
    for diagnostic purposed. Integrates rho, rhoux, rhouy, rhouz, rhou^2, p */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 calcEulerIntVars(fh, funcNm, cdim, basisFun, polyOrder) := block(

@@ -1,4 +1,4 @@
-load("gk_neut_fluid_prim_vars/gk_neut_fluid_prim_vars-pressure.mac")$
+load("gyrokinetic/gk_neut_fluid_prim_vars/gk_neut_fluid_prim_vars-pressure.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the
    pressure via weak multiplication. Pressure different for each equation system: 

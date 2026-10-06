@@ -4,11 +4,11 @@
 
    *hamil* is assumed to be written in canonical coordinates
 */
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("canonical_pb/canonicalUtils.mac")$
+load("vlasov/canonical_pb/canonicalUtils.mac")$
 fpprec : 24$
 
 calcCanonicalPBSurfUpdateInDir(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
@@ -384,4 +384,3 @@ calcCanonicalPBBoundarySurfUpdateInDir(surfDir, fh, funcNm, cdim, vdim, basisFun
   flush_output(fh)
 
 )$
-

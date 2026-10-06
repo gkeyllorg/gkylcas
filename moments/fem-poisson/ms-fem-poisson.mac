@@ -5,16 +5,16 @@
    finite element method (FEM). */
 
 load(stringproc)$
-load("fem-poisson/fem-poisson-num_nodes")$
-load("fem-poisson/fem-poisson-local_matrices")$
-load("fem-poisson/fem-poisson-local_to_global")$
-load("fem-poisson/fem-poisson-lhs_stencil_consteps")$
-load("fem-poisson/fem-poisson-src_stencil_consteps")$
-load("fem-poisson/fem-poisson-sol_stencil")$
-load("fem-poisson/fem-poisson-lhs_stencil_vareps")$
-load("fem-poisson/fem-poisson-src_stencil_vareps")$
-load("fem-poisson/fem-poisson-bias_lhs")$
-load("fem-poisson/fem-poisson-bias_src")$
+load("moments/fem-poisson/fem-poisson-num_nodes.mac")$
+load("moments/fem-poisson/fem-poisson-local_matrices.mac")$
+load("moments/fem-poisson/fem-poisson-local_to_global.mac")$
+load("moments/fem-poisson/fem-poisson-lhs_stencil_consteps.mac")$
+load("moments/fem-poisson/fem-poisson-src_stencil_consteps.mac")$
+load("moments/fem-poisson/fem-poisson-sol_stencil.mac")$
+load("moments/fem-poisson/fem-poisson-lhs_stencil_vareps.mac")$
+load("moments/fem-poisson/fem-poisson-src_stencil_vareps.mac")$
+load("moments/fem-poisson/fem-poisson-bias_lhs.mac")$
+load("moments/fem-poisson/fem-poisson-bias_src.mac")$
 
 /* ...... USER INPUTS........ */
 

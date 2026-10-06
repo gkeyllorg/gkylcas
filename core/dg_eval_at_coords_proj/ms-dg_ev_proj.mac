@@ -2,7 +2,7 @@
  * Create kernels which evaluate a DG expansion at a coordinate and projects
  * onto lower dimensional basis. 
  */
-load("dg_eval_at_coords_proj/dg_ev_proj.mac")$
+load("core/dg_eval_at_coords_proj/dg_ev_proj.mac")$
 
 /* ...... USER INPUTS........ */
 

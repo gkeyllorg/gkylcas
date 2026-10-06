@@ -1,9 +1,9 @@
 /* Compute the volume expansion of the cotangent vectors 
    e^i = g^ij e_j for use in volume kernels of general geometry neutrals. */
 
-load("modal-basis")$
-load("out-scripts")$
-load("utilities")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("util_maxima/utilities.mac")$
 load(stringproc)$
 load("scifac")$
 fpprec : 24$

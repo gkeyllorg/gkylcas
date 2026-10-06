@@ -3,8 +3,8 @@
    Uses pre-computed cotangent vectors e^i = g^ij e_j 
    to construct v^i = v . e^i */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 

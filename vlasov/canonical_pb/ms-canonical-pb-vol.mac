@@ -3,7 +3,7 @@
 
   The functions called in this file are in canonicalFuncs-vol.mac.
 */
-load("canonical_pb/canonical-vol")$
+load("vlasov/canonical_pb/canonical-vol.mac")$
 ratprint: false;
 
 /* ...... USER INPUTS........ */

@@ -14,9 +14,9 @@
 /* In the comments we refer to the rank 3 tensor E_M. This is
    E_{M,i,j,k} = InnerProd(varsC,bC[i],bC[j],bC[k]). */
 
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/node_locations");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/node_locations.mac");
 load(stringproc)$
 fpprec : 24$
 
@@ -93,7 +93,7 @@ calcCrossPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block([udim
 
   if (basisFun="ser") then basisFun:"Ser",
   if (basisFun="tensor") then basisFun:"Tensor",
-  load(sconcat("basis-precalc/basis", basisFun, cdim, "x", vdim, "v")),
+  load(sconcat("core/basis-precalc/basis", basisFun, cdim, "x", vdim, "v", ".lisp")),
   if (basisFun="Ser") then basisFun:"ser",
   if (basisFun="Tensor") then basisFun:"tensor",
 
@@ -369,4 +369,3 @@ calcCrossPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block([udim
   printf(fh, "} ~%"),
   printf(fh, " ~%")
 )$
-

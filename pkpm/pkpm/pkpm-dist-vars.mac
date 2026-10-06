@@ -12,12 +12,12 @@
    Also outputs F_1 from T_perp/m*G for the evolution of F_2 if F_2 is present. 
    To simplify internal Gkeyll logic, kernels assume F_2 is present and outputs F_1 even if F_2 = 0.0. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
-load("recovery")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/recovery.mac")$
 fpprec : 24$
 
 cvars : [x, y, z]$

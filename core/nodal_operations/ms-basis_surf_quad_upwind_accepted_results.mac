@@ -5,8 +5,8 @@
 
 kill(all);
 
-load("modal-basis");
-load("nodal_operations/nodal_functions");
+load("core/modal-basis.mac");
+load("core/nodal_operations/nodal_functions.mac");
 
 polyOrder : 1$
 cdim : 1$
@@ -14,7 +14,7 @@ vdim : 2$
 basisFun : "GkHybrid"$
 surfDir : 3$
 evAtSide : 1$ /* -1 for left, 1 for right */
-load(sconcat("basis-precalc/basis",basisFun,cdim,"x",vdim,"v"));
+load(sconcat("core/basis-precalc/basis",basisFun,cdim,"x",vdim,"v", ".lisp"));
 
 pDim : cdim+vdim$
 bP : basisP[polyOrder]$
@@ -40,15 +40,15 @@ fOrdL_n : gcfac(float(evAtNodes(subst(surfVar=evAtSide,f_e),surfNodes,surfIntVar
 
 kill(all);
 
-load("modal-basis");
-load("nodal_operations/nodal_functions");
+load("core/modal-basis.mac");
+load("core/nodal_operations/nodal_functions.mac");
 
 polyOrder : 1$
 cdim : 1$
 vdim : 2$
 basisFun : "GkHybrid"$
 surfDir : 2$
-load(sconcat("basis-precalc/basis",basisFun,cdim,"x",vdim,"v"));
+load(sconcat("core/basis-precalc/basis",basisFun,cdim,"x",vdim,"v", ".lisp"));
 
 pDim : cdim+vdim$
 bP : basisP[polyOrder]$
@@ -78,4 +78,3 @@ if polyOrder = 1 then (
 fpprec : 24$
 fNodal_e : doExpand(fOrdL_n,basisNodal)$
 f_c : float(expand(fullratsimp(calcInnerProdList(surfIntVars, 1, bSurf, fNodal_e))));
-

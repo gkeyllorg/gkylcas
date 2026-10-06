@@ -4,9 +4,9 @@
    and the nodal-to-modal matrix.
 */
 
-load("modal-basis");
-load("out-scripts");
-load("fem/fem-util");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("moments/fem/fem-util.mac");
 fpprec : 24$
 
 generate_fem_poisson_stiff(fh, funcNm, dim, basisFun, pMax) := block(

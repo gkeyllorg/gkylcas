@@ -1,4 +1,4 @@
-load("gk_neut_hamil/gk-neut-hamil")$
+load("gyrokinetic/gk_neut_hamil/gk-neut-hamil.mac")$
 load(stringproc)$
 /*  This script calls the func that generates kernels for gk neut hamiltonian
     h = 1/2*gij*w_i*w_j

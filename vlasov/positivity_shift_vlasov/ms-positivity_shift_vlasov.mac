@@ -3,7 +3,7 @@
   to make it positive at certain "check" nodes (e.g. gauss-legendre,
   gauss-lobatto, or positivity control nodes).
 */
-load("positivity_shift_vlasov/pos_shift_vlasov.mac")$
+load("vlasov/positivity_shift_vlasov/pos_shift_vlasov.mac")$
 
 /* ...... USER INPUTS........ */
 

@@ -3,9 +3,9 @@
    where v = d/dp (gamma) = p/gamma and 
    gamma = sqrt(1 + p^2) is the particle Lorentz boost factor. */
 
-load("modal-basis");
-load("out-scripts");
-load("utilities")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
 load ("scifac")$
 load(stringproc)$
 fpprec : 24$

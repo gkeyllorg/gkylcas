@@ -2,11 +2,11 @@
      - nabla . ( epsilon * nabla_perp(phi) ) - kSq * phi = rho  
    based on number of cells, polyOrder, dimensionality and boundary conditions. */
 
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/nodal_functions");
-load("bvp_utilities/bvp-util");
-load("fem/fem-util");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac");
+load("moments/bvp_utilities/bvp-util.mac");
+load("moments/fem/fem-util.mac");
 fpprec : 24$
 
 generate_fem_poisson_perp_num_nodes(fh, funcNm, dim, basisFun, pMin, pMax) := block(
@@ -17,7 +17,7 @@ generate_fem_poisson_perp_num_nodes(fh, funcNm, dim, basisFun, pMin, pMax) := bl
 
   kill(varsC, varsP, basisC, basisP),
 
-  load(sconcat("basis-precalc/basis", basisFun, dim, "x")),
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x", ".lisp")),
 
   /* List of stencil locations. Each entry is a dim-dimensional list
      with -1 meaning it is at a lower boundary, 1 upper boundary, or

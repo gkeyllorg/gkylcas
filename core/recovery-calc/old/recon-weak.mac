@@ -1,5 +1,5 @@
-load("modal-basis")$
-load("basis-precalc/basisSer1x")$
+load("core/modal-basis.mac")$
+load("core/basis-precalc/basisSer1x.lisp")$
 
 bC : basisC[1]$
 N : length(bC)$

@@ -1,11 +1,11 @@
 /* Compute the surf term for ONLY the streaming term (v . grad(f))
    for Vlasov neutrals in general geometry. */
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 load("scifac")$
-load("vlasov/vlasovUtil")$
+load("vlasov/vlasov_maxwell/vlasovUtil.mac")$
 fpprec : 24$
 
 varsV : [vx, vy, vz]$
@@ -32,7 +32,7 @@ calcVlasovStreamGenGeoUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, p) := b
 
   kill(varsC, varsP, basisC, basisP),
 
-  load(sconcat("basis-precalc/basis", basisFun, cdim, "x", vdim, "v")),
+  load(sconcat("core/basis-precalc/basis", basisFun, cdim, "x", vdim, "v", ".lisp")),
 
   /* Load basis of dimensionality requested. */
   [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
@@ -166,7 +166,7 @@ calcVlasovBoundaryStreamGenGeoUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun,
 
   kill(varsC, varsP, basisC, basisP),
 
-  load(sconcat("basis-precalc/basis", basisFun, cdim, "x", vdim, "v")),
+  load(sconcat("core/basis-precalc/basis", basisFun, cdim, "x", vdim, "v", ".lisp")),
 
   /* Load basis of dimensionality requested. */
   [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
@@ -305,4 +305,3 @@ calcVlasovBoundaryStreamGenGeoUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun,
   printf(fh, "} ~%"),
   flush_output(fh)
 );
-

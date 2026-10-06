@@ -1,4 +1,4 @@
-load("prim_moments/SelfPrimMoms-vlasov-with-fluid-C")$
+load("vlasov/lbo_prim_moments_vlasov/SelfPrimMoms-vlasov-with-fluid.mac")$
 
 load(stringproc)$
 
@@ -50,5 +50,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 );
-
-

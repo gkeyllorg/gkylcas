@@ -4,10 +4,10 @@
    Code called in this script is in files loaded below.
 */
 load(stringproc)$
-load("gk-sheath/sheath-1x1v");
-load("gk-sheath/sheath-1x2v");
-load("gk-sheath/sheath-2x2v");
-load("gk-sheath/sheath-3x2v");
+load("gyrokinetic/gk-sheath/sheath-1x1v.mac");
+load("gyrokinetic/gk-sheath/sheath-1x2v.mac");
+load("gyrokinetic/gk-sheath/sheath-2x2v.mac");
+load("gyrokinetic/gk-sheath/sheath-3x2v.mac");
 
 /* ...... USER INPUTS........ */
 

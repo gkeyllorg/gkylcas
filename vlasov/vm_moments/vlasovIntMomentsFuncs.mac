@@ -1,8 +1,8 @@
 /* Functions called by int-moment-calc.mac in order to 
    generate kernels for IntegratedDGMoment updater. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 

@@ -2,12 +2,12 @@
    Create kernels for the volume term of the gyrokinetic collisionless terms.
 */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("utilities_gyrokinetic")$
-load("utilities")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load("util_maxima/utilities.mac")$
 fpprec : 24$
 
 buildGKVolKernel(fh, funcNm, cdim, vdim, basisFun, polyOrder, varsInB, no_by) := block(

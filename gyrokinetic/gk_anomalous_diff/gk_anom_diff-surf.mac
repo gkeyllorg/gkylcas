@@ -1,6 +1,6 @@
-load("modal-basis")$
-load("recovery")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("core/recovery.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 gk_anomalous_diff_gen_surf_ker(fh, funcNm, cdim, vdim, basisType, polyOrder, dir) := block(

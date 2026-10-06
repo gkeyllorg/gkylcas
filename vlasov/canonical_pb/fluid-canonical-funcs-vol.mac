@@ -8,12 +8,12 @@
    (vorticity in incompressible Euler and Hasegawa-Wakatani)
 */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("canonical_pb/canonicalUtils")$
-load("utilities")$
+load("vlasov/canonical_pb/canonicalUtils.mac")$
+load("util_maxima/utilities.mac")$
 fpprec : 24$
 
 dxv : [dxv0, dxv1]$

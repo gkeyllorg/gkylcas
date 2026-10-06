@@ -1,6 +1,6 @@
 /* Create kernels to calculate derived geometric quantities from tje
    metric coefficients and magnetic field strength*/
-load("derived_geo_calculation/calc-derived_geo.mac")$
+load("gyrokinetic/derived_geo_calculation/calc-derived_geo.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

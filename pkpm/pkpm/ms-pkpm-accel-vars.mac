@@ -1,4 +1,4 @@
-load("pkpm/pkpm-accel-vars")$
+load("pkpm/pkpm/pkpm-accel-vars.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the 
    acceleration variables required to update the PKPM system. 

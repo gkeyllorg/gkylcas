@@ -1,8 +1,8 @@
 /* Maxima function used to generate kernel which shifts the distribution
    function to make it positive at certain "check" nodes. */
-load("modal-basis")$
-load("out-scripts")$
-load("nodal_operations/nodal_functions")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
 load(stringproc)$
 fpprec : 24$
 

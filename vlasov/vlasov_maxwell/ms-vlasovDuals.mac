@@ -4,7 +4,7 @@
 
   The functions called in this file are in vlasovDualsFuncs-C.mac.
 */
-load("vlasov_maxwell/vlasovDualsFuncs-C")$
+load("vlasov/vlasov_maxwell/vlasovDualsFuncs-C.mac")$
 
 /* ...... USER INPUTS........ */
 

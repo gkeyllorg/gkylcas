@@ -1,4 +1,4 @@
-load("basis-precalc/basis-pre-calc");
+load("core/basis-precalc/basis-pre-calc.mac");
 
 for c : 1 thru 2 do (
   for v : c thru 3 do (

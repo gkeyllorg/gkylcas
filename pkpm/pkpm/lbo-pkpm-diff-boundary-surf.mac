@@ -1,10 +1,10 @@
 /* This script generates the kernels for the boundary surface term
    diffusion contribution from Lenard Bernstein operator. */
 
-load("modal-basis")$
-load("out-scripts");
-load("recovery")$
-load("utilities")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("core/recovery.mac")$
+load("util_maxima/utilities.mac")$
 load(stringproc)$
 fpprec : 24$
 

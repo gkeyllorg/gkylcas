@@ -1,6 +1,6 @@
 /* Functions to manipulate nodal data/functions in FEM solvers. */
-load("utilities")$
-load("nodal_operations/nodal_functions")$
+load("util_maxima/utilities.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
 
 deleteNodes(nodesIn,coordsIn,allTrueIn) := block([numNodes,dimCheck,remNodes,removeNode],
   /* Given a list of nodes (nodesIn), delete the nodes that have the all

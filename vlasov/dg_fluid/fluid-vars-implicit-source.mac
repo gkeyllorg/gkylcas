@@ -3,11 +3,11 @@
    We construct a linear system of (3*num_species + 3) for each of the
    species current densities and the three components of the electric field. */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 setDGEMSourceSolve(fh, funcNm, cdim, basisFun, polyOrder) := block(
@@ -332,4 +332,4 @@ DGEMSourceEnergySolve(fh, funcNm, cdim, basisFun, polyOrder) := block(
   /* Increment the energy based on the difference between the new and old kinetic energy */
   writeCIncrExprs1(energy, energy_c),
   printf(fh, "} ~%")
-)$    
+)$

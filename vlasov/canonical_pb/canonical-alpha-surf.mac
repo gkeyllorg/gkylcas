@@ -16,11 +16,11 @@
    *hamil* is assumed to be written in canonical coordinates
 */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("canonical_pb/canonicalUtils.mac")$
+load("vlasov/canonical_pb/canonicalUtils.mac")$
 /*load("nodal_operations/nodal_functions")$*/
 fpprec : 24$
 
@@ -178,4 +178,4 @@ buildCanonicalPBAlphaKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder
   printf(fh, "~%"),
   flush_output(fh),
   printf(fh, "} ~%")
-)$  
+)$

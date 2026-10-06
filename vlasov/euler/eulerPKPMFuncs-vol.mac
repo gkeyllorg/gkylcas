@@ -1,5 +1,5 @@
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 statevec : [rhou0, rhou1, rhou2, energy]$

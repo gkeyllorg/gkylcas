@@ -3,11 +3,11 @@
    with zeros or ones to enforce biasing, i.e. specific values of the solution at specific points.
 */
 
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/nodal_functions");
-load("bvp_utilities/bvp-util");
-load("fem/fem-util");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac");
+load("moments/bvp_utilities/bvp-util.mac");
+load("moments/fem/fem-util.mac");
 fpprec : 24$
 
 generate_fem_parproj_bias_line_lhs(fh, funcNm, dim, basisFun, pMin, pMax) := block(

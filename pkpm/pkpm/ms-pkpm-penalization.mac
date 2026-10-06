@@ -1,4 +1,4 @@
-load("pkpm/pkpm-penalization")$
+load("pkpm/pkpm/pkpm-penalization.mac")$
 load(stringproc)$
 /* This script generates the kernels for calculating the penalization term in the 
    momentum solve of the PKPM system. 

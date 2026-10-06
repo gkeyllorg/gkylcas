@@ -3,10 +3,10 @@
   to equal the ghost cell at the boundary surface.
 */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 genSSFGkernelInDir(fh, funcNm, dim, surfDir, basisNm, polyOrder) := block(

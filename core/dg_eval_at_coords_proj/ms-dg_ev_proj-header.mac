@@ -2,7 +2,7 @@
   Generate the kernels header file for the updater which evaluates a
   DG field at a coord and projects it onto the target basis.
 */
-load("dg_eval_at_coords_proj/dg_ev_proj.mac")$
+load("core/dg_eval_at_coords_proj/dg_ev_proj.mac")$
 
 /* ...... USER INPUTS........ */
 

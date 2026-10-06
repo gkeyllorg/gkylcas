@@ -6,9 +6,9 @@
     Uses basis_exp_sq (obtain expansion of A^2 for a DG field A),
     basis_sqrt (obtain expansion of sqrt(A) for a DG field A) */
 
-load("modal-basis");
-load("out-scripts");
-load("nodal_operations/nodal_functions")$
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
 load(stringproc)$
 fpprec : 24$
 

@@ -1,6 +1,6 @@
 /* This script calls the functions which calculate the
    updates from the drag portion of the surface contributions. */
-load("pkpm/lbo-pkpm-drag-surf")$
+load("pkpm/pkpm/lbo-pkpm-drag-surf.mac")$
 
 /* ...... USER INPUTS........ */
 
@@ -48,5 +48,3 @@ for bInd : 1 thru length(bName) do (
     ) 
   )
 );
-
-

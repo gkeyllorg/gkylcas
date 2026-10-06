@@ -1,4 +1,4 @@
-load("vlasov_maxwell/vlasovStreamGenGeoFuncs-surf-C")$
+load("vlasov/vlasov_maxwell/vlasovStreamGenGeoFuncs-surf-C.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the surface term for the v . grad(f) and

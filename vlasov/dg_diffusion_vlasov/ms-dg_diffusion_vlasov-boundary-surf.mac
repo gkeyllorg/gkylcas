@@ -1,5 +1,5 @@
 kill(all)$
-load("dg_diffusion_vlasov/diffFuncs-vlasov-boundary-surf")$
+load("vlasov/dg_diffusion_vlasov/diffFuncs-vlasov-boundary-surf.mac")$
 
 /* ...... USER INPUTS........ */
 

@@ -4,7 +4,7 @@
      2) Weak multiplication.
    This script calls the functions calcBinOp for weak division. */
 
-load("bin_op/binOp-div-C")$
+load("core/bin_op/binOp-div-C.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */
@@ -51,5 +51,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 )$
-
-

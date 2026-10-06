@@ -3,8 +3,8 @@
    For p_perp fluid equation, momentum sources are rho*E + rho*u x B 
    Perpendicular pressure source is nu*rho*vth^2 - nu*p_perp + p_perp*div(u) - p_perp bb : grad(u) */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 calcEulerPKPMSource(fh, funcNm, cdim, basisFun, polyOrder) := block(

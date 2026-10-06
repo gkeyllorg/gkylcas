@@ -1,4 +1,4 @@
-load("cross_prim_moms/gkCrossPrimMomsBGKFuncs")$
+load("gyrokinetic/bgk_cross_prim_moms/gkCrossPrimMomsBGKFuncs.mac")$
 load(stringproc)$
 
 /* Generate a header file for cross moment kernels in the GkBGK. */

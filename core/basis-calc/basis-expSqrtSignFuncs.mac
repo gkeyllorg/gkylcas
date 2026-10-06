@@ -1,9 +1,9 @@
 /* Generate kernels for square root expansion of a DG field which retains the sign. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 calcDGExpSqrtSign(fh, funcNm, cdim, basisFun, polyOrder, quadPolyOrder) := block([bC, NC, 

@@ -1,4 +1,4 @@
-load("radiation/radFuncs-vol")$
+load("gyrokinetic/radiation/radFuncs-vol.mac")$
 load(stringproc)$
 
 /* This script calls the functions which calculate the

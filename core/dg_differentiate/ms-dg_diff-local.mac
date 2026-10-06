@@ -1,4 +1,4 @@
-load("dg_differentiate/dg_diff-local")$
+load("core/dg_differentiate/dg_diff-local.mac")$
 load(stringproc)$
 /* Generate kernels for a local (to a cell) calculation of the derivative of a
    DG field. */

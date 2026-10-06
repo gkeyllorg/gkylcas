@@ -4,11 +4,11 @@
   assume ambipolar fluxes and Boltzmann electrons.
 */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
-load("nodal_operations/quadrature_functions")$
-load("utilities_gyrokinetic")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
 fpprec : 24$
 
 genSheathCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(

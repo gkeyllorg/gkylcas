@@ -1,4 +1,4 @@
-load("sr_vlasov/sr-vars-lorentz")$
+load("vlasov/sr_vlasov/sr-vars-lorentz.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate various 
    quantities related to the particle Lorentz boost factor, including

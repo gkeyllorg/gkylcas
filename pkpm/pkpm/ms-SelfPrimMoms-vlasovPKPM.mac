@@ -1,4 +1,4 @@
-load("pkpm/SelfPrimMoms-vlasovPKPMFuncs")$
+load("pkpm/pkpm/SelfPrimMoms-vlasovPKPMFuncs.mac")$
 
 /* ...... USER INPUTS........ */
 

@@ -1,6 +1,6 @@
 /* Generate kernels that take a function f at Gauss-Legendre quadrature nodes,
    and do a nodal-to-modal transformation to yield the modal DG coefficients of f. */
-load("nodal_operations/basis_vol_quad_to_modal")$
+load("core/nodal_operations/basis_vol_quad_to_modal.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

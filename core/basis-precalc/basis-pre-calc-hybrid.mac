@@ -4,7 +4,7 @@
    Also create a gkhyb basis which is p=2 only in vpar.
 */
 
-load("basis-precalc/basis-pre-calc");
+load("core/basis-precalc/basis-pre-calc.mac");
 
 vars : [x,y,z,vx,vy,vz]$
 

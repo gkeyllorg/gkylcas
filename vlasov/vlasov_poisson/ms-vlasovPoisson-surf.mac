@@ -1,5 +1,5 @@
-load("vlasov_poisson/vlasovPoissonFuncs-stream-surf")$
-load("vlasov_poisson/vlasovPoissonFuncs-surf")$
+load("vlasov/vlasov_poisson/vlasovPoissonFuncs-stream-surf.mac")$
+load("vlasov/vlasov_poisson/vlasovPoissonFuncs-surf.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the velocity surface term contributions in the

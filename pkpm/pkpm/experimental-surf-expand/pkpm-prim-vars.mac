@@ -5,11 +5,11 @@
    3. T_perp_over_m_inv (m/T_perp) 
    Along with div(p_par b)/rho for use in the pressure force. */
 
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 /* Special set of kernels which analytically invert the matrix for 1/rho and (T_perp/m)^-1 

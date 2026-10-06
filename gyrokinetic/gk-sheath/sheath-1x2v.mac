@@ -1,10 +1,10 @@
 /* 
    Gyrokinetic sheath function for 1x2v kernel.
 */
-load("modal-basis")$
-load("out-scripts")$
-load("nodal_operations/nodal_functions")$
-load("utilities_gyrokinetic")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
 load(stringproc)$
 fpprec : 24$
 
@@ -224,4 +224,3 @@ genGkSheathKer1x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
   )
 
 )$
-

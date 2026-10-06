@@ -4,7 +4,7 @@
      2) Weak multiplication.
    This script calls the functions calcBinOp for weak multiplication. */
 
-load("bin_op/binOp-mul-C")$
+load("core/bin_op/binOp-mul-C.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

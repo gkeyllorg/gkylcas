@@ -2,11 +2,11 @@
    drag contribution from Lenard Bernstein operator when 
    coupled to the Vlasov parallel-kinetic-perpendicular-moment (pkpm) model. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 calcVlasovPKPMLBODragSurfUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
@@ -198,4 +198,3 @@ calcVlasovPKPMLBODragSurfUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) :=
 
   printf(fh, "} ~%")
 );
-

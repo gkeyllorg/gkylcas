@@ -1,6 +1,6 @@
 /* Generate kernels that compute the moments of the distribution function for special relativistic Vlasov. */
 
-load("sr_vlasov/vlasovSRMomentsFuncs-C")$
+load("vlasov/sr_vlasov/vlasovSRMomentsFuncs-C.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

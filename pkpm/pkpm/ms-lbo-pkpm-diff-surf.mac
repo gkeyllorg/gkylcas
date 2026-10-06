@@ -1,7 +1,7 @@
 /* This script calls the functions which calculate the
    updates from the diff portion of the surface contributions
    using 1 cell recovery. */
-load("pkpm/lbo-pkpm-diff-surf")$
+load("pkpm/pkpm/lbo-pkpm-diff-surf.mac")$
 
 /* ...... USER INPUTS........ */
 
@@ -41,5 +41,3 @@ for bInd : 1 thru length(bName) do (
     ) 
   )
 );
-
-

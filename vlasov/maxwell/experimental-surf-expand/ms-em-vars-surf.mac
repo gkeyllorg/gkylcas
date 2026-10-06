@@ -1,4 +1,4 @@
-load("maxwell/em-vars-surf")$
+load("vlasov/maxwell/experimental-surf-expand/em-vars-surf.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the *surface* magnetic field 
    unit vector and unit tensor required to update the PKPM system. Surface variables include:

@@ -1,10 +1,10 @@
 /* Generate kernels that take modal DG expansion of a function f 
    and evaluate that function at Gauss-Legendre quadrature nodes of order p+1. */
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 genModalToQuadKernel(fh, pdim, basisName, pOrder) := block(

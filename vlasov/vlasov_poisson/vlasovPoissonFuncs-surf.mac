@@ -5,12 +5,12 @@
    NOTE: kernels expect phi and A to be scaled by appropriate factors
    i.e., q/m for plasmas, and G*m for self-gravitation systems. */
 
-load("modal-basis")$
-load("utilities")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/utilities.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 calcVlasovPoissonUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(

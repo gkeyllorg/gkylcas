@@ -2,8 +2,8 @@
  * Compute the polarization density given n_0, m, B and phi.
  * 
  */
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 fpprec : 24$
 
 gen_pol_den_kernel(fh, funcNm, dim, basisFun, polyOrder, basisFunPhi, polyOrderPhi) := block(

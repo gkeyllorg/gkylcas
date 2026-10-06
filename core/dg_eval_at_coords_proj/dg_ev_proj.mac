@@ -2,8 +2,8 @@
  * Create kernels which evaluate a DG expansion at a coordinate and projects
  * onto lower dimensional basis.
 */
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 fpprec : 24$
 
 get_ev_combos(varsIn) := block([pss,ps,combos],

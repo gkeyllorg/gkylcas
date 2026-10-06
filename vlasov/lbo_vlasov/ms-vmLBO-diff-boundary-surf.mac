@@ -1,4 +1,4 @@
-load("lenard_bernstein_operator/vmLBOFuncs-diff-boundary-surf")$
+load("vlasov/lbo_vlasov/vmLBOFuncs-diff-boundary-surf.mac")$
 load(stringproc)$
 
 /* This script calls the functions which calculate the
@@ -61,5 +61,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 );
-
-

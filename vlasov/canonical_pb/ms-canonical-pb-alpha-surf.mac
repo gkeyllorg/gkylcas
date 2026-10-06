@@ -3,7 +3,7 @@
 
   The functions called in this file are in canonical-alpha-surf.mac.
 */
-load("canonical_pb/canonical-alpha-surf")$
+load("vlasov/canonical_pb/canonical-alpha-surf.mac")$
 ratprint: false;
 
 /* Serendipity basis. */

@@ -1,4 +1,4 @@
-load("modal-basis.mac");
+load("core/modal-basis.mac");
 fpprec : 24$
 
 /* Function to write out basis functions */

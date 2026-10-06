@@ -1,8 +1,8 @@
 /*
   Auxiliary functions for gyrokinetics.
 */
-load("modal-basis")$
-load("utilities")$
+load("core/modal-basis.mac")$
+load("util_maxima/utilities.mac")$
 
 getAxisymmetricConfBasis(confBasis) := block(
   /* Load a basis that only has the variables B depends on (we assume it

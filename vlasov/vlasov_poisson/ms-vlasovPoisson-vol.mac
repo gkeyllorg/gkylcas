@@ -1,4 +1,4 @@
-load("vlasov_poisson/vlasovPoissonFuncs-vol")$
+load("vlasov/vlasov_poisson/vlasovPoissonFuncs-vol.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the volume term contributions in the
@@ -77,4 +77,3 @@ for bInd : 1 thru length(bName) do (
     )
   )
 );
-

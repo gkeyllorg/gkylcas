@@ -1,4 +1,4 @@
-load("dg_fluid/fluid-vars-int")$
+load("vlasov/dg_fluid/fluid-vars-int.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for 
    integrating the fluid variables for diagnostic purposed. 

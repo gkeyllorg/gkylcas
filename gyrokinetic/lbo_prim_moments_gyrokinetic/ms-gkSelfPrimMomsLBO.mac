@@ -1,4 +1,4 @@
-load("lbo_prim_moments_gyrokinetic/GkSelfPrimMomsLBO")$
+load("gyrokinetic/lbo_prim_moments_gyrokinetic/GkSelfPrimMomsLBO.mac")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */

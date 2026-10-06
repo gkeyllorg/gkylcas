@@ -1,12 +1,12 @@
 /* This script generates the kernels for the surface term of the E + v x B 
    advection in velocity space for the Vlasov equation (full EM) */
 
-load("modal-basis")$
-load("utilities")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/utilities.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("nodal_operations/nodal_functions")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 calcVlasovPoissonStreamUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(

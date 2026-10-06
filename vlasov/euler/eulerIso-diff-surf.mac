@@ -1,6 +1,6 @@
 kill(all)$
-load("modal-basis")$
-load("recovery")$
+load("core/modal-basis.mac")$
+load("core/recovery.mac")$
 load(stringproc)$
 fpprec : 24$
 

@@ -1,7 +1,7 @@
 /* Generate kernels for performing interpolations needed in twist-shift BCs. */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 fpprec : 24$
 
 writeCIncrExprs1sub(lhs, rhs, sublist) := block([expr, i, ep, outStr, s],

@@ -1,4 +1,4 @@
-load("pkpm/euler-pkpm-limiter")$
+load("pkpm/pkpm/euler-pkpm-limiter.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for 
    limiting the slopes of the fluid variables in the PKPM system. */

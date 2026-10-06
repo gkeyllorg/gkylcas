@@ -1,12 +1,12 @@
 /* 
    Create kernels for the surface term of the gyrokinetic collisionless terms.
 */
-load("modal-basis")$
-load("out-scripts")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
 load(stringproc)$
 load("scifac")$
-load("utilities_gyrokinetic")$
-load("nodal_operations/nodal_functions")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
 fpprec : 24$
 
 /* Types of boundary stencils:
@@ -271,4 +271,3 @@ calcGKBoundarySurfUpdateInDir(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrd
   flush_output(fh)
 
 )$
-

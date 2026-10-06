@@ -6,8 +6,8 @@
    PKPM model is in local flow frame to insure collision operator
    exactly satisfies integral(vpar F_0) = 0 (no spurious flows) */
 
-load("modal-basis");
-load("out-scripts");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
 load(stringproc)$
 fpprec : 24$
 
@@ -80,5 +80,3 @@ calcBoundaryIntegral(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "} ~%"),
   printf(fh, " ~%")
 )$
-
-

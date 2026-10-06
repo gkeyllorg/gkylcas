@@ -8,7 +8,7 @@ and to test:
   maxima -r 'load("recovery-unit");testRecov("check");values;quit();'
 */
 
-load("recovery") $
+load("core/recovery.mac") $
 
 testRecov(mode) := block(
   [fn, fh, tests, label, s, difference, nFailed],

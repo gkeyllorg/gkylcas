@@ -3,7 +3,7 @@
    and tensor p=2 in velocity space.
 */
 
-load("basis-precalc/basis-pre-calc");
+load("core/basis-precalc/basis-pre-calc.mac");
 
 makevarsC(cdim) := block([vars],
   vars : [x,y,z,vx,vy,vz],

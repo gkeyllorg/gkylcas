@@ -1,4 +1,4 @@
-load("dg_fluid/fluid-euler-vol")$
+load("vlasov/dg_fluid/fluid-euler-vol.mac")$
 load(stringproc)$
 /* This script calls the functions which calculate the
    updates from the volume term due to Euler's equations. */

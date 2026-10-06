@@ -1,6 +1,6 @@
-load("modal-basis");
-load("out-scripts");
-load("maxwell/maxwell-rp-mod");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("vlasov/maxwell/maxwell-rp-mod.mac");
 load(stringproc)$
 fpprec : 24$
 

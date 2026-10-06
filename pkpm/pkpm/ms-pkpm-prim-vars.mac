@@ -1,4 +1,4 @@
-load("pkpm/pkpm-prim-vars")$
+load("pkpm/pkpm/pkpm-prim-vars.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the primitive 
    variables using weak division required to update the PKPM system. Primitive variables include:
