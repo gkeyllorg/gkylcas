@@ -9,6 +9,9 @@ load("gk_collisionless/dg_gk-surf")$
 
 /* ...... USER INPUTS........ */
 
+/* Output directory for generated files. */
+outputDir : "~/max-out/"$
+
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
 maxPolyOrder_Ser : 1$
@@ -60,7 +63,7 @@ for bInd : 1 thru length(bName) do (
       for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
         for dir : 1 thru c do (
           /* Advection in configuration space.*/
-          fname : sconcat("~/max-out/dg_gyrokinetic_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
+          fname : sconcat(outputDir,"dg_gyrokinetic_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
           disp(printf(false,"Creating surface file: ~a",fname)),
   
           fh : openw(fname),
@@ -70,7 +73,7 @@ for bInd : 1 thru length(bName) do (
           close(fh),
 
           /* Advection in configuration space in the skin cell (for boundary flux operations) .*/
-          fname : sconcat("~/max-out/dg_gyrokinetic_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
+          fname : sconcat(outputDir,"dg_gyrokinetic_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
           disp(printf(false,"Creating surface file: ~a",fname)),
 
           fh : openw(fname),
@@ -81,7 +84,7 @@ for bInd : 1 thru length(bName) do (
         ),
 
         /* Advection in velocity space.*/
-        fname : sconcat("~/max-out/dg_gyrokinetic_surf",vlabels[1],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
+        fname : sconcat(outputDir,"dg_gyrokinetic_surf",vlabels[1],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
         disp(printf(false,"Creating surface file: ~a",fname)),
   
         fh : openw(fname),
@@ -91,7 +94,7 @@ for bInd : 1 thru length(bName) do (
         close(fh),
 
         /* Advection in velocity space in the skin cell along vpar (for zero-flux BCs).*/
-        fname : sconcat("~/max-out/dg_gyrokinetic_boundary_surf",vlabels[1],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
+        fname : sconcat(outputDir,"dg_gyrokinetic_boundary_surf",vlabels[1],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
         disp(printf(false,"Creating surface file: ~a",fname)),
   
         fh : openw(fname),

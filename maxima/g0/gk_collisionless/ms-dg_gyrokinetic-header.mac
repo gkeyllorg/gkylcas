@@ -2,6 +2,9 @@
 
 /* ...... USER INPUTS........ */
 
+/* Output directory for generated files. */
+outputDir : "~/max-out/"$
+
 /* Serendipity basis. */
 maxPolyOrder_Ser : 2$
 minCdim_Ser : 1$
@@ -86,10 +89,31 @@ printPrototypes() := block([],
         )
       )   
     )
+  ),
+  /* EM terms */
+  for bInd : 1 thru length(bName) do (
+    for c : minCdim[bInd] thru maxCdim[bInd] do (
+      for gkV : 1 thru length(gkVdims[c]) do (
+        v : gkVdims[c][gkV],
+  
+        maxPolyOrderB : maxPolyOrder[bInd],
+        maxPolyOrderB : 1, /* Only declare p=1 kernels for 3x2v */
+        for polyOrder : 1 thru maxPolyOrderB do (
+          printf(fh, "GKYL_CU_DH double dg_gyrokinetic_add_apar_vol_~ax~av_~a_p~a(const double *w, const double *dxv, 
+            const double *vmap, const double *vmapSq, const double q_, const double m_, 
+            const double *bmag, const double *jacobtot_inv, const double *dualcurlbhatoverB, const double *bioverJB,
+            const double *b_i, const double *phi, const double *apar,
+            const double *fin, double* GKYL_RESTRICT out); ~%", c, v, bName[bInd], polyOrder),
+          printf(fh, "GKYL_CU_DH double dg_gyrokinetic_add_apardot_vol_~ax~av_~a_p~a(const double *vmap, const double q_, const double m_,
+            const double *apardot, const double *fin, double* GKYL_RESTRICT out); ~%", c, v, bName[bInd], polyOrder),
+          printf(fh, "~%")
+        )
+      )   
+    )
   )
 )$
 
-fh : openw("~/max-out/gkyl_dg_gyrokinetic_kernels.h")$
+fh : openw(sconcat(outputDir, "gkyl_dg_gyrokinetic_kernels.h"))$
 printf(fh, "#pragma once~%")$
 printf(fh, "~%")$
 printf(fh, "#include <math.h>~%")$

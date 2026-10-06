@@ -26,7 +26,7 @@ calcGKSurfUpdateInDir(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, vars
    BstarXdBmag_e,BstarYdBmag_e,BstarZdBmag_e,BstardBmag_e,
    hamil_e,alphaSurfL_e,alphaSurfR_e,
    fl_e,fc_e,fr_e,fUpL_e,fUpR_e,GhatL_c,GhatR_c,GhatL_e,GhatR_e,incrL_c,incrR_c,pOrderCFL,
-   fnodal_l_e, fnodal_r_e, fmodproj_e],
+   fnodal_l_e,fnodal_r_e,fmodproj_e,numC,vmap_prime_fac_l,vmap_prime_fac_c,vmap_prime_fac_r,vmap_prime_e,basisNodal,i],
 
   kill(varsC,varsP,bC,bP),
   pDim : cdim+vdim,
@@ -143,7 +143,8 @@ calcGKBoundarySurfUpdateInDir(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrd
    rdx2vec,rdv2vec,rdSurfVar2,bmagBasis,ignoreVars,inFlds_e,cmag_e,b_x_e,b_y_e,b_z_e,jacobTotInv_e,
    BstarXdBmag_e,BstarYdBmag_e,BstarZdBmag_e,BstardBmag_e,
    hamil_e,alphaUpL_e,alphaSurfL_e,alphaUpSurfL_e,alphaUpR_e,alphaSurfR_e,alphaUpSurfR_e,
-   fEdge_e,fSkin_e,fUpL_e,fUpR_e,GhatL_c,GhatR_c,GhatL_e,GhatR_e,incrL_c,incrR_c,pOrderCFL],
+   fEdge_e,fSkin_e,fUpL_e,fUpR_e,GhatL_c,GhatR_c,GhatL_e,GhatR_e,incrL_c,incrR_c,pOrderCFL,
+   numC,vmap_prime_fac_edge,vmap_prime_fac_skin,vmap_prime_e,basisNodal,i,fnodal_l_e,fnodal_r_e,fmodproj_e],
 
   kill(varsC,varsP,bC,bP),
   pDim : cdim+vdim,

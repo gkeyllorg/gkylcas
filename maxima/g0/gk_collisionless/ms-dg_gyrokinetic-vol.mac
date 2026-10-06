@@ -7,6 +7,9 @@ load("gk_collisionless/dg_gk-vol")$
 
 /* ...... USER INPUTS........ */
 
+/* Output directory for generated files. */
+outputDir : "~/max-out/"$
+
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
 maxPolyOrder_Ser : 1$
@@ -44,19 +47,35 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (c=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x2v */
       for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
-        fname : sconcat("~/max-out/dg_gyrokinetic_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        fname : sconcat(outputDir,"dg_gyrokinetic_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
         disp(printf(false,"Creating volume file: ~a",fname)),
   
         fh : openw(fname),
         printf(fh, "#include <gkyl_dg_gyrokinetic_kernels.h> ~%"),
-
         funcName : sconcat("dg_gyrokinetic_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
         buildGKVolKernel(fh, funcName, c, v, bName[bInd], polyOrder, bVarsList, false),
         close(fh),
 
+        /* Add em kernels */
+        fname : sconcat(outputDir,"dg_gyrokinetic_add_apar_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        disp(printf(false,"Creating volume file (add em): ~a",fname)),
+        fh : openw(fname),
+        printf(fh, "#include <gkyl_dg_gyrokinetic_kernels.h> ~%"),
+        funcName : sconcat("dg_gyrokinetic_add_apar_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+        addAparGKEMVolKernel(fh, funcName, c, v, bName[bInd], polyOrder, bVarsList, false),
+        close(fh),
+
+        fname : sconcat(outputDir,"dg_gyrokinetic_add_apardot_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        disp(printf(false,"Creating volume file (add em): ~a",fname)),
+        fh : openw(fname),
+        printf(fh, "#include <gkyl_dg_gyrokinetic_kernels.h> ~%"),
+        funcName : sconcat("dg_gyrokinetic_add_apardot_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+        addApardotGKEMVolKernel(fh, funcName, c, v, bName[bInd], polyOrder, bVarsList, false),
+        close(fh),
+
         /* if cdim > 1, also generate a set of kernels for the case where there is no toroidal field (by = 0) */
         if (c > 1) then (
-          fname : sconcat("~/max-out/dg_gyrokinetic_no_by_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+          fname : sconcat(outputDir,"dg_gyrokinetic_no_by_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
           disp(printf(false,"Creating volume file (no by): ~a",fname)),
     
           fh : openw(fname),
