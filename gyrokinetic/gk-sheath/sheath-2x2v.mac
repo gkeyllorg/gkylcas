@@ -11,9 +11,9 @@ fpprec : 24$
 genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
   [pdim,varsC,bC,varsP,bP,vSub,NP,varsV,vmap_e,vmapSq_e,vmap_prime_e,surfPerpVar,surfVars,surfVarsC,
    bSurf,bV,bVpar,bMu,bX,numBsurf,zvSurfVars,nodesX,nodesXMu,nodesMu,numNodesX,numNodesXMu,numNodesMu,
-   bNMu,bNX,f_e,edge,surfPerpVal,sI,phiSheath_e,phiWall_e,deltaPhi_e,deltaPhi_q,vcutSq_q,fSurf_c,
+   bNMu,bNX,f_e,edge,surfPerpVal,sI,phiSheath_e,phiWall_e,deltaPhi_e,deltaPhi_q,vcutsq_q,fSurf_c,
    fSurf_e,fSurfX_q,fSurfXMu_q,fReflSurfX_e,vparLo_e,vparUp_e,i,fSurfX_c,fReflSurfXMu_e,j,nodeIdx,
-   fSurfXMu_c,fSurfXMu_e,intLims,fReflSurfXMu_c,xBar_v,xSqBar_v,fReflSurfX_c,fReflSurf_c,fReflSurf_e,fRefl_c],
+   fSurfXMu_c,fSurfXMu_e,intLims,fReflSurfXMu_c,xBar_v,xSqBar_v,fReflSurfX_c,fReflSurf_c,fReflSurf_e,fRefl_c,vcutsq_e,nodesVparMu,tempVars1,tempVars2],
 
   pdim : cdim+vdim,
 
@@ -36,12 +36,14 @@ genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
     bV    : basisFromVars("gkhyb",[vpar,mu],polyOrder),
     bVpar : basisFromVars("gkhyb",[vpar],polyOrder),
     bMu   : basisFromVars("gkhyb",[mu],polyOrder),
+    bXMu   : basisFromVars("ser",[x,mu],polyOrder),
     bX    : basisFromVars("gkhyb",[x],polyOrder)
   ) else (
     bSurf : basisFromVars(basisFun,surfVars,polyOrder),
     bV    : basisFromVars(basisFun,[vpar,mu],polyOrder),
     bVpar : basisFromVars(basisFun,[vpar],polyOrder),
     bMu   : basisFromVars(basisFun,[mu],polyOrder),
+    bXMu   : basisFromVars("ser",[x,mu],polyOrder),
     bX    : basisFromVars(basisFun,[x],polyOrder)
   ),
   numBsurf : length(bSurf),
@@ -73,6 +75,12 @@ genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
   /* Expand input distribution function f on phase-space basis using input coeffs. */
   f_e : doExpand1(f, bP),
 
+  /* Expand vcut^2 on (x,mu) basis (bXMu). */
+  vcutsq_e : doExpand1(vcutsq, bXMu),
+
+  /* Evaluate vcutsq at (x,mu)_ij nodes. */
+  vcutsq_q : evAtNodes(vcutsq_e, nodesXMu, zvSurfVars),
+
   /* Generate separate kernels for lower/upper boundaries. */
   edge        : ["lower", "upper"],
   surfPerpVal : [-1, 1],
@@ -80,17 +88,7 @@ genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
   for sI : 1 thru length(edge) do (
 
     printf(fh, "~%"),
-    printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_reflectedf_~a_~ax~av_~a_p~a(const double *vmap, double q2Dm, const double *phi, const double *phiWall, const double *f, double *fRefl) ~%{ ~%", edge[sI], cdim, vdim, basisFun, polyOrder),
-
-    /* Calculate expansion for deltaPhi = phiSheath - phiWall, evaluated at z=zVal,
-       where zVal=-1 or 1 depending on if we're on the left or right edge of the global domain, respectively. */
-    phiSheath_e : subst(surfPerpVar=surfPerpVal[sI],doExpand1(phi, bC)),
-    phiWall_e   : subst(surfPerpVar=surfPerpVal[sI],doExpand1(phiWall, bC)),
-    deltaPhi_e  : phiSheath_e - phiWall_e,
-
-    /* Evaluate vcutSq = vcut^2 at x nodes. */
-    deltaPhi_q : evAtNodes(deltaPhi_e, nodesX, surfVarsC),
-    vcutSq_q   : gcfac(float(fullratsimp(-q2Dm*deltaPhi_q))),
+    printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_reflectedf_~a_~ax~av_~a_p~a(const double *vmap, const double *vcutsq, const double *f, double *fRefl) ~%{ ~%", edge[sI], cdim, vdim, basisFun, polyOrder),
 
     /* Evaluate f at the z surface. */
     fSurf_c : calcInnerProdList(surfVars, 1, bSurf, subst(surfPerpVar=surfPerpVal[sI], f_e)),
@@ -101,7 +99,7 @@ genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
     fSurfX_q   : evAtNodes(fSurf_e, nodesX, surfVarsC),
     fSurfXMu_q : evAtNodes(fSurf_e, nodesXMu, zvSurfVars),
 
-    printf(fh, "  double vcutSq;~%"),
+    printf(fh, "  double vcutsq_n;~%"),
     printf(fh, "  double fReflSurfX[~a][~a] = {0.}; ~%", numNodesX, length(bV)),
 
     /* Reflected f at (x)_i nodes. */
@@ -117,51 +115,28 @@ genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
     printf(fh, "  double vparAbsSqUp = vmap[0]>0.? vparUp*vparUp : vparLo*vparLo;~%"),
     printf(fh, "~%"),
 
+    printf(fh, "  double wv;~%"),
+    printf(fh, "  double dv;~%"),
+    printf(fh, "~%"),
+
+    printf(fh, "  double xBar, xSqBar;~%"),
+    printf(fh, "  double fReflSurfXMu[~a][~a] = {0.}; ~%", numNodesMu, length(bVpar)),
+    printf(fh, "~%"),
+
     for i : 1 thru numNodesX do (
       printf(fh, "  // node (x)_~a ~%", i-1),
-
-      /* Write vcut^2 at this node. */
-      printf(fh, "  vcutSq = ~a;~%", vcutSq_q[i]),
       printf(fh, "~%"),
 
-      /* If vcut^2 at this node is below all vpar^2 in this cell, BC at this node should be absorbing
-         so set coefficients of fRefl at this (x) node to 0 (no reflection from this node). */
-      printf(fh, "  if (vcutSq <= vparAbsSqLo) { // absorb (no reflection)~%"),
-      printf(fh, "~%"),
-
-      writeCExprsWithZeros1(fReflSurfX[i-1], makelist(0.,j,1,length(bV))),
-      printf(fh, "~%"),
-
-      /* If vcut^2 at this node is above the max vpar^2 in this cell, BC at this node should be full reflection */
-      /* so set coefficients of fRefl at this (x) node to coefficients of f. */
-      printf(fh, "  } else if (vcutSq > vparAbsSqUp) { // full reflection~%"),
-      printf(fh, "~%"),
-
-      /* Project f at this (x) node onto vpar,mu basis (bV). */
-      fSurfX_c : gcfac(fullratsimp(calcInnerProdList(varsV, 1, bV, fSurfX_q[i]))),
-      /* Full reflection: set fRefl bZVpMu coefficients to f bZVpMu coefficients at this (x)_i node. */
-      writeCExprsNoExpand1(fReflSurfX[i-1], fSurfX_c),
-      printf(fh, "~%"),
-
-      /* If vcut^2 at this node is in this cell, BC at this node is partial reflection. */
-      printf(fh, "  } else { // partial reflection~%"),
-      printf(fh, "~%"),
-
-      /* Reflected f at (x)_i,(mu)_j nodes. Only need to store it for one
-         (x)_i node at a time. */
+      /* Reflected f at (x)_i,(mu)_j nodes. */
       fReflSurfXMu_e : makelist(0,j,1,numNodesMu),
 
-      printf(fh, "    double wv = ~a;~%", float(fullratsimp((vparUp + vparLo)/2))),
-      printf(fh, "    double dv = ~a;~%", float(fullratsimp(vparUp - vparLo))),
-      printf(fh, "~%"),
-
-      printf(fh, "    double xBar, xSqBar;~%"),
-      printf(fh, "    double fReflSurfXMu[~a][~a] = {0.}; ~%", numNodesMu, length(bVpar)),
+      printf(fh, "  wv = ~a;~%", float(fullratsimp((vparUp + vparLo)/2))),
+      printf(fh, "  dv = ~a;~%", float(fullratsimp(vparUp - vparLo))),
       printf(fh, "~%"),
 
       /* Loop over (mu)_j nodes. */
       for j : 1 thru numNodesMu do (
-        printf(fh, "    // node (mu)_~a ~%", j-1),
+        printf(fh, "  // node (mu)_~a ~%", j-1),
 
         nodeIdx : sublist_indices(nodesXMu, lambda([x], x[1]=nodesX[i][1] and x[2]=nodesMu[j][1]))[1],
 
@@ -169,9 +144,27 @@ genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
         fSurfXMu_c : gcfac(fullratsimp(calcInnerProdList([vpar], 1, bVpar, fSurfXMu_q[nodeIdx]))),
         fSurfXMu_e : doExpand(fSurfXMu_c, bVpar),
 
+        /* Get vcut^2 at this mu node. */
+        printf(fh, "  vcutsq_n = ~a; ~%", gcfac(float(fullratsimp(vcutsq_q[nodeIdx])))),
+        printf(fh, "~%"),
+
+        /* Check regime at this (x,mu) node. */
+        printf(fh, "  if (vcutsq_n <= vparAbsSqLo) { // absorb (no reflection) ~%"),
+        printf(fh, "~%"),
+        writeCExprsWithZeros1(fReflSurfXMu[j-1], makelist(0,k,1,length(bVpar))),
+        printf(fh, "~%"),
+
+        printf(fh, "  } else if (vcutsq_n > vparAbsSqUp) { // full reflection ~%"),
+        printf(fh, "~%"),
+        writeCExprsNoExpand1(fReflSurfXMu[j-1], fSurfXMu_c),
+        printf(fh, "~%"),
+
+        printf(fh, "  } else { // partial reflection ~%"),
+        printf(fh, "~%"),
+
         printf(fh, "    if (wv > 0.) {~%"),
         printf(fh, "      // vcut in logical space.~%"),
-        printf(fh, "      double vcut_l = 2.*(sqrt(vcutSq)-wv)/dv;~%"),
+        printf(fh, "      double vcut_l = 2.*(sqrt(vcutsq_n)-wv)/dv;~%"),
         printf(fh, "~%"),
 
         intLims : [[-1,vcut_l]],
@@ -179,10 +172,10 @@ genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
         tempVars1 : [],
         tempVars1 : writeCExprs1noPowers(fReflSurfXMu[j-1], fReflSurfXMu_c, [vcut_l], tempVars1),
         printf(fh, "~%"),
-    
+
         printf(fh, "    } else {~%"),
         printf(fh, "      // vcut in logical space.~%"),
-        printf(fh, "      double vcut_l = 2.*(-sqrt(vcutSq)-wv)/dv;~%"),
+        printf(fh, "      double vcut_l = 2.*(-sqrt(vcutsq_n)-wv)/dv;~%"),
         printf(fh, "~%"),
 
         intLims : [[vcut_l,1]],
@@ -198,15 +191,18 @@ genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
            |bar{x}|<=1 and |bar{x^2}|<=1, where bar{g}=int g*f dx/int f dx. */
         xBar_v   : gcfac(float(fReflSurfXMu[j-1][1]/(sqrt(3)*fReflSurfXMu[j-1][0]))),
         xSqBar_v : gcfac(float((2*sqrt(5)*fReflSurfXMu[j-1][2]+5*fReflSurfXMu[j-1][0])/(15*fReflSurfXMu[j-1][0]))),
-        printf(fh, "  // If the cut distribution f(vpar), where vpar \in [-1,vcut_l] or [vcut_l/1],~%"),
-        printf(fh, "  // has a cell average < 0, set to 0. If it's >0 but not realizable, set to p=0.~%"),
-        printf(fh, "  xBar = ~a;~%", xBar_v),
-        printf(fh, "  xSqBar = ~a;~%", xSqBar_v),
-        printf(fh, "  if (fReflSurfXMu[~a][0]<0.) {~%",j-1),
-        writeCExprsWithZeros1(fReflSurfXMu[j-1], makelist(0,i,1,length(bVpar))),
-        printf(fh, "  } else if (fabs(xBar)>=1. || fabs(xSqBar)>=1.) {~%"),
-        writeCExprsWithZeros1(fReflSurfXMu[j-1], makelist(0,i,1,length(bVpar))),
-        printf(fh, "  }~%"),
+        printf(fh, "    // If the cut distribution f(vpar), where vpar \in [-1,vcut_l] or [vcut_l/1],~%"),
+        printf(fh, "    // has a cell average < 0, set to 0. If it's >0 but not realizable, set to p=0.~%"),
+        printf(fh, "    xBar = ~a;~%", xBar_v),
+        printf(fh, "    xSqBar = ~a;~%", xSqBar_v),
+        printf(fh, "    if (fReflSurfXMu[~a][0]<0.) {~%",j-1),
+        writeCExprsWithZeros1(fReflSurfXMu[j-1], makelist(0,k,1,length(bVpar))),
+        printf(fh, "    } else if (fabs(xBar)>=1. || fabs(xSqBar)>=1.) {~%"),
+        writeCExprsWithZeros1(fReflSurfXMu[j-1], makelist(0,k,1,length(bVpar))),
+        printf(fh, "    }~%"),
+        printf(fh, "~%"),
+
+        printf(fh, "  }~%"), /* End of partial reflection. */
         printf(fh, "~%"),
 
         /* Expand vpar coefficients in vpar basis at this (x)_i (mu)_j node. */
@@ -222,9 +218,6 @@ genGkSheathKer2x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
       /* Project fRefl at this (x)_i node onto vpar,mu basis (bV). */
       fReflSurfX_c : gcfac(fullratsimp(calcInnerProdList(varsV, 1, bV, fReflSurfX_e[i]))),
       writeCExprsNoExpand1(fReflSurfX[i-1], fReflSurfX_c),
-      printf(fh, "~%"),
-
-      printf(fh, "  }~%"), /* End of partial reflection else. */
       printf(fh, "~%"),
 
       /* Expansion in vpar,mu of fReflSurf at each (x)_i node. */
