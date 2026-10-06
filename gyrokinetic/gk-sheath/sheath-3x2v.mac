@@ -130,8 +130,8 @@ genGkSheathKer3x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
       /* Reflected f at (x,y)_i,(mu)_j nodes. */
       fReflSurfXYMu_e : makelist(0,j,1,numNodesMu),
 
-      printf(fh, "  wv = ~a;~%", float(fullratsimp((vparUp + vparLo)/2))),
-      printf(fh, "  dv = ~a;~%", float(fullratsimp(vparUp - vparLo))),
+      printf(fh, "  wv = ~a;~%", float(expand((vparUp + vparLo)/2))),
+      printf(fh, "  dv = ~a;~%", float(expand(vparUp - vparLo))),
       printf(fh, "~%"),
 
       /* Loop over (mu)_j nodes. */
@@ -144,12 +144,13 @@ genGkSheathKer3x2v(fh, cdim, vdim, basisFun, polyOrder) := block(
         fSurfXYMu_c : gcfac(fullratsimp(calcInnerProdList([vpar], 1, bVpar, fSurfXYMu_q[nodeIdx]))),
         fSurfXYMu_e : doExpand(fSurfXYMu_c, bVpar),
 
-        /* Get vcutsq at this (x,y,mu) node from the DG field. */
-        printf(fh, "  vcutsq_n = ~a; ~%", gcfac(float(fullratsimp(vcutsq_q[nodeIdx])))),
+        /* Compute vcut^2 at this mu node: vcutSq = alpha(mu) * q2Dm * deltaPhi. */
+        printf(fh, "  vcutSq = ~a; ~%", gcfac(float(expand(-vcutFact_q[nodeIdx]*q2Dm*deltaPhi_q[i])))),
         printf(fh, "~%"),
 
-        /* Check regime at this (x,y,mu) node. */
-        printf(fh, "  if (vcutsq_n <= vparAbsSqLo) { // absorb (no reflection) ~%"),
+        /* If vcut^2 at this node is below all vpar^2 in this cell, BC at this node should be absorbing 
+           so set coefficients of fRefl at this (x,y)_i node to 0 (no reflection from this node). */
+        printf(fh, "  if (vcutSq <= vparAbsSqLo) { // absorb (no reflection) ~%"),
         printf(fh, "~%"),
         writeCExprsWithZeros1(fReflSurfXYMu[j-1], makelist(0,k,1,length(bVpar))),
         printf(fh, "~%"),

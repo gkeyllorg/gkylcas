@@ -35,7 +35,7 @@ writeCExprs1s(lhs, rhs) := block([expr],
 writeCExprsRHS0(lhs, rhs) := block([expr],
   expr : float(expand(rhs)),
   for i : 1 thru length(expr) do (
-    printf(fh,"  gkyl_mat_set(rhs,~a,0,~a); ~%", i, expr[i])
+    printf(fh,"  gkyl_mat_set(rhs,~a,0,~a); ~%", i-1, expr[i])
   )
 )$
 
