@@ -7,15 +7,19 @@
 CFLAGS = -O3 -g -Wall
 CXXFLAGS = -O3 -g -std=c++11
 
-GINAC_INC = ${HOME}/gkylsoft/ginac/include
-CLN_INC = ${HOME}/gkylsoft/cln/include
+GKYLSOFT ?= ${HOME}/gkylsoft
 
-GINAC_LIB_DIR = ${HOME}/gkylsoft/ginac/lib
-CLN_LIB_DIR = ${HOME}/gkylsoft/cln/lib
+GINAC_INC = $(GKYLSOFT)/ginac/include
+CLN_INC = $(GKYLSOFT)/cln/include
+GMP_INC = /opt/homebrew/include
+
+GINAC_LIB_DIR = $(GKYLSOFT)/ginac/lib
+CLN_LIB_DIR = $(GKYLSOFT)/cln/lib
+GMP_LIB_DIR = /opt/homebrew/lib
 
 KERN_INCLUDES = -Ikernels -Ikernels/basis -Ikernels/bin_op
-INCLUDES = -Iunit -Ilib -I${GINAC_INC} -I${CLN_INC} 
-LIBDIRS = -L${GINAC_LIB_DIR} -L${CLN_LIB_DIR}
+INCLUDES = -Iunit -Ilib -I${GINAC_INC} -I${CLN_INC} -I${GMP_INC}
+LIBDIRS = -L${GINAC_LIB_DIR} -L${CLN_LIB_DIR} -L${GMP_LIB_DIR}
 PREFIX = ${HOME}/gkylsoft
 LDFLAGS = "-Wl,-rpath,${CLN_LIB_DIR}"
 

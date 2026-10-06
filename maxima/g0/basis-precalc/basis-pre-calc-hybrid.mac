@@ -42,6 +42,15 @@ writeGkHybBasisToFile(cdim, vdim, fname) := block([varsC, varsP, basisC, basisP]
   save(fname, varsC, varsP, basisC, basisP)
 )$
 
+writeGkHybVelBasisToFile(vdim, fname) := block([varsC, varsP, basisC, basisP],
+  varsV  : makevarsV(vdim),
+  basisV : [ gsOrthoNorm(varsV,
+                         append(makeSerendipBasis(varsV, 1), vx^2*makeSerendipBasis(delete(vx, varsV), 1) )
+                        )
+           ],
+  save(fname, varsV, basisV)
+)$
+
 /* Compute list of monomials */
 calcHybMonoList(cdim, vdim) := block(
   [varsC, varsP, basisC, basisP],
@@ -63,6 +72,13 @@ calcGkHybMonoList(cdim, vdim) := block(
                   vx^2*makeSerendipBasis(delete(vx, varsP), 1) ))
 )$
 
+calcGkHybVelMonoList(vdim) := block(
+  [varsV, basisV],
+  varsV : makevarsV(vdim),
+  return (append( makeSerendipBasis(varsV, 1),
+                  vx^2*makeSerendipBasis(delete(vx, varsV), 1) ))
+)$
+
 /* Generate hybrid basis files. Every combination to account for
    surface evaluations, GK and sims that are kinetic in 1v only. */
 for c : 1 thru 3 do (
@@ -81,6 +97,11 @@ for c : 1 thru 3 do (
   )
 )$
 
+/* Generate GK hybrid velocity basis files. */
+for v : 1 thru 2 do (
+  writeGkHybVelBasisToFile(v, sconcat("~/max-out/basisGkHybridVel",v,"v.lisp"))
+)$
+
 /* MF 2022/07/03: I believe these are used by GINAC, but additional manual
    steps are still needed. I'd prefer that we get rid of the GINAC stuff for
    now and do everything in Maxima. */
@@ -95,5 +116,8 @@ for c : 1 thru 3 do (
     v : gkVdims[c][vs],
     printf(fh, "~a", calcGkHybMonoList(c, v))
   )
+)$
+for v : 1 thru 2 do (
+  printf(fh, "~a", calcGkHybVelMonoList(v))
 )$
 close(fh)$

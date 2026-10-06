@@ -78,3 +78,41 @@ genModalToQuadKernelHyb(fh, cdim, vdim, basisName) := block(
   printf(fh, "} ~%"),
   printf(fh, "~%")
 )$
+
+genModalToQuadKernelHybVel(fh, vdim, basisName) := block(
+  [cdim,pdim,varsc,basisc,varsp,basisp,varsv,nodes,numNodes,
+   f_e,basisNodal,fHatNodal_e,fHatModProj_e],
+
+  cdim : 0,
+  pdim : cdim+vdim,
+
+  if basisName = "gkhyb_vel" then (
+    [varsc,basisc,varsp,basisp,vsub] : loadGkBasis(basisName, cdim, vdim, 1),
+    varsv : listify(setdifference(setify(varsp),setify(varsc))),
+    nodes : gaussOrdGkHyb(1+1, varsc, varsv)
+  ),
+
+  f_e : doExpand1(fmodal, basisp),
+
+  numNodes : length(nodes),
+
+  printf(fh, "GKYL_CU_DH ~%"), 
+  printf(fh, "void ~%"),
+  printf(fh, "modal_to_quad_~ad_~a_p1(const double* fmodal, double* GKYL_RESTRICT fquad, long linc2) { ~%", vdim, basisName),
+
+  /* Evaluate f at quadrature nodes. */
+  fOrdR_n : evAtNodes(f_e,nodes,varsp),
+
+  printf(fh, "  switch (linc2) { ~%"), 
+  for i : 1 thru numNodes do (
+    printf(fh, "    case ~a: ~%", i-1),
+    printf(fh, "      fquad[~a] = ~a; ~%", i-1, float(expand(fOrdR_n[i]))), 
+    printf(fh, "    break; ~%"),  
+    printf(fh, "~%")
+  ),
+  printf(fh, "  } ~%"), 
+  flush_output(fh),
+
+  printf(fh, "} ~%"),
+  printf(fh, "~%")
+)$

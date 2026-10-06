@@ -1,0 +1,70 @@
+/* Generate the header file for gk neutral fluid prim vars kernels. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 0$
+minCdim_Tensor : 2$
+maxCdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+printPrototype(deco, ci, bStr, pi) := block([si],
+
+  printf(fh,  "~avoid gk_neut_fluid_prim_vars_udrift_set_prob_~ax_~a_p~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *moms); ~%", deco, ci, bStr, pi),
+  printf(fh, "~avoid gk_neut_fluid_prim_vars_udrift_get_sol_~ax_~a_p~a(int count, struct gkyl_nmat *xsol, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
+
+  printf(fh, "~avoid gk_neut_fluid_prim_vars_pressure_~ax_~a_p~a(double gas_gamma, const double *moms, const double *udrift, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
+
+  printf(fh,  "~avoid gk_neut_fluid_prim_vars_temp_set_prob_~ax_~a_p~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *moms, double gas_gamma, double mass); ~%", deco, ci, bStr, pi),
+  printf(fh, "~avoid gk_neut_fluid_prim_vars_temp_get_sol_~ax_~a_p~a(int count, struct gkyl_nmat *xsol, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
+
+  printf(fh,  "~avoid gk_neut_fluid_prim_vars_udrift_temp_set_prob_~ax_~a_p~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *moms, double gas_gamma, double mass); ~%", deco, ci, bStr, pi),
+  printf(fh, "~avoid gk_neut_fluid_prim_vars_udrift_temp_get_sol_~ax_~a_p~a(int count, struct gkyl_nmat *xsol, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
+
+  printf(fh,  "~avoid gk_neut_fluid_prim_vars_flowE_set_prob_~ax_~a_p~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *moms); ~%", deco, ci, bStr, pi),
+  printf(fh, "~avoid gk_neut_fluid_prim_vars_flowE_get_sol_~ax_~a_p~a(int count, struct gkyl_nmat *xsol, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
+
+  printf(fh, "~%")
+)$
+
+/* ............ Write out the C header file ............ */
+fh : openw("~/max-out/gkyl_gk_neut_fluid_prim_vars_kernels.h")$
+
+printf(fh, "#pragma once ~%")$
+printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <gkyl_mat.h> ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+
+decorator : "GKYL_CU_DH "$
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (c>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      printPrototype(decorator, c, bName[bInd], polyOrder)
+    )
+  )
+);
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$
+/* ............ Finished writing out the C header file ............ */

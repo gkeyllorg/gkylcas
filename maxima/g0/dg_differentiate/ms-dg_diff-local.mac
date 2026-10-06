@@ -1,0 +1,46 @@
+load("dg_differentiate/dg_diff-local")$
+load(stringproc)$
+/* Generate kernels for a local (to a cell) calculation of the derivative of a
+   DG field. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for cdim : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (cdim>2 and maxPolyOrderB>1) then maxPolyOrderB : 1,
+
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      fname : sconcat("~/max-out/dg_differentiate_local_",  bName[bInd], "_", cdim, "x_p", polyOrder, ".c"),
+      fh : openw(fname),
+      printf(fh, "#include <gkyl_dg_differentiate_kernels.h>~%"),
+      printf(fh, "~%"),
+      funcName : sconcat("dg_differentiate_local_",bName[bInd], "_", cdim, "x_p", polyOrder),
+      gen_dg_diff_local(fh, funcName, cdim, bName[bInd], polyOrder),
+      close(fh)
+    )
+  )
+);

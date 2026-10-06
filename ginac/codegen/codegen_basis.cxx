@@ -18,6 +18,8 @@ get_basis_name(Gkyl::ModalBasisType type)
     bn = "hyb";
   else if (type == Gkyl::MODAL_GKHYB)
     bn = "gkhyb";
+  else if (type == Gkyl::MODAL_GKHYB_VEL)
+    bn = "gkhyb_vel";
 
   return bn;
 }
@@ -43,7 +45,7 @@ gen_eval(Gkyl::ModalBasisType type, std::ostream& fh, std::ostream& fc, const Gk
   int ndim = basis.get_ndim(), polyOrder = basis.get_polyOrder();
   int vdim = basis.get_vdim();
 
-  if (vdim == 0) {
+  if (vdim == 0 || (ndim == vdim)) {
     // function declaration
     fh << "GKYL_CU_DH void eval_" << ndim << "d_" << bn << "_" << "p" << polyOrder
        << "(const double *z, double *b);" << std::endl;  
@@ -100,7 +102,7 @@ gen_eval_expand(Gkyl::ModalBasisType type, std::ostream& fh, std::ostream& fc, c
   int ndim = basis.get_ndim(), polyOrder = basis.get_polyOrder();
   int vdim = basis.get_vdim();
 
-  if (vdim == 0) {
+  if (vdim == 0 || (ndim == vdim)) {
 
     // function declaration
     fh << "GKYL_CU_DH double eval_expand_" << ndim << "d_" << bn << "_" << "p" << polyOrder
@@ -158,7 +160,7 @@ gen_eval_grad_expand(Gkyl::ModalBasisType type, std::ostream& fh, std::ostream& 
   int ndim = basis.get_ndim(), polyOrder = basis.get_polyOrder();
   int vdim = basis.get_vdim();
 
-  if (vdim == 0) {
+  if (vdim == 0 || (ndim == vdim)) {
 
     // function declaration
     fh << "GKYL_CU_DH double eval_grad_expand_" << ndim << "d_" << bn << "_" << "p" << polyOrder
@@ -225,7 +227,7 @@ gen_flip_odd_sign(Gkyl::ModalBasisType type,
   int ndim = basis.get_ndim(), polyOrder = basis.get_polyOrder();
   int vdim = basis.get_vdim();
 
-  if (vdim == 0) {
+  if (vdim == 0 || (ndim == vdim)) {
 
     // function declarations
     fh << "GKYL_CU_DH void flip_odd_sign_" << ndim << "d_" << bn << "_" << "p" << polyOrder
@@ -288,7 +290,7 @@ gen_flip_even_sign(Gkyl::ModalBasisType type,
   int ndim = basis.get_ndim(), polyOrder = basis.get_polyOrder();
   int vdim = basis.get_vdim();
 
-  if (vdim == 0) {
+  if (vdim == 0 || (ndim == vdim)) {
 
     // function declarations
     fh << "GKYL_CU_DH void flip_even_sign_" << ndim << "d_" << bn << "_" << "p" << polyOrder
@@ -340,7 +342,7 @@ gen_node_coords(Gkyl::ModalBasisType type, std::ostream& fh, std::ostream& fc, c
   int ndim = basis.get_ndim(), polyOrder = basis.get_polyOrder();
   int vdim = basis.get_vdim();
 
-  if (vdim == 0) {
+  if (vdim == 0 || (ndim == vdim)) {
 
     // function declaration
     fh << "GKYL_CU_DH void node_coords_" << ndim << "d_" << bn << "_" << "p" << polyOrder
@@ -365,7 +367,7 @@ gen_nodal_to_modal(Gkyl::ModalBasisType type, std::ostream& fh, std::ostream& fc
   int ndim = basis.get_ndim(), polyOrder = basis.get_polyOrder();
   int vdim = basis.get_vdim();
 
-  if (vdim == 0) {
+  if (vdim == 0 || (ndim == vdim)) {
 
     // function declaration
     fh << "GKYL_CU_DH void nodal_to_modal_" << ndim << "d_" << bn << "_" << "p" << polyOrder
@@ -389,7 +391,7 @@ gen_quad_to_modal(Gkyl::ModalBasisType type, std::ostream& fh, std::ostream& fc,
   int ndim = basis.get_ndim(), polyOrder = basis.get_polyOrder();
   int vdim = basis.get_vdim();
 
-  if (vdim == 0) {
+  if (vdim == 0 || (ndim == vdim)) {
 
     // function declaration
     fh << "GKYL_CU_DH void quad_to_modal_" << ndim << "d_" << bn << "_" << "p" << polyOrder
@@ -413,7 +415,7 @@ gen_modal_to_quad(Gkyl::ModalBasisType type, std::ostream& fh, std::ostream& fc,
   int ndim = basis.get_ndim(), polyOrder = basis.get_polyOrder();
   int vdim = basis.get_vdim();
 
-  if (vdim == 0) {
+  if (vdim == 0 || (ndim == vdim)) {
 
     // function declaration
     fh << "GKYL_CU_DH void modal_to_quad_" << ndim << "d_" << bn << "_" << "p" << polyOrder
@@ -607,6 +609,64 @@ gen_gkhyb_basis()
 }
 
 void
+gen_gkhyb_vel_basis()
+{
+  // compute time-stamp
+  char buff[70];
+  time_t t = time(NULL);
+  struct tm curr_tm = *localtime(&t);
+  strftime(buff, sizeof buff, "%c", &curr_tm);
+  
+  int dims[] = { 1, 2, };
+  int max_order[] = { 1, 1, };
+
+  symbol z0("z0"), z1("z1");
+  std::vector<symbol> vars { z0, z1, };
+
+  std::ofstream header("kernels/basis/gkyl_basis_gkhyb_vel_kernels.h", std::ofstream::out);
+  header << "// " << buff << std::endl;
+  header << "#pragma once" << std::endl;
+  header << "#include <gkyl_util.h>" << std::endl;
+  header << "EXTERN_C_BEG" << std::endl;
+  
+  std::ofstream eval_file("kernels/basis/basis_eval_gkhyb_vel.c", std::ofstream::out);
+  std::ofstream flip_file("kernels/basis/basis_flip_sign_gkhyb_vel.c", std::ofstream::out);
+
+  eval_file << "// " << buff << std::endl;
+  eval_file << "#include <gkyl_basis_gkhyb_vel_kernels.h>" << std::endl;
+
+  flip_file << "// " << buff << std::endl;
+  flip_file << "#include <gkyl_basis_gkhyb_vel_kernels.h>" << std::endl;
+
+  for (int vd=1; vd<3; ++vd) {
+    int dim = vd;
+    int p = 1;
+    std::cout << vd << "vp" << p << " ";      
+    Gkyl::ModalBasis mbasis(Gkyl::MODAL_GKHYB_VEL, vd, vd, vars, p);
+      
+    // generate eval method
+    gen_eval(Gkyl::MODAL_GKHYB_VEL, header, eval_file, mbasis);
+    // generate eval_expand method
+    gen_eval_expand(Gkyl::MODAL_GKHYB_VEL, header, eval_file, mbasis);
+    gen_eval_grad_expand(Gkyl::MODAL_GKHYB_VEL, header, eval_file, mbasis);
+    // generate flip_sign methods
+    gen_flip_odd_sign(Gkyl::MODAL_GKHYB_VEL, header, flip_file, mbasis);
+    gen_flip_even_sign(Gkyl::MODAL_GKHYB_VEL, header, flip_file, mbasis);
+    // generate node_coords
+    gen_node_coords(Gkyl::MODAL_GKHYB_VEL, header, flip_file, mbasis);
+    // generate nodal to modal
+    gen_nodal_to_modal(Gkyl::MODAL_GKHYB_VEL, header, flip_file, mbasis);
+    // generate Gauss-Legendre quadrature nodal to modal
+    gen_quad_to_modal(Gkyl::MODAL_GKHYB_VEL, header, flip_file, mbasis);
+    // generate modal to Gauss-Legendre quadrature nodal 
+    gen_modal_to_quad(Gkyl::MODAL_GKHYB_VEL, header, flip_file, mbasis);
+    std::cout << std::endl;
+  }
+  
+  header << "EXTERN_C_END" << std::endl;
+}
+
+void
 gen_ten_basis()
 {
   // compute time-stamp
@@ -686,6 +746,11 @@ main(int argc, char **argv)
   gen_gkhyb_basis();
   tm = gkyl_time_diff_now_sec(tstart);
   std::cout << "Generating of modal gk hybrid basis took " << tm << " seconds" << std::endl;
+  
+  tstart = gkyl_wall_clock();
+  gen_gkhyb_vel_basis();
+  tm = gkyl_time_diff_now_sec(tstart);
+  std::cout << "Generating of modal gk hybrid vel basis took " << tm << " seconds" << std::endl;
   
   return 1;
 }

@@ -31,6 +31,9 @@ minCdim_gkhyb : 1$
 maxCdim_gkhyb : 3$
 vDims_gkhyb : [[1,2], [2], [2]]$  /* Vdim for each of Cdim. */
 
+/* GK hybrid vel basis. */
+vDims_gkhyb_vel : [1,2]$
+
 /* ...... END OF USER INPUTS........ */
 
 bName        : ["ser","tensor"]$
@@ -43,6 +46,9 @@ bNameHyb   : ["hyb","gkhyb"]$
 minCdimHyb : [minCdim_hyb, minCdim_gkhyb]$
 maxCdimHyb : [maxCdim_hyb, maxCdim_gkhyb]$
 vDims      : [vDims_hyb, vDims_gkhyb]$
+
+bNameHybVel : ["gkhyb_vel"]$
+vDimsHybVel : [vDims_gkhyb_vel]$
 
 writeNod2ModKernel(dim, basisName, pOrder) := block([nodes,numNodes,nodToMod,fmod_e],
   printf(fh, "GKYL_CU_DH~%"),
@@ -95,6 +101,26 @@ writeNod2ModKernelHyb(cdim, vdim, basisName) := block([nodes,numNodes,nodToMod,f
   printf(fh, "}~%~%")
 )$
 
+writeNod2ModKernelHybVel(vdim, basisName) := block([cdim,nodes,numNodes,nodToMod,fmod_e],
+  cdim : 0,
+  printf(fh, "GKYL_CU_DH~%"),
+  printf(fh, "void~%"),
+  printf(fh, "nodal_to_modal_~ad_~a_p1(const double *fnodal, double *fmodal)~%", vdim, basisName),
+  printf(fh, "{~%"),
+  /* Get equi-distant node locations */
+  if basisName = "gkhyb_vel" then (
+    nodes : getNodesGkHyb(cdim, vdim)
+  ),
+  numNodes : length(nodes),
+
+  /* Get modal expansion from nodal points. */
+  nodToMod : calcNodToModWithNodesHyb(basisName, cdim, vdim, nodes),
+  fmod_e : gcfac(fullratsimp(nodToMod . makelist(fnodal[i-1],i,1,numNodes))),
+  fmod_e : makelist(fmod_e[i][1],i,1,numNodes),
+  writeCExprs1(fmodal, fmod_e),
+  printf(fh, "}~%~%")
+)$
+
 /* Generate kernels for modal-to-nodal transform for regular bases. */
 for bInd : 1 thru length(bName) do (
   fname : sconcat("~/max-out/basis_nodal_to_modal_",bName[bInd], ".c"),
@@ -124,6 +150,20 @@ for bInd : 1 thru length(bNameHyb) do (
     for v : vmin thru vmax do (
       writeNod2ModKernelHyb(c, v, bNameHyb[bInd])
     )
+  ),
+  close(fh)
+);
+
+/* Generate kernels for modal-to-nodal transform for hybrid vel bases. */
+for bInd : 1 thru length(bNameHybVel) do (
+  fname : sconcat("~/max-out/basis_nodal_to_modal_",bNameHybVel[bInd], ".c"),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_basis_~a_kernels.h>~%", bNameHybVel[bInd]),
+
+  vmin : xreduce(min,vDimsHybVel[bInd]),
+  vmax : xreduce(max,vDimsHybVel[bInd]),
+  for v : vmin thru vmax do (
+    writeNod2ModKernelHybVel(v, bNameHybVel[bInd])
   ),
   close(fh)
 );

@@ -10,6 +10,8 @@ load("fem-parproj/fem-parproj-local_to_global")$
 load("fem-parproj/fem-parproj-lhs_stencil")$
 load("fem-parproj/fem-parproj-src_stencil")$
 load("fem-parproj/fem-parproj-sol_stencil")$
+load("fem-parproj/fem-parproj-bias_lhs")$
+load("fem-parproj/fem-parproj-bias_src")$
 
 /* ...... USER INPUTS........ */
 
@@ -82,6 +84,7 @@ for bInd : 1 thru length(bName) do (
 close(fh)$
 
 **/
+/**
 /* RHS source stencil kernels. */
 disp(printf(false,"Creating fem_parproj_src_stencil.c"))$
 fname : "~/max-out/fem_parproj_src_stencil.c"$
@@ -104,7 +107,6 @@ for bInd : 1 thru length(bName) do (
 )$
 close(fh)$
 
-/**
 /* Solution nodal-to-modal kernels. */
 disp(printf(false,"Creating fem_parproj_sol_stencil.c"))$
 fname : "~/max-out/fem_parproj_sol_stencil.c"$
@@ -118,4 +120,36 @@ for bInd : 1 thru length(bName) do (
   )
 )$
 close(fh)$
+
+/* ............. Biased line kernels ................ */
+
+/* Function to replace LHS equations with 0's and 1's to enforce the biasing of
+   a point (2D) or a line (3D). */
+disp(printf(false,"Creating fem_parproj_bias_line_lhs.c"))$
+fname : "~/max-out/fem_parproj_bias_line_lhs.c"$
+fh    : openw(fname)$
+printf(fh, "#include <gkyl_fem_parproj_kernels.h> ~%")$
+printf(fh, " ~%")$
+for bInd : 1 thru length(bName) do (
+  for c : 2 thru maxDim[bInd] do (
+    funcName : sconcat("fem_parproj_bias_line_lhs_", c, "x_", bName[bInd]),
+    generate_fem_parproj_bias_line_lhs(fh, funcName, c, bName[bInd], minPolyOrder[bInd], maxPolyOrder[bInd])
+  )
+)$
+close(fh)$
 **/
+
+/* Function to replace RHS source vectors with biasing potential to
+   enforce the biasing of a point (2D) or a line (3D). */
+disp(printf(false,"Creating fem_parproj_bias_line_src.c"))$
+fname : "~/max-out/fem_parproj_bias_line_src.c"$
+fh    : openw(fname)$
+printf(fh, "#include <gkyl_fem_parproj_kernels.h> ~%")$
+printf(fh, " ~%")$
+for bInd : 1 thru length(bName) do (
+  for c : 2 thru maxDim[bInd] do (
+    funcName : sconcat("fem_parproj_bias_line_src_", c, "x_", bName[bInd]),
+    generate_fem_parproj_bias_line_src(fh, funcName, c, bName[bInd], minPolyOrder[bInd], maxPolyOrder[bInd])
+  )
+)$
+close(fh)$

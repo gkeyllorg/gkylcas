@@ -42,8 +42,18 @@ for bInd : 1 thru length(bName) do (
   for cd : minCdim[bInd] thru maxCdim[bInd] do (
     for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
       disp(printf(false,sconcat("Creating gkyl_gyrokinetic_pol_density ~ax p~a ", bName[bInd]),cd,polyOrder)),
-      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder),
-      gen_pol_den_kernel(fh, funcName, cd, bName[bInd], polyOrder)
+
+      /* Represent phi with same basis and poly_order. */
+      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder,"_from_phi_",bName[bInd],"_p",polyOrder),
+      gen_pol_den_kernel(fh, funcName, cd, bName[bInd], polyOrder, bName[bInd], polyOrder),
+
+      /* Represent phi with same basis and poly_order+1. */
+      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder,"_from_phi_",bName[bInd],"_p",polyOrder+1),
+      gen_pol_den_kernel(fh, funcName, cd, bName[bInd], polyOrder, bName[bInd], polyOrder+1),
+
+      /* Represent phi with tensor basis and poly_order+1. */
+      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder,"_from_phi_","tensor","_p",polyOrder+1),
+      gen_pol_den_kernel(fh, funcName, cd, bName[bInd], polyOrder, "tensor", polyOrder+1)
     )
   ),
 

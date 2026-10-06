@@ -1,0 +1,61 @@
+load("gk_neut_fluid_prim_vars/gk_neut_fluid_prim_vars-flowE")$
+load(stringproc)$
+/* This script calls the functions which generate the kernels for calculating the flow 
+   energy using weak division. */
+
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 0$
+minCdim_Tensor : 2$
+maxCdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      disp(printf(false,sconcat("Creating prim vars flow energy funcs ",bName[bInd]," ~axp~a"),d,polyOrder)),
+
+      fname : sconcat("~/max-out/gk_neut_fluid_prim_vars_flowE_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+
+      printf(fh, "#include <gkyl_mat.h> ~%"),
+      printf(fh, "#include <gkyl_gk_neut_fluid_prim_vars_kernels.h> ~%"),
+      printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+      printf(fh, "#include <gkyl_basis_~a_~ax_p~a_inv.h> ~%", bName[bInd], d, polyOrder),
+
+      funcName : sconcat("gk_neut_fluid_prim_vars_flowE_set_prob_",  d, "x_", bName[bInd], "_p", polyOrder),
+      if (polyOrder = 1) then (
+        gk_neut_fluid_prim_vars_flowE_set_prob_p1(fh, funcName, d, bName[bInd], polyOrder)
+      )                                       
+      else (                                  
+        gk_neut_fluid_prim_vars_flowE_set_prob(fh, funcName, d, bName[bInd], polyOrder)
+      ),
+
+      funcName : sconcat("gk_neut_fluid_prim_vars_flowE_get_sol_",  d, "x_", bName[bInd], "_p", polyOrder),
+      gk_neut_fluid_prim_vars_flowE_get_sol(fh, funcName, d, bName[bInd], polyOrder),
+      close(fh)
+    )
+  )
+);

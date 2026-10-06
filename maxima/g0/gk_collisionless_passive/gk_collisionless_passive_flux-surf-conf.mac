@@ -1,0 +1,214 @@
+load("modal-basis")$
+load("out-scripts")$
+load(stringproc)$
+load("scifac")$
+load("utilities_gyrokinetic")$
+load("nodal_operations/nodal_functions")$
+fpprec : 24$
+
+build_gk_passive_flux_conf_kernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, edge, mb_bound) := block(
+  [pDim,varsC,bC,varsP,bP,vSub,numC,numP,surfVar,varLabel,dirLabel,surfIntVars,surf_cvars,surf_vvars,
+   surfNodes,nodeVars,bSurf,basisNodal,surfConfigNodes,numSurfNodes,numSurfConfigNodes,numVelNodes,
+   numMuNodes,numVparNodes,d,rdx2vec,rdv2vec,rdSurfVar2,bmagBasis,speed_c,speed_e,speed_surf_c,speed_surf_e,speed_n,
+   bmagSurf_e,vmap_e,vmapSq_e,
+   vmap_prime_e,evPoint,replaceList,JfL_e,JfR_e,JfL_c,JfR_c,
+   jacobgeo_rat_surfR_e,jacobgeo_rat_surfL_e,JfL_nodes,JfR_nodes,vmap_prime_nodes,vpardim,
+   i,j,j0index,j1index,vparindex,vpar0index,pOrderCFL],
+
+  kill(varsC,varsP,bC,bP),
+  pDim : cdim+vdim,
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  numC : length(bC),  numP : length(bP), 
+
+  surfVar  : varsP[surfDir],         /* Surface variable. */
+  varLabel : makelist(string(varsP[d]),d,1,pDim),
+  dirLabel : varLabel[surfDir],
+
+  surfIntVars : delete(surfVar,varsP), 
+  surf_cvars  : delete(surfVar, makelist(varsP[i],i,1,cdim)),
+  surf_vvars  : delete(surfVar, makelist(varsP[cdim+i],i,1,vdim)),
+
+  surfIntVarsC : delete(surfVar,varsC), 
+  bSurfC       : basisFromVars(basisFun,surfIntVarsC,polyOrder),
+  
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    surfNodes : gaussOrdGkHyb(1+1, surf_cvars, surf_vvars),
+    nodeVars  : surfIntVars, 
+    bSurf     : basisFromVars("gkhyb",surfIntVars,polyOrder),
+    basisNodal  : getVarsNodalBasisWithNodesHyb("gkhyb", cdim-1, vdim, surfIntVars, surfNodes)
+  ) else (
+    surfNodes : gaussOrd(polyOrder+1, pDim-1),
+    nodeVars  : surfIntVars,
+    bSurf     : basisFromVars(basisFun,surfIntVars,polyOrder)
+  ),
+  if cdim = 1 then (
+    surfConfigNodes : [1]
+  )
+  else (
+    surfConfigNodes : gaussOrd(polyOrder+1, cdim-1)
+  ),
+  numSurfNodes : length(surfNodes),  
+  numSurfConfigNodes : length(surfConfigNodes), 
+  numVelNodes : numSurfNodes/numSurfConfigNodes, 
+  numMuNodes : 1,
+  if vdim > 1 then ( numMuNodes : 2),
+  numVparNodes : numVelNodes/numMuNodes,
+
+  print("Working on ", funcNm),
+  printf(fh, "GKYL_CU_DH double ~a(
+    const double *w, const double *dxv,
+    const double *vmap, const double *vmapSq, const double q_, const double m_,
+    const struct gkyl_dg_surf_geom *dgs, const struct gkyl_gk_dg_surf_geom *gkdgs, 
+    const double *bmag, const double *jacobgeo_rat_surfL, const double *jacobgeo_rat_surfR,
+    const double *speedsL, const double *speedsR,
+    const double *JfL, const double *JfR, double* GKYL_RESTRICT flux_surf) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]: cell-center.~%"),
+  printf(fh, "  // dxv[NDIM]: cell length.~%"),
+  printf(fh, "  // vmap: velocity space mapping.~%"),
+  printf(fh, "  // vmapSq: velocity space mapping squared.~%"),
+  printf(fh, "  // dgs: surface DG geometry.~%"),
+  printf(fh, "  // gkdgs: gyrokinetic surface DG geometry.~%"),
+  printf(fh, "  // bmag: bmag represented on the surface.~%"),
+  printf(fh, "  // jacobgeo_rat_surfL: Ratio of surface conf-space Jacobians in left cell.~%"),
+  printf(fh, "  // jacobgeo_rat_surfR: Ratio of surface conf-space Jacobians in right cell.~%"),
+  printf(fh, "  // speedsL: characteristic speeds in left cell.~%"),
+  printf(fh, "  // speedsR: characteristic speeds in right cell.~%"),
+  printf(fh, "  // JfL: distribution times total jacobian in left cell.~%"),
+  printf(fh, "  // JfR: distribution times total jacobian in right cell.~%"),
+  printf(fh, "  // flux_surf: output surface phase space flux in each direction (cdim + 1 components).~%"),
+  printf(fh, "  //            Note: Each cell owns their *lower* edge surface evaluation.~%"),
+  printf(fh, "~%"),
+
+  /* Declare cell-center variables and variables multiplying gradients. */
+  for d : 1 thru cdim+1 do (
+    printf(fh, "  double rd~a2 = 2.0/dxv[~a];~%", varLabel[d], d-1)
+  ),
+  printf(fh, "~%"),
+  rdx2vec : makelist(eval_string(sconcat("rd",varLabel[i],"2")),i,1,cdim),
+  rdv2vec : makelist(eval_string(sconcat("rd",varLabel[i],"2")),i,cdim+1,pDim),
+  rdSurfVar2 : eval_string(sconcat("rd",dirLabel,"2")),
+
+  /* Axisymmetric basis (independent of y). */
+  bmagBasis : getAxisymmetricConfBasis(bC),
+
+  bmagSurf_e : doExpand1(bmag, bmagBasis),
+
+  /* Velocity mapping fields. */
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  /* Redefine vmap_prime to exploit the relationship between it and vmap. */
+  /*vmap_prime_e : makelist((2/dxv[cdim+d-1])*diff(vmap_e[d],varsP[cdim+d]),d,1,vdim),*/
+  vmap_prime_e : makelist(diff(vmap_e[d],varsP[cdim+d]),d,1,vdim),
+
+  if edge = true then (
+    speed_c : makelist(speedsL[(surfDir-1)*numC+i-1],i,1,numC),
+    evPoint : 1
+  ) else (
+    speed_c : makelist(speedsR[(surfDir-1)*numC+i-1],i,1,numC),
+    evPoint : -1
+  ),
+
+  speed_e      : doExpand(speed_c,bC),
+  speed_surf_c : calcInnerProdList(surfIntVarsC, 1, bSurfC, subst(surfVar=evPoint,speed_e)),
+  speed_surf_e : doExpand(speed_surf_c, bSurfC),
+  speed_n      : gcfac(float(expand(evAtNodes(speed_surf_e,surfConfigNodes,surfIntVarsC)))),
+
+  /* fl and fr */
+  JfL_e : doExpand1(JfL, bP),
+  JfR_e : doExpand1(JfR, bP),
+  JfL_c : calcInnerProdList(surfIntVars, 1, bSurf, subst(surfVar=1,JfL_e)),
+  JfR_c : calcInnerProdList(surfIntVars, 1, bSurf, subst(surfVar=-1,JfR_e)),
+  JfL_e : JfL_c . bSurf,
+  JfR_e : JfR_c . bSurf,
+
+  if (mb_bound = true) then (
+    /* Rescale ghost cell by ratio of the Jacobians at multiblock boundaries. */
+
+    if (edge = true) then (
+      /* Upper boundary. */
+      jacobgeo_rat_surfR_e : doExpand1(jacobgeo_rat_surfR, bSurfC),
+
+      JfR_c : calcInnerProdList(surfIntVars, jacobgeo_rat_surfR_e, bSurf, JfR_e),
+      printf(fh, "  double JRatfR[~a] = {0.}; ~%", length(bSurf)),
+      writeCExprsNoExpand1(JRatfR, fullratsimp(JfR_c)),
+      printf(fh, "~%"),
+      JfR_c : makelistNoZeros1(JfR_c, JRatfR),
+      JfR_e : doExpand(JfR_c, bSurf)
+    ) else (
+      /* Lower boundary. */
+      jacobgeo_rat_surfL_e : doExpand1(jacobgeo_rat_surfL, bSurfC),
+
+      JfL_c : calcInnerProdList(surfIntVars, jacobgeo_rat_surfL_e, bSurf, JfL_e),
+      printf(fh, "  double JRatfL[~a] = {0.}; ~%", length(bSurf)),
+      writeCExprsNoExpand1(JRatfL, fullratsimp(JfL_c)),
+      printf(fh, "~%"),
+      JfL_c : makelistNoZeros1(JfL_c, JRatfL),
+      JfL_e : doExpand(JfL_c, bSurf)
+    )
+  ),
+
+  JfL_nodes : gcfac(float(expand(evAtNodes(JfL_e,surfNodes,surfIntVars)))),
+  JfR_nodes : gcfac(float(expand(evAtNodes(JfR_e,surfNodes,surfIntVars)))),
+
+  vmap_prime_nodes : float(evAtNodes(vmap_prime_e[1],surfNodes,surfIntVars)),
+
+  vpardim : pDim-1,
+  if vdim = 1 then ( vpardim : pDim ),
+
+  /* Now calculate flux at all quadrature nodes */
+  printf(fh, "  double *flux_surf_nodal = &flux_surf[~a]; ~%", length(bSurf)*(surfDir-1)),
+  printf(fh, "  double cfl = 0.0; ~%"),
+  printf(fh, "  double bmag_quad = 0.0; ~%"),
+  printf(fh, "  double Jc_quad = 0.0; ~%"),
+  printf(fh, "  double B3_quad = 0.0; ~%"),
+  printf(fh, "  double normcurlbhat_quad = 0.0; ~%"),
+  printf(fh, "  double area_elem_quad = 0.0; ~%"),
+  printf(fh, "  double bhat_quad[3] = {0.0}; ~%"),
+
+  printf(fh, "  double alpha_quad = 0.0; ~%"),
+  printf(fh, "  double JfL_quad = 0.0; ~%"),
+  printf(fh, "  double JfR_quad = 0.0; ~%"),
+  printf(fh, "  double Jfavg_quad = 0.0; ~%"),
+  printf(fh, "  double Jfjump_quad = 0.0; ~%"),
+
+  for i : 1 thru numSurfConfigNodes do (
+    printf(fh, "  bmag_quad = gkdgs[~a].bmag; ~%", i-1), 
+    printf(fh, "  Jc_quad = gkdgs[~a].Jc; ~%", i-1), 
+    printf(fh, "  B3_quad = gkdgs[~a].B3; ~%", i-1), 
+    printf(fh, "  normcurlbhat_quad = gkdgs[~a].normcurlbhat; ~%", i-1), 
+    printf(fh, "  bhat_quad[0] = gkdgs[~a].bhat.x[0]; ~%", i-1), 
+    printf(fh, "  bhat_quad[1] = gkdgs[~a].bhat.x[1]; ~%", i-1), 
+    printf(fh, "  bhat_quad[2] = gkdgs[~a].bhat.x[2]; ~%", i-1), 
+    printf(fh, "  area_elem_quad = dgs[~a].area_elem; ~%", i-1), 
+    printf(fh, "~%"),
+    for j : 1 thru numVelNodes do (
+      j0index : j-1+(i-1)*numVelNodes,
+      j1index : j+(i-1)*numVelNodes,
+      vparindex : mod(j-1, numVparNodes) + 1,
+      vpar0index : mod(j-1, numVparNodes),
+      printf(fh, "~%"),
+      printf(fh, "  alpha_quad = ~a;~%",speed_n[i]),
+
+      printf(fh, "~%"),
+      /*printf(fh, "  alpha_quad = alpha_quad*area_elem_quad/Jc_quad; ~%"),*/
+      printf(fh, "  cfl = fmax(fabs(alpha_quad), fabs(cfl)); ~%"),
+      printf(fh, "  JfL_quad = ~a; ~%", JfL_nodes[j1index]),
+      printf(fh, "  JfR_quad = ~a; ~%", JfR_nodes[j1index]),
+      printf(fh, "  Jfavg_quad = (JfL_quad + JfR_quad)/2.0; ~%"),
+      printf(fh, "  Jfjump_quad = (JfR_quad - JfL_quad)/2.0; ~%"),
+      printf(fh, "  flux_surf_nodal[~a] = alpha_quad*Jfavg_quad - fabs(alpha_quad)*Jfjump_quad; ~%", j0index)
+    ),
+    printf(fh, "~%")
+  ),
+
+  /*Calculate the cfl*/
+  pOrderCFL : polyOrder,
+  printf(fh, "~%"),
+  printf(fh, "  return cfl*~a; ~%", float(0.5*(2*pOrderCFL+1)*rdSurfVar2)),
+
+  printf(fh, "~%"),
+  flush_output(fh),
+  printf(fh, "} ~%")
+
+)$

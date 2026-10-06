@@ -98,13 +98,21 @@ generate_fem_poisson_perp_lhs_stencil(funcNm, dim, basisFun, pMin, pMax) := bloc
 
         varsPerp : makelist(vars[i],i,1,dimPerp),
 
-        printf(fh, "void ~a_p~a~a(const double *epsilon, const double *kSq, const double *dx, const double *bcVals, const long *globalIdxs, gkyl_mat_triples *tri) ~%{ ~%", funcNm, polyOrder, stencilStr),
+        printf(fh, "GKYL_CU_DH void ~a_p~a~a(const double *epsilon, const double *kSq, const double *dx, const double *bcVals, const long *globalIdxs, void *out) ~%{ ~%", funcNm, polyOrder, stencilStr),
         printf(fh, "  // epsilon: permittivity tensor.~%"),
         printf(fh, "  // kSq: wave number squared (factor multiplying phi).~%"),
         printf(fh, "  // dx: cell length in each direction.~%"),
         printf(fh, "  // bcVals: values to impose as BCs, i.e. bcVals[off+0]*phi+bcVals[off+1]*epsilon^{ij}*d(phi)/dx_j=bcVals[off+2].~%"),
         printf(fh, "  // globalIdxs: global linear index of each basis function/node in current cell.~%"),
-        printf(fh, "  // tri: triples object (i,j,val), i.e. contribute val to i,j element of the global matrix.~%"),
+        printf(fh, "  // out (CPU): triples object (i,j,val), i.e. contribute val to i,j element of the global matrix.~%"),
+        printf(fh, "  // out (GPU): double array to put nonzero values of the global matrix into.~%"),
+        printf(fh, "~%"),
+
+        printf(fh, "  #ifdef __CUDA_ARCH__~%"),
+        printf(fh, "    double *csr_vals = (double *) out;~%"),
+        printf(fh, "  #else~%"),
+        printf(fh, "    gkyl_mat_triples *tri = (gkyl_mat_triples *) out;~%"),
+        printf(fh, "  #endif~%"),
         printf(fh, "~%"),
 
         nodes    : args(getNodes(basisFun, dim, polyOrder)),
@@ -229,18 +237,43 @@ generate_fem_poisson_perp_lhs_stencil(funcNm, dim, basisFun, pMin, pMax) := bloc
 
         /* Write out the coefficients of each basis_i*basis_j pair to matrix
            via triples object.*/
-        for k : 1 thru numB do (
-          vals_k : coefmatrix([lhs_c[k]],phi_c),
-          if insertVal[k] then (triplesStr : "insert") else (triplesStr : "accum"),
-          for m : 1 thru numB do (
-            val : vals_k[1][m],
-            /* MF 2023/05/11: I found one case in which 5/3 written with 15 significant
-            ** digits gave the wrong answer, but 18 sig. digits gave the correct answer.
-            ** One way to fix this is by expanding so that 5/3*3. gets written
-            ** as 5. */
-            printf(fh, "  gkyl_mat_triples_~a(tri, globalIdxs[~a], globalIdxs[~a], ~a);~%",triplesStr,k-1,m-1,expand(float(val)))
-          )
-        ),
+        printf(fh, "  #ifdef __CUDA_ARCH__~%"),
+          for k : 1 thru numB do (
+            vals_k : coefmatrix([lhs_c[k]],phi_c),
+            if insertVal[k] then (
+              opStr : "atomicExch((unsigned long long int*)",
+              csrStr : "__double_as_longlong"
+            ) else (
+              opStr : "atomicAdd(",
+              csrStr : ""
+            ),
+            for m : 1 thru numB do (
+              val : vals_k[1][m],
+              /* MF 2023/05/11: I found one case in which 5/3 written with 15 significant
+              ** digits gave the wrong answer, but 18 sig. digits gave the correct answer.
+              ** One way to fix this is by expanding so that 5/3*3. gets written
+              ** as 5. */
+              printf(fh, "    ~a &csr_vals[globalIdxs[~a]],~a(~a));~%",opStr,(k-1)*numB+m-1,csrStr,expand(float(val)))
+            )
+          ),
+        printf(fh, "  #else~%"),
+          for k : 1 thru numB do (
+            vals_k : coefmatrix([lhs_c[k]],phi_c),
+            if insertVal[k] then (
+              triplesStr : "insert"
+            ) else (
+              triplesStr : "accum"
+            ),
+            for m : 1 thru numB do (
+              val : vals_k[1][m],
+              /* MF 2023/05/11: I found one case in which 5/3 written with 15 significant
+              ** digits gave the wrong answer, but 18 sig. digits gave the correct answer.
+              ** One way to fix this is by expanding so that 5/3*3. gets written
+              ** as 5. */
+              printf(fh, "    gkyl_mat_triples_~a(tri, globalIdxs[~a], globalIdxs[~a], ~a);~%",triplesStr,k-1,m-1,expand(float(val)))
+            )
+          ),
+        printf(fh, "  #endif~%"),
         printf(fh, "~%"),
 
         printf(fh, "}~%"),

@@ -1,0 +1,36 @@
+/* Generate CX cross section (vSigmaCX) kernels for charge
+   exchange operator */
+
+load("charge_exchange/sigma-cx-calc.mac");
+load(stringproc)$
+fpprec : 24$
+
+/* Serendipity basis. */
+maxPolyOrder_Ser : 2$
+
+bName        : ["ser"]$
+maxPolyOrder : [maxPolyOrder_Ser]$
+
+fh : openw("~/max-out/gkyl_dg_cx_kernels.h")$
+printf(fh, "#pragma once ~%")$	
+printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+
+for bInd : 1 thru length(bName) do (
+  for c : 1 thru 3 do (
+
+    max_p : maxPolyOrder[bInd],
+    if c = 3 then (max_p : 1),
+
+    for p : 1 thru max_p do (
+      disp(printf(false,sconcat("Creating v_sigma_cx ", bName[bInd]," ~ax"),c)),
+
+      print("attempting to print",c,"x",p,"p functions..."),
+      /*. Calculate CX cross section. */
+      funcNm : sconcat("sigma_cx_", c, "x_", bName[bInd]),
+    
+      calcSigmaCXcellAv(fh, funcNm, c, bName[bInd], p)
+    )
+  )
+);
+close(fh)$

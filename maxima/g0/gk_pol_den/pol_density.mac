@@ -6,12 +6,12 @@ load("modal-basis");
 load("out-scripts");
 fpprec : 24$
 
-gen_pol_den_kernel(fh, funcNm, dim, basisFun, polyOrder) := block(
+gen_pol_den_kernel(fh, funcNm, dim, basisFun, polyOrder, basisFunPhi, polyOrderPhi) := block(
   [vars,basis_p,numB_p,basis,numB,phi_e,dimPerp,varsPerp,varCombos,epsSup_l,
    eps,eps_e,i,j,varsSorted,epsNew,isNew,k,rdx_ij,ijSorted,pol_den_c],
 
-  /* Load a higher order tensor basis to represent phi. */
-  [vars, basis_p] : loadBasis("tensor", dim, polyOrder+1),
+  /* Load a basis to represent phi. */
+  [vars, basis_p] : loadBasis(basisFunPhi, dim, polyOrderPhi),
   numB_p : length(basis_p),
 
   /* Load basis to represent other quantities. */

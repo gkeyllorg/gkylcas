@@ -1,0 +1,114 @@
+/*
+   Generate kernels that set the value of the solution in the RHS vector
+   due to biasing.
+*/
+
+load("modal-basis");
+load("out-scripts");
+load("nodal_operations/nodal_functions");
+load("bvp_utilities/bvp-util");
+load("fem/fem-util");
+fpprec : 24$
+
+generate_fem_parproj_bias_line_src(fh, funcNm, dim, basisFun, pMin, pMax) := block(
+  [varsC,basis,coordVarS,stencilLoc,bcTypes,bcStrs,bcKey,bcCombos,currBC,stencilStr,bN,numB,vars,nodes,numNodes,
+   src_c,dirichletNodes,dirichletNodesI,sI,d,i,bcI,polyOrder,dI,k,xedge,yedge],
+
+  [varsC,basis] : loadBasis(basisFun, dim, pMin),
+
+  /* Associative list between stencil location (-1,0,1) and variable strings in kernel name. */
+  coordVarS : getCoordVarS(varsC),
+
+  /* List of stencil locations. Each entry is a dim-dimensional list
+     with -1 meaning it is at a lower boundary, 1 upper boundary, or
+     0 away from boundaries in that direction. */
+  stencilLoc : getStencilCoords(dim),
+
+  /* Only need stencils that include all the nodes in the perp directions.
+     This is effectively upper x,y-boundary stencils, so remove all stencil
+     locations not on the upper x,y-boundaries. */
+  if dim=2 then (
+    stencilLoc : sublist(stencilLoc, lambda([x], x[1]=1))
+  ) else if dim=3 then (
+    stencilLoc : sublist(stencilLoc, lambda([x], x[1]=1 and x[2]=1))
+  ),
+
+  /* Types of boundary conditions for which to generate kernels.
+       =0 periodic
+       =1 nonperiodic
+  */
+  bcTypes : [0, 1],
+  bcStrs  : ["periodic", "nonperiodic"],
+  bcKey   : makelist([bcTypes[i],bcStrs[i]],i,1,length(bcTypes)),
+
+  for sI : 1 thru length(stencilLoc) do (
+    /* Exclude lower boundary kernels (ones that do not own upper cell-boundary nodes). */
+    if (stencilLoc[sI]=makelist(0,d,1,dim)) or
+       (length(sublist(stencilLoc[sI],lambda([x],x < 0)))=0) then (
+
+      /* Obtain the different BC combinations for this stencil.
+       Will generate a separate kernel for each. */
+      bcCombos : [[0]],
+      if stencilLoc[sI][dim] # 0 then ( bcCombos : makelist([bcTypes[i]],i,1,length(bcTypes)) ),
+  
+      /* Loop over BC combinations. Will create a separate kernel for each. */
+      for bcI : 1 thru length(bcCombos) do (
+  
+        currBC : copylist(bcCombos[bcI]),
+  
+        /* String used in kernel name, identifying stencil location and BC. */
+        stencilStr : sconcat("_",assoc(stencilLoc[sI][dim],[[-1,"lo"],[0,"in"],[1,"up"]]),
+                     assoc(stencilLoc[sI][dim],coordVarS)[dim],"_",assoc(currBC[1],bcKey),string(varsC[dim])),
+  
+        for polyOrder : pMin thru pMax do (
+  
+          printf(fh, "GKYL_CU_DH void ~a_p~a~a(const int *edge, const int *perp_dirs, double val, long nodeOff, const long *globalIdxs, double *bsrc) ~%{ ~%", funcNm, polyOrder, stencilStr),
+          printf(fh, "  // edge: -1/+1 for lower or upper edge of the cell in each perp_dir.~%"),
+          printf(fh, "  // perp_dirs: directions perpendicular to the biased line.~%"),
+          printf(fh, "  // val: biasing value.~%"),
+          printf(fh, "  // nodeOff: node offset (prob idx * global number of nodes).~%"),
+          printf(fh, "  // globalIdxs: global linear index of each basis function/node in current cell.~%"),
+          printf(fh, "  // bsrc: global right side source vector.~%"),
+          printf(fh, "~%"),
+  
+          bN   : getNodalBasis(basisFun, dim, polyOrder),
+          numB : length(bN),
+          vars : listofvars(bN),
+  
+          nodes    : args(getNodes(basisFun, dim, polyOrder)),
+          numNodes : length(nodes),
+  
+          src_c : makelist(0,i,1,numB),
+  
+          /* Set the equation corresponding to the k-th node to phi_k = bias value.
+             So we need to replace the source at this node by the boundary value. */
+          /* Here we assume that we only bias a y-line (perpendicular to x and z). */
+          for xedge : -1 thru 1 step 2 do (
+            for yedge : -1 thru 1 step 2 do (
+              printf(fh, "  if (edge[0] == ~a && edge[1] == ~a) {~%", xedge, yedge),
+              dirichletNodes : copylist(sublist(nodes,lambda([x],x[1]=xedge and x[dim]=yedge))),
+              dirichletNodesI : sublist_indices(nodes,lambda([x],x[1]=xedge and x[dim]=yedge)),
+              for j : 1 thru length(dirichletNodesI) do (
+                k : dirichletNodesI[j],
+                src_c[k] : val,
+
+                /* Write out the coefficients of each basis_i*sum_j basis_j*rho_j
+                   (modified by BCS) to RHS vector via triples object.*/
+                printf(fh, "  #ifdef __CUDA_ARCH__~%"),
+                printf(fh, "  atomicExch((unsigned long long int*) &bsrc[nodeOff+globalIdxs[~a]],__double_as_longlong(~a));~%",k-1,expand(float(src_c[k]))),
+                printf(fh, "  #else~%"),
+                printf(fh, "  bsrc[nodeOff+globalIdxs[~a]] = ~a;~%",k-1,expand(float(src_c[k]))),
+                printf(fh, "  #endif~%")
+              ),
+              printf(fh, "    }~%~%")
+            )
+          ),
+
+          printf(fh, "}~%"),
+          printf(fh, "~%")
+  
+        )
+      )
+    )
+  )
+)$

@@ -5,47 +5,41 @@ load(stringproc)$
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 1$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
-minVdim_Ser : 1$
-maxVdim_Ser : 3$
-minGkVdim_Ser : 1$
-maxGkVdim_Ser : 2$
 
+/* Tensor order basis. No need to generate p=1. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 0$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* Vdim possibilities for each of Cdim=[1,2,3]. */
+gkVdims : [[1,2], [2], [2]]$
 
 /* ...... END OF USER INPUTS........ */
 
-bName        : ["ser"]$
-minPolyOrder : [minPolyOrder_Ser]$
-maxPolyOrder : [maxPolyOrder_Ser]$
-minCdim      : [minCdim_Ser]$
-maxCdim      : [maxCdim_Ser]$
-minVdim      : [minVdim_Ser]$
-maxVdim      : [maxVdim_Ser]$
-minGkVdim      : [minGkVdim_Ser]$
-maxGkVdim      : [maxGkVdim_Ser]$
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
 
-
-polyOrder : 1$
 for bInd : 1 thru length(bName) do (
   for c : minCdim[bInd] thru maxCdim[bInd] do (
-    minPolyOrderB : minPolyOrder[bInd],
-    maxPolyOrderB : maxPolyOrder[bInd],
-    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
-      if (c=1) then (
-        for vgk : minGkVdim[bInd] thru maxGkVdim[bInd] do (
-          fname : sconcat("~/max-out/cross_prim_moms/gyrokinetic_cross_prim_moms_bgk_", c, "x", vgk, "v_", bName[bInd], "_p", polyOrder, ".c"),
-          fh : openw(fname),
-          funcName : sconcat("gyrokinetic_cross_prim_moms_bgk_", c, "x", vgk,  "v_", bName[bInd], "_p", polyOrder),
-          calcGKCrossPrimMomsBGK(fh, funcName, c, vgk, bName[bInd], polyOrder),
-          close(fh)
-        )  
-      ) else (
-        fname : sconcat("~/max-out/cross_prim_moms/gyrokinetic_cross_prim_moms_bgk_", c, "x", 2, "v_", bName[bInd], "_p", polyOrder, ".c"),
+    for gkV : 1 thru length(gkVdims[c]) do (
+      v : gkVdims[c][gkV],
+
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x2v */
+      for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
+
+        fname : sconcat("~/max-out/gyrokinetic_cross_prim_moms_bgk_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
         fh : openw(fname),
-        funcName : sconcat("gyrokinetic_cross_prim_moms_bgk_", c, "x", 2,  "v_", bName[bInd], "_p", polyOrder),
-        calcGKCrossPrimMomsBGK(fh, funcName, c, 2, bName[bInd], polyOrder),
+        funcName : sconcat("gyrokinetic_cross_prim_moms_bgk_", c, "x", v,  "v_", bName[bInd], "_p", polyOrder),
+        calcGKCrossPrimMomsBGK(fh, funcName, c, v, bName[bInd], polyOrder),
         close(fh)
       )   
     )

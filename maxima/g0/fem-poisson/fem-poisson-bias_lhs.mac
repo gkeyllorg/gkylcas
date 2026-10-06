@@ -1,9 +1,6 @@
 /*
-   Generate kernels computing the LHS of the Helmholtz equation, i.e.
-     -epsilon*\int psi_k*d(phi)/dx dS + epsilon*\int d(psi_k)/dx * d(phi)/dx dV
-     - \int psi_k * kSq * phi dV
-   where the surface term is only applied on skin cells. These kernels
-   are also used to solve the Poisson equation (kSq=0).
+   Generate kernels used to replace entries in the LHS matrix of the Poisson/Helmholtz solver
+   with zeros or ones to enforce biasing, i.e. specific values of the solution at specific points.
 */
 
 load("modal-basis");
@@ -31,7 +28,7 @@ generate_fem_poisson_bias_plane_lhs(fh, funcNm, dim, basisFun, pMax) := block(
 
   /* Types of boundary conditions for which to generate kernels.
        =0 periodic
-       =0 nonperiodic
+       =1 nonperiodic
   */
   bcTypes : [0, 1],
   bcStrs  : ["periodic", "nonperiodic"],

@@ -1,0 +1,77 @@
+/**
+ * Create kernels which evaluate a DG expansion at a coordinate and projects
+ * onto lower dimensional basis. 
+ */
+load("dg_eval_at_coords_proj/dg_ev_proj.mac")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+min_dim_Ser : 1$
+max_dim_Ser : 6$
+
+/* Tensor order basis. No need to generate p=1. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+min_dim_Tensor : 1$
+max_dim_Tensor : 3$
+
+/* GkHybrid basis. */
+minCdim_GkHybrid : 1$
+maxCdim_GkHybrid : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+gkVdims : [ [1,2], [2], [2] ]$
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor", "gkhyb"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor, 1                    ]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor, 1                    ]$
+minCdim      : [min_dim_Ser     , min_dim_Tensor     , minCdim_GkHybrid     ]$
+maxCdim      : [max_dim_Ser     , max_dim_Tensor     , maxCdim_GkHybrid     ]$
+minVdim      : [0               , 0                  , 2                    ]$
+maxVdim      : [0               , 0                  , 2                    ]$
+
+for bInd : 1 thru length(bName) do (
+  for cdim : minCdim[bInd] thru maxCdim[bInd] do (
+
+    if (bName[bInd] = "gkhyb") then (
+      vdimList : gkVdims[cdim]
+    ) else (
+      vdimList : [0]
+    ),
+
+    for vI : 1 thru length(vdimList) do (
+
+      vdim : vdimList[vI],
+      pdim : cdim+vdim,
+
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (pdim>4) then maxPolyOrderB : 1,
+
+      for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
+        if (bName[bInd] = "gkhyb") then (
+          fname : sconcat("~/max-out/dg_eval_at_coord_proj_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder, ".c"),
+          funcName : sconcat("gkyl_dg_eval_at_coord_proj_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder)
+        ) else (
+          fname : sconcat("~/max-out/dg_eval_at_coord_proj_", pdim, "x_", bName[bInd], "_p", polyOrder, ".c"),
+          funcName : sconcat("gkyl_dg_eval_at_coord_proj_", pdim, "x_", bName[bInd], "_p", polyOrder)
+        ),
+        disp(printf(false,"Creating file: ~a",fname)),
+    
+        fh : openw(fname),
+        printf(fh, "#include <gkyl_dg_eval_at_coord_proj_kernels.h> ~%"),
+        printf(fh, "~%"),
+
+        gen_dg_evproj_kernel(fh, funcName, cdim, vdim, bName[bInd], polyOrder),
+
+        gen_dg_evproj_num_basis_tar_kernel(fh, funcName, cdim, vdim, bName[bInd], polyOrder),
+
+        close(fh)
+      )
+    )
+  )
+)$

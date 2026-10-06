@@ -5,14 +5,14 @@
          remove-bracketed-expressions
          remove-bracketed-expressions-from-file
          flux-substitute
-         generate-lax-friedrichs-scalar-1d
-         generate-lax-friedrichs-scalar-1d-second-order
-         generate-roe-scalar-1d
-         generate-roe-scalar-1d-second-order)
+         train-lax-friedrichs-scalar-1d
+         train-lax-friedrichs-scalar-1d-second-order
+         train-roe-scalar-1d
+         train-roe-scalar-1d-second-order)
 
 ;; Lightweight converter from Racket expressions (expr) into strings representing equivalent C code.
 (define (convert-expr expr)
-  (match expr
+  (match expr    
     ;; If expr is a symbol, then convert it directly to a string.
     [(? symbol? symb) (symbol->string symb)]
 
@@ -81,6 +81,10 @@
     [`(>= ,arg1 ,arg2)
      (format "~a >= ~a" (convert-expr arg1) (convert-expr arg2))]
 
+    ;; If expr is a logical conjunction of the form (and expr1 expr2), then convert it to "expr1 && expr2" in C.
+    [`(and ,arg1 ,arg2)
+     (format "~a && ~a" (convert-expr arg1) (convert-expr arg2))]
+
     ;; If expr is an equality comparison of the form (equal? expr1 expr2), then convert it to "expr1 == expr2" in C.
     [`(equal? ,arg1 ,arg2)
      (format "~a == ~a" (convert-expr arg1) (convert-expr arg2))]
@@ -110,19 +114,20 @@
 (define (flux-substitute flux-expr cons-expr var-name)
   (string-replace flux-expr cons-expr var-name))
 
-;; -------------------------------------------------------------
-;; Lax–Friedrichs (Finite-Difference) Solver for a 1D Scalar PDE
-;; -------------------------------------------------------------
-(define (generate-lax-friedrichs-scalar-1d pde
-                                           #:nx [nx 200]
-                                           #:x0 [x0 0.0]
-                                           #:x1 [x1 2.0]
-                                           #:t-final [t-final 1.0]
-                                           #:cfl [cfl 0.95]
-                                           #:init-func [init-func `(cond
-                                                                     [(< x 1.0) 1.0]
-                                                                     [else 0.0])])
- "Generate C code that solves the 1D scalar PDE specified by `pde` using the Lax-Friedrichs finite-difference method.
+;; -------------------------------------------------------------------------------
+;; Train a Lax–Friedrichs (Finite-Difference) Surrogate Solver for a 1D Scalar PDE
+;; -------------------------------------------------------------------------------
+(define (train-lax-friedrichs-scalar-1d pde neural-net
+                                        #:nx [nx 200]
+                                        #:x0 [x0 0.0]
+                                        #:x1 [x1 2.0]
+                                        #:t-final [t-final 1.0]
+                                        #:cfl [cfl 0.95]
+                                        #:init-func [init-func `(cond
+                                                                  [(< x 1.0) 1.0]
+                                                                  [else 0.0])])
+  "Generate C code that trains a surrogate solver for the 1D scalar PDE specified by `pde` using the Lax-Friedrichs finite-difference method,
+   with neural network architecture `neural-net`.
   - `nx` : Number of spatial cells.
   - `x0`, `x1` : Domain boundaries.
   - `t-final`: Final time.
@@ -134,6 +139,13 @@
   (define flux-expr (hash-ref pde 'flux-expr))
   (define max-speed-expr (hash-ref pde 'max-speed-expr))
   (define parameters (hash-ref pde 'parameters))
+
+  (define max-trains (hash-ref neural-net 'max-trains))
+  (define width (hash-ref neural-net 'width))
+  (define depth (hash-ref neural-net 'depth))
+
+  (define num-threads (hash-ref neural-net 'num-threads))
+  (define mini-size (hash-ref neural-net 'mini-size))
 
   (define cons-code (convert-expr cons-expr))
   (define flux-code (convert-expr flux-expr))
@@ -153,12 +165,13 @@
 
   (define code
     (format "
-// AUTO-GENERATED CODE FOR SCALAR PDE: ~a
-// Lax–Friedrichs first-order finite-difference solver for a scalar PDE in 1D.
+// AUTO-GENERATED CODE FOR TRAINING ON SCALAR PDE: ~a
+// Train a Lax–Friedrichs first-order finite-difference surrogate solver for a scalar PDE in 1D.
 
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
+#include \"kann.h\"
 
 // Additional PDE parameters (if any).
 ~a
@@ -175,18 +188,45 @@ int main() {
   const double cfl = ~a;
   const double t_final = ~a;
 
+  // Neural network hyperparameters.
+  const double num_trains = ~a;
+  const int nn_width = ~a;
+  const int nn_depth = ~a;
+
+  const int num_threads = ~a;
+  const int mini_size = ~a;
+
   // Arrays for storing solution.
   double *u = (double*) malloc((nx + 2) * sizeof(double));
   double *un = (double*) malloc((nx + 2) * sizeof(double));
+
+  // Arrays for storing training data.
+  float **input_data = (float**) malloc(nx * num_trains * sizeof(float*));
+  float **output_data = (float**) malloc(nx * num_trains * sizeof(float*));
 
   // Initialize grid and set initial conditions.
   for (int i = 0; i <= nx + 1; i++) {
     double x = x0 + (i - 0.5) * dx;
     
     u[i] = ~a; // init-func in C.
+    un[i] = ~a; // init-func in C.
   }
 
+  // Initialize neural network architecture.
+  kad_node_t *t_net;
+  kann_t *ann;
+  t_net = kann_layer_input(2);
+  
+  for (int i = 0; i < nn_depth; i++) {
+    t_net = kann_layer_dense(t_net, nn_width);
+    t_net = kad_tanh(t_net);
+  }
+
+  t_net = kann_layer_cost(t_net, 1, KANN_C_MSE);
+  ann = kann_new(t_net, 0);
+
   double t = 0.0;
+  int n = 0;
   while (t < t_final) {
     // Determine global maximum wave-speed alpha (for stable dt).
     // Simplistic approach: we compute the local alpha for each cell and take the maximum over the entire domain.
@@ -243,19 +283,66 @@ int main() {
     u[0] = u[1];
     u[nx + 1] = u[nx];
 
+    // Accumulate to training data.
+    if (n < num_trains) {
+      for (int i = 1; i <= nx; i++) {
+        double x = x0 + (i - 0.5) * dx;
+
+        input_data[(n * nx) + (i - 1)] = (float*) malloc(2 * sizeof(float));
+        output_data[(n * nx) + (i - 1)] = (float*) malloc(sizeof(float));
+      
+        input_data[(n * nx) + (i - 1)][0] = t;
+        input_data[(n * nx) + (i - 1)][1] = x;
+        output_data[(n * nx) + (i - 1)][0] = u[i];
+      }
+    }
+
+    // Output solution to disk.
+    const char *fmt = \"%s_output_%d.csv\";
+    int sz = snprintf(0, 0, fmt, \"~a\", n);
+    char file_nm[sz + 1];
+    snprintf(file_nm, sizeof file_nm, fmt, \"~a\", n);
+    
+    FILE *fptr = fopen(file_nm, \"w\");
+    if (fptr != NULL) {
+      for (int i = 1; i <= nx; i++) {
+        double x = x0 + (i - 0.5) * dx;
+        fprintf(fptr, \"%f, %f\\n\", x, u[i]);
+      }
+
+      fclose(fptr);
+    }
+
     // Increment time.
     t += dt;
+    n += 1;
   }
 
-  // Output solution to stdout.
-  for (int i = 1; i <= nx; i++) {
-    double x = x0 + (i - 0.5) * dx;
-    printf(\"%g %g\\n\", x, u[i]);
-  }
+  // Train neural network.
+  kann_mt(ann, num_threads, mini_size);
+  kann_train_fnn1(ann, 0.0001f, 64, 50, 10, 0.1f, n * nx, input_data, output_data);
+
+  // Output neural network to disk.
+  const char *fmt = \"%s_neural_net.dat\";
+  int sz = snprintf(0, 0, fmt, \"~a\");
+  char file_nm[sz + 1];
+  snprintf(file_nm, sizeof file_nm, fmt, \"~a\");
+  
+  kann_save(file_nm, ann);
 
   free(u);
   free(un);
-   
+
+  kann_delete(ann);
+  
+  for (int i = 0; i < nx * num_trains; i++) {
+    free(input_data[i]);
+    free(output_data[i]);
+  }
+
+  free(input_data);
+  free(output_data);
+  
   return 0;
 }
 "
@@ -273,7 +360,18 @@ int main() {
            cfl
            ;; Final time.
            t-final
-           ;; Initial condition expression (e.g. (x < 1.0) ? 1.0 : 0.0)).
+           ;; Maximum number of time-steps to train on.
+           max-trains
+           ;; Neural network width.
+           width
+           ;; Neural network depth.
+           depth
+           ;; Number of threads to use during training.
+           num-threads
+           ;; Mini-batch training size.
+           mini-size
+           ;; Initial condition expressions (e.g. (x < 1.0) ? 1.0 : 0.0)).
+           init-func-code
            init-func-code
            ;; Expression for local wave-speed estimate.
            max-speed-local
@@ -283,22 +381,29 @@ int main() {
            flux-ui
            ;; Right flux f(u_{i + 1}).
            flux-up
+           ;; PDE name for file output.
+           name
+           name
+           ;; PDE name for neural network output.
+           name
+           name
            ))
   code)
 
-;; ----------------------------------------------------------------------------------------------------
-;; Lax–Friedrichs (Finite-Difference) Solver for a 1D Scalar PDE with a Second-Order Flux Extrapolation
-;; ----------------------------------------------------------------------------------------------------
-(define (generate-lax-friedrichs-scalar-1d-second-order pde limiter
-                                                        #:nx [nx 200]
-                                                        #:x0 [x0 0.0]
-                                                        #:x1 [x1 2.0]
-                                                        #:t-final [t-final 1.0]
-                                                        #:cfl [cfl 0.95]
-                                                        #:init-func [init-func `(cond
-                                                                                  [(< x 1.0) 1.0]
-                                                                                  [else 0.0])])
- "Generate C code that solves the 1D scalar PDE specified by `pde` using the Lax-Friedrichs finite-difference method with a second-order flux extrapolation using flux limiter `limiter`.
+;; ----------------------------------------------------------------------------------------------------------------------
+;; Train a Lax–Friedrichs (Finite-Difference) Surrogate Solver for a 1D Scalar PDE with a Second-Order Flux Extrapolation
+;; ----------------------------------------------------------------------------------------------------------------------
+(define (train-lax-friedrichs-scalar-1d-second-order pde limiter neural-net
+                                                     #:nx [nx 200]
+                                                     #:x0 [x0 0.0]
+                                                     #:x1 [x1 2.0]
+                                                     #:t-final [t-final 1.0]
+                                                     #:cfl [cfl 0.95]
+                                                     #:init-func [init-func `(cond
+                                                                               [(< x 1.0) 1.0]
+                                                                               [else 0.0])])
+  "Generate C code that trains a surrogate solver for the 1D scalar PDE specified by `pde` using the Lax-Friedrichs finite-difference method with a second-order flux extrapolation
+   using the flux limiter `limiter`, with neural network architecture `neural-net`.
   - `nx` : Number of spatial cells.
   - `x0`, `x1` : Domain boundaries.
   - `t-final`: Final time.
@@ -317,6 +422,13 @@ int main() {
 
   (define limiter-code (convert-expr limiter-expr))
   (define limiter-ratio-code (convert-expr limiter-ratio))
+
+  (define max-trains (hash-ref neural-net 'max-trains))
+  (define width (hash-ref neural-net 'width))
+  (define depth (hash-ref neural-net 'depth))
+
+  (define num-threads (hash-ref neural-net 'num-threads))
+  (define mini-size (hash-ref neural-net 'mini-size))
 
   (define cons-code (convert-expr cons-expr))
   (define flux-code (convert-expr flux-expr))
@@ -346,13 +458,14 @@ int main() {
 
   (define code
     (format "
-// AUTO-GENERATED CODE FOR SCALAR PDE: ~a
+// AUTO-GENERATED CODE FOR TRAINING ON SCALAR PDE: ~a
 // FLUX LIMITER: ~a
-// Lax–Friedrichs first-order finite-difference solver for a scalar PDE in 1D, with a second-order flux extrapolation.
+// Train a Lax–Friedrichs first-order finite-difference surrogate solver for a scalar PDE in 1D, with a second-order flux extrapolation.
 
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
+#include \"kann.h\"
 
 // Additional PDE parameters (if any).
 ~a
@@ -369,6 +482,14 @@ int main() {
   const double cfl = ~a;
   const double t_final = ~a;
 
+  // Neural network hyperparameters.
+  const double num_trains = ~a;
+  const int nn_width = ~a;
+  const int nn_depth = ~a;
+
+  const int num_threads = ~a;
+  const int mini_size = ~a;
+
   // Array for storing slopes.
   double *slope = (double*) malloc((nx + 4) * sizeof(double));
 
@@ -376,14 +497,33 @@ int main() {
   double *u = (double*) malloc((nx + 4) * sizeof(double));
   double *un = (double*) malloc((nx + 4) * sizeof(double));
 
+  // Arrays for storing training data.
+  float **input_data = (float**) malloc(nx * num_trains * sizeof(float*));
+  float **output_data = (float**) malloc(nx * num_trains * sizeof(float*));
+
   // Initialize grid and set initial conditions.
   for (int i = 0; i <= nx + 3; i++) {
     double x = x0 + (i - 1.5) * dx;
     
     u[i] = ~a; // init-func in C.
+    un[i] = ~a; // init-func in C.
   }
 
+  // Initialize neural network architecture.
+  kad_node_t *t_net;
+  kann_t *ann;
+  t_net = kann_layer_input(2);
+  
+  for (int i = 0; i < nn_depth; i++) {
+    t_net = kann_layer_dense(t_net, nn_width);
+    t_net = kad_tanh(t_net);
+  }
+
+  t_net = kann_layer_cost(t_net, 1, KANN_C_MSE);
+  ann = kann_new(t_net, 0);
+
   double t = 0.0;
+  int n = 0;
   while (t < t_final) {
     // Determine global maximum wave-speed alpha (for stable dt).
     // Simplistic approach: we compute the local alpha for each cell and take the maximum over the entire domain.
@@ -476,20 +616,66 @@ int main() {
     u[nx + 2] = u[nx + 1];
     u[nx + 3] = u[nx + 1];
 
+    // Accumulate to training data.
+    if (n < num_trains) {
+      for (int i = 2; i <= nx + 1; i++) {
+        double x = x0 + (i - 1.5) * dx;
+
+        input_data[(n * nx) + (i - 2)] = (float*) malloc(2 * sizeof(float));
+        output_data[(n * nx) + (i - 2)] = (float*) malloc(sizeof(float));
+      
+        input_data[(n * nx) + (i - 2)][0] = t;
+        input_data[(n * nx) + (i - 2)][1] = x;
+        output_data[(n * nx) + (i - 2)][0] = u[i];
+      }
+    }
+
+    // Output solution to disk.
+    const char *fmt = \"%s_output_%d.csv\";
+    int sz = snprintf(0, 0, fmt, \"~a\", n);
+    char file_nm[sz + 1];
+    snprintf(file_nm, sizeof file_nm, fmt, \"~a\", n);
+    
+    FILE *fptr = fopen(file_nm, \"w\");
+    if (fptr != NULL) {
+      for (int i = 2; i <= nx + 1; i++) {
+        double x = x0 + (i - 1.5) * dx;
+        fprintf(fptr, \"%f, %f\\n\", x, u[i]);
+      }
+
+      fclose(fptr);
+    }
+
     // Increment time.
     t += dt;
+    n += 1;
   }
 
-  // Output solution to stdout.
-  for (int i = 2; i <= nx + 1; i++) {
-    double x = x0 + (i - 1.5) * dx;
-    printf(\"%g %g\\n\", x, u[i]);
-  }
+  // Train neural network.
+  kann_mt(ann, num_threads, mini_size);
+  kann_train_fnn1(ann, 0.0001f, 64, 50, 10, 0.1f, n * nx, input_data, output_data);
+
+  // Output neural network to disk.
+  const char *fmt = \"%s_neural_net.dat\";
+  int sz = snprintf(0, 0, fmt, \"~a\");
+  char file_nm[sz + 1];
+  snprintf(file_nm, sizeof file_nm, fmt, \"~a\");
+  
+  kann_save(file_nm, ann);
 
   free(u);
   free(un);
-  free(slope);
-   
+
+  kann_delete(ann);
+  
+  for (int i = 0; i < nx * num_trains; i++) {
+    free(input_data[i]);
+    free(output_data[i]);
+  }
+
+  free(input_data);
+  free(output_data);
+  
   return 0;
 }
 "
@@ -509,7 +695,18 @@ int main() {
            cfl
            ;; Final time.
            t-final
-           ;; Initial condition expression (e.g. (x < 1.0) ? 1.0 : 0.0)).
+           ;; Maximum number of time-steps to train on.
+           max-trains
+           ;; Neural network width.
+           width
+           ;; Neural network depth.
+           depth
+           ;; Number of threads to use during training.
+           num-threads
+           ;; Mini-batch training size.
+           mini-size
+           ;; Initial condition expressions (e.g. (x < 1.0) ? 1.0 : 0.0)).
+           init-func-code
            init-func-code
            ;; Expression for local wave-speed estimate.
            max-speed-local
@@ -535,22 +732,29 @@ int main() {
            flux-uiR-evol
            ;; Evolved left positive flux f(u_{i + 1, L+}).
            flux-upL-evol
+           ;; PDE name for file output.
+           name
+           name
+           ;; PDE name for neural network output.
+           name
+           name
            ))
   code)
 
-;; ----------------------------------------------
-;; Roe (Finite-Volume) Solver for a 1D Scalar PDE
-;; ----------------------------------------------
-(define (generate-roe-scalar-1d pde
-                                #:nx [nx 200]
-                                #:x0 [x0 0.0]
-                                #:x1 [x1 2.0]
-                                #:t-final [t-final 1.0]
-                                #:cfl [cfl 0.95]
-                                #:init-func [init-func `(cond
-                                                          [(< x 1.0) 1.0]
-                                                          [else 0.0])])
- "Generate C code that solves the 1D scalar PDE specified by `pde` using the Roe finite-volume method.
+;; ----------------------------------------------------------------
+;; Train a Roe (Finite-Volume) Surrogate Solver for a 1D Scalar PDE
+;; ----------------------------------------------------------------
+(define (train-roe-scalar-1d pde neural-net
+                             #:nx [nx 200]
+                             #:x0 [x0 0.0]
+                             #:x1 [x1 2.0]
+                             #:t-final [t-final 1.0]
+                             #:cfl [cfl 0.95]
+                             #:init-func [init-func `(cond
+                                                       [(< x 1.0) 1.0]
+                                                       [else 0.0])])
+ "Generate C code that trains a surrogate solver for the 1D scalar PDE specified by `pde` using the Roe finite-volume method,
+  with neural network architecture `neural-net`.
   - `nx` : Number of spatial cells.
   - `x0`, `x1` : Domain boundaries.
   - `t-final`: Final time.
@@ -562,6 +766,13 @@ int main() {
   (define flux-expr (hash-ref pde 'flux-expr))
   (define max-speed-expr (hash-ref pde 'max-speed-expr))
   (define parameters (hash-ref pde 'parameters))
+
+  (define max-trains (hash-ref neural-net 'max-trains))
+  (define width (hash-ref neural-net 'width))
+  (define depth (hash-ref neural-net 'depth))
+
+  (define num-threads (hash-ref neural-net 'num-threads))
+  (define mini-size (hash-ref neural-net 'mini-size))
 
   (define flux-deriv (symbolic-simp (symbolic-diff flux-expr cons-expr)))
 
@@ -588,12 +799,13 @@ int main() {
 
   (define code
     (format "
-// AUTO-GENERATED CODE FOR SCALAR PDE: ~a
-// Roe higher-order finite-volume solver for a scalar PDE in 1D.
+// AUTO-GENERATED CODE FOR TRAINING ON SCALAR PDE: ~a
+// Train a Roe higher-order finite-volume surrogate solver for a scalar PDE in 1D.
 
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
+#include \"kann.h\"
 
 // Additional PDE parameters (if any).
 ~a
@@ -610,18 +822,45 @@ int main() {
   const double cfl = ~a;
   const double t_final = ~a;
 
+  // Neural network hyperparameters.
+  const double num_trains = ~a;
+  const int nn_width = ~a;
+  const int nn_depth = ~a;
+
+  const int num_threads = ~a;
+  const int mini_size = ~a;
+
   // Arrays for storing solution.
   double *u = (double*) malloc((nx + 2) * sizeof(double));
   double *un = (double*) malloc((nx + 2) * sizeof(double));
+
+  // Arrays for storing training data.
+  float **input_data = (float**) malloc(nx * num_trains * sizeof(float*));
+  float **output_data = (float**) malloc(nx * num_trains * sizeof(float*));
 
   // Initialize grid and set initial conditions.
   for (int i = 0; i <= nx + 1; i++) {
     double x = x0 + (i - 0.5) * dx;
     
     u[i] = ~a; // init-func in C.
+    un[i] = ~a; // init-func in C.
   }
 
+  // Initialize neural network architecture.
+  kad_node_t *t_net;
+  kann_t *ann;
+  t_net = kann_layer_input(2);
+  
+  for (int i = 0; i < nn_depth; i++) {
+    t_net = kann_layer_dense(t_net, nn_width);
+    t_net = kad_tanh(t_net);
+  }
+
+  t_net = kann_layer_cost(t_net, 1, KANN_C_MSE);
+  ann = kann_new(t_net, 0);
+
   double t = 0.0;
+  int n = 0;
   while (t < t_final) {
     // Determine global maximum wave-speed alpha (for stable dt).
     // Simplistic approach: we compute the local alpha for each cell and take the maximum over the entire domain.
@@ -685,18 +924,65 @@ int main() {
     u[0] = u[1];
     u[nx + 1] = u[nx];
 
+    // Accumulate to training data.
+    if (n < num_trains) {
+      for (int i = 1; i <= nx; i++) {
+        double x = x0 + (i - 0.5) * dx;
+
+        input_data[(n * nx) + (i - 1)] = (float*) malloc(2 * sizeof(float));
+        output_data[(n * nx) + (i - 1)] = (float*) malloc(sizeof(float));
+      
+        input_data[(n * nx) + (i - 1)][0] = t;
+        input_data[(n * nx) + (i - 1)][1] = x;
+        output_data[(n * nx) + (i - 1)][0] = u[i];
+      }
+    }
+
+    // Output solution to disk.
+    const char *fmt = \"%s_output_%d.csv\";
+    int sz = snprintf(0, 0, fmt, \"~a\", n);
+    char file_nm[sz + 1];
+    snprintf(file_nm, sizeof file_nm, fmt, \"~a\", n);
+    
+    FILE *fptr = fopen(file_nm, \"w\");
+    if (fptr != NULL) {
+      for (int i = 1; i <= nx; i++) {
+        double x = x0 + (i - 0.5) * dx;
+        fprintf(fptr, \"%f, %f\\n\", x, u[i]);
+      }
+
+      fclose(fptr);
+    }
+
     // Increment time.
     t += dt;
+    n += 1;
   }
 
-  // Output solution to stdout.
-  for (int i = 1; i <= nx; i++) {
-    double x = x0 + (i - 0.5) * dx;
-    printf(\"%g %g\\n\", x, u[i]);
-  }
+  // Train neural network.
+  kann_mt(ann, num_threads, mini_size);
+  kann_train_fnn1(ann, 0.0001f, 64, 50, 10, 0.1f, n * nx, input_data, output_data);
+
+  // Output neural network to disk.
+  const char *fmt = \"%s_neural_net.dat\";
+  int sz = snprintf(0, 0, fmt, \"~a\");
+  char file_nm[sz + 1];
+  snprintf(file_nm, sizeof file_nm, fmt, \"~a\");
+  
+  kann_save(file_nm, ann);
 
   free(u);
   free(un);
+
+  kann_delete(ann);
+  
+  for (int i = 0; i < nx * num_trains; i++) {
+    free(input_data[i]);
+    free(output_data[i]);
+  }
+
+  free(input_data);
+  free(output_data);
    
   return 0;
 }
@@ -715,7 +1001,18 @@ int main() {
            cfl
            ;; Final time.
            t-final
-           ;; Initial condition expression (e.g. (x < 1.0) ? 1.0 : 0.0)).
+           ;; Maximum number of time-steps to train on.
+           max-trains
+           ;; Neural network width.
+           width
+           ;; Neural network depth.
+           depth
+           ;; Number of threads to use during training.
+           num-threads
+           ;; Mini-batch training size.
+           mini-size
+           ;; Initial condition expressions (e.g. (x < 1.0) ? 1.0 : 0.0)).
+           init-func-code
            init-func-code
            ;; Expression for local wave-speed estimate.
            max-speed-local
@@ -731,22 +1028,29 @@ int main() {
            flux-deriv-ui
            ;; Right flux derivative f'(u_{i + 1}).
            flux-deriv-up
+           ;; PDE name for file output.
+           name
+           name
+           ;; PDE name for neural network output.
+           name
+           name
            ))
   code)
 
-;; -------------------------------------------------------------------------------------
-;; Roe (Finite-Volume) Solver for a 1D Scalar PDE with a Second-Order Flux Extrapolation
-;; -------------------------------------------------------------------------------------
-(define (generate-roe-scalar-1d-second-order pde limiter
-                                             #:nx [nx 200]
-                                             #:x0 [x0 0.0]
-                                             #:x1 [x1 2.0]
-                                             #:t-final [t-final 1.0]
-                                             #:cfl [cfl 0.95]
-                                             #:init-func [init-func `(cond
-                                                                       [(< x 1.0) 1.0]
-                                                                       [else 0.0])])
- "Generate C code that solves the 1D scalar PDE specified by `pde` using the Roe finite-volume method with a second-order flux extrapolation using flux limiter `limiter`.
+;; -------------------------------------------------------------------------------------------------------
+;; Train a Roe (Finite-Volume) Surrogate Solver for a 1D Scalar PDE with a Second-Order Flux Extrapolation
+;; -------------------------------------------------------------------------------------------------------
+(define (train-roe-scalar-1d-second-order pde limiter neural-net
+                                          #:nx [nx 200]
+                                          #:x0 [x0 0.0]
+                                          #:x1 [x1 2.0]
+                                          #:t-final [t-final 1.0]
+                                          #:cfl [cfl 0.95]
+                                          #:init-func [init-func `(cond
+                                                                    [(< x 1.0) 1.0]
+                                                                    [else 0.0])])
+ "Generate C code that trains a surrogate solver for the 1D scalar PDE specified by `pde` using the Roe finite-volume method with a second-order flux extrapolation
+  using flux limiter `limiter`, with neural network architecture `neural-net`.
   - `nx` : Number of spatial cells.
   - `x0`, `x1` : Domain boundaries.
   - `t-final`: Final time.
@@ -765,6 +1069,13 @@ int main() {
 
   (define limiter-code (convert-expr limiter-expr))
   (define limiter-ratio-code (convert-expr limiter-ratio))
+
+  (define max-trains (hash-ref neural-net 'max-trains))
+  (define width (hash-ref neural-net 'width))
+  (define depth (hash-ref neural-net 'depth))
+
+  (define num-threads (hash-ref neural-net 'num-threads))
+  (define mini-size (hash-ref neural-net 'mini-size))
 
   (define flux-deriv (symbolic-simp (symbolic-diff flux-expr cons-expr)))
 
@@ -802,13 +1113,14 @@ int main() {
 
   (define code
     (format "
-// AUTO-GENERATED CODE FOR SCALAR PDE: ~a
+// AUTO-GENERATED CODE FOR TRAINING ON SCALAR PDE: ~a
 // FLUX LIMITER: ~a
-// Roe higher-order finite-volume solver for a scalar PDE in 1D, with a second-order flux extrapolation.
+// Train a Roe higher-order finite-volume surrogate solver for a scalar PDE in 1D, with a second-order flux extrapolation.
 
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
+#include \"kann.h\"
 
 // Additional PDE parameters (if any).
 ~a
@@ -825,6 +1137,14 @@ int main() {
   const double cfl = ~a;
   const double t_final = ~a;
 
+  // Neural network hyperparameters.
+  const double num_trains = ~a;
+  const int nn_width = ~a;
+  const int nn_depth = ~a;
+
+  const int num_threads = ~a;
+  const int mini_size = ~a;
+
   // Array for storing slopes.
   double *slope = (double*) malloc((nx + 4) * sizeof(double));
   
@@ -832,14 +1152,33 @@ int main() {
   double *u = (double*) malloc((nx + 4) * sizeof(double));
   double *un = (double*) malloc((nx + 4) * sizeof(double));
 
+  // Arrays for storing training data.
+  float **input_data = (float**) malloc(nx * num_trains * sizeof(float*));
+  float **output_data = (float**) malloc(nx * num_trains * sizeof(float*));
+
   // Initialize grid and set initial conditions.
   for (int i = 0; i <= nx + 3; i++) {
     double x = x0 + (i - 1.5) * dx;
     
     u[i] = ~a; // init-func in C.
+    un[i] = ~a; // init-func in C.
   }
 
+  // Initialize neural network architecture.
+  kad_node_t *t_net;
+  kann_t *ann;
+  t_net = kann_layer_input(2);
+  
+  for (int i = 0; i < nn_depth; i++) {
+    t_net = kann_layer_dense(t_net, nn_width);
+    t_net = kad_tanh(t_net);
+  }
+
+  t_net = kann_layer_cost(t_net, 1, KANN_C_MSE);
+  ann = kann_new(t_net, 0);
+
   double t = 0.0;
+  int n = 0;
   while (t < t_final) {
     // Determine global maximum wave-speed alpha (for stable dt).
     // Simplistic approach: we compute the local alpha for each cell and take the maximum over the entire domain.
@@ -874,7 +1213,7 @@ int main() {
       slope[i] = limiter * (0.5 * ((u[i] - u[i - 1]) + (u[i + 1] - u[i])));
     }
 
-    // Compute fluxes with Roe approximation and update the conserved variable.
+    // Compute fluxes with Roe approximation (with a second-order flux extrapolation) and update the conserved variable.
     for (int i = 2; i <= nx + 1; i++) {
       // Extrapolate boundary states.
       double umL = u[i - 1] - (0.5 * slope[i - 1]);
@@ -941,19 +1280,66 @@ int main() {
     u[nx + 2] = u[nx + 1];
     u[nx + 3] = u[nx + 1];
 
+    // Accumulate to training data.
+    if (n < num_trains) {
+      for (int i = 2; i <= nx + 1; i++) {
+        double x = x0 + (i - 1.5) * dx;
+
+        input_data[(n * nx) + (i - 2)] = (float*) malloc(2 * sizeof(float));
+        output_data[(n * nx) + (i - 2)] = (float*) malloc(sizeof(float));
+      
+        input_data[(n * nx) + (i - 2)][0] = t;
+        input_data[(n * nx) + (i - 2)][1] = x;
+        output_data[(n * nx) + (i - 2)][0] = u[i];
+      }
+    }
+
+    // Output solution to disk.
+    const char *fmt = \"%s_output_%d.csv\";
+    int sz = snprintf(0, 0, fmt, \"~a\", n);
+    char file_nm[sz + 1];
+    snprintf(file_nm, sizeof file_nm, fmt, \"~a\", n);
+    
+    FILE *fptr = fopen(file_nm, \"w\");
+    if (fptr != NULL) {
+      for (int i = 2; i <= nx + 1; i++) {
+        double x = x0 + (i - 1.5) * dx;
+        fprintf(fptr, \"%f, %f\\n\", x, u[i]);
+      }
+
+      fclose(fptr);
+    }
+
     // Increment time.
     t += dt;
+    n += 1;
   }
 
-  // Output solution to stdout.
-  for (int i = 2; i <= nx + 1; i++) {
-    double x = x0 + (i - 1.5) * dx;
-    printf(\"%g %g\\n\", x, u[i]);
-  }
+  // Train neural network.
+  kann_mt(ann, num_threads, mini_size);
+  kann_train_fnn1(ann, 0.0001f, 64, 50, 10, 0.1f, n * nx, input_data, output_data);
+
+  // Output neural network to disk.
+  const char *fmt = \"%s_neural_net.dat\";
+  int sz = snprintf(0, 0, fmt, \"~a\");
+  char file_nm[sz + 1];
+  snprintf(file_nm, sizeof file_nm, fmt, \"~a\");
+  
+  kann_save(file_nm, ann);
 
   free(u);
   free(un);
   free(slope);
+
+  kann_delete(ann);
+  
+  for (int i = 0; i < nx * num_trains; i++) {
+    free(input_data[i]);
+    free(output_data[i]);
+  }
+
+  free(input_data);
+  free(output_data);
    
   return 0;
 }
@@ -974,7 +1360,18 @@ int main() {
            cfl
            ;; Final time.
            t-final
-           ;; Initial condition expression (e.g. (x < 1.0) ? 1.0 : 0.0)).
+           ;; Maximum number of time-steps to train on.
+           max-trains
+           ;; Neural network width.
+           width
+           ;; Neural network depth.
+           depth
+           ;; Number of threads to use during training.
+           num-threads
+           ;; Mini-batch training size.
+           mini-size
+           ;; Initial condition expressions (e.g. (x < 1.0) ? 1.0 : 0.0)).
+           init-func-code
            init-func-code
            ;; Expression for local wave-speed estimate.
            max-speed-local
@@ -1008,5 +1405,11 @@ int main() {
            flux-deriv-uiR-evol
            ;; Evolved left positive flux derivative f'(u_{i + 1, L+}).
            flux-deriv-upL-evol
+           ;; PDE name for file output.
+           name
+           name
+           ;; PDE name for neural network output.
+           name
+           name
            ))
   code)

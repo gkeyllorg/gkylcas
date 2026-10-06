@@ -1,0 +1,187 @@
+/* This script generates the kernels for calculating the flow energy
+   using weak division. */
+
+load("modal-basis")$
+load("out-scripts")$
+load(stringproc)$
+load("scifac")$
+load("nodal_operations/nodal_functions")$
+fpprec : 24$
+
+/* Special set of kernels which analytically invert the matrix for 1/rho 
+   for p=1 using the basis_inv operator. Significantly faster than the bin_op operator,
+   but only works for p=1 */
+gk_neut_fluid_prim_vars_flowE_set_prob_p1(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rho_e, expr_flowE, i],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "GKYL_CU_DH void ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, 
+    const double *moms) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // count: integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // A: preallocated LHS matrix. ~%"),
+  printf(fh, "  // rhs: preallocated RHS vector. ~%"),
+  printf(fh, "  // moms: moments (rho, rho ux, rho uy, rho uz, totalE).~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  // For poly_order = 1, we can analytically invert the matrix and just store the solution ~%"),
+  printf(fh, "  struct gkyl_mat rhs_flowE = gkyl_nmat_get(rhs, count); ~%"),
+
+  printf(fh, "  // Clear rhs for each component of flow velocity being solved for ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_flowE, 0.0); ~%"),
+
+  printf(fh, "  const double *rho   = &moms[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux = &moms[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy = &moms[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz = &moms[~a]; ~%", 3*NC),
+  printf(fh, "~%"),
+
+  /* Terms in sum rhou . rhou */
+  printf(fh, "  double rhouxSq[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rhoux, rhoux, rhouxSq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+  printf(fh, "  double rhouySq[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rhouy, rhouy, rhouySq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+  printf(fh, "  double rhouzSq[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rhouz, rhouz, rhouzSq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  /* Compute 0.5 * (rho u)^2. */
+  printf(fh, "  double rhouSqD2[~a]; ~%", NC),
+  for i : 1 thru NC do (
+    printf(fh, "  rhouSqD2[~a] = 0.5*(rhouxSq[~a] + rhouySq[~a] + rhouzSq[~a]); ~%", i-1, i-1, i-1, i-1)
+  ),
+  printf(fh, "~%"),
+
+  /* Expand rho. */
+  rho_e : doExpand1(rho, bC),
+
+  /* Arrays for storing inverse of rho */
+  printf(fh, "  double rho_inv[~a] = {0.0}; ~%", NC),
+  printf(fh, "  ~a_~ax_p~a_inv(rho, rho_inv); ~%", basisFun, cdim, polyOrder),
+
+  printf(fh, "  // Calculate expansions of flow energy. ~%"),
+  printf(fh, "  double flowE[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rho_inv, rhouSqD2, flowE); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  expr_flowE : float(expand(makelist(flowE[i],i,0,NC-1))),
+
+  for i : 1 thru length(expr_flowE) do (
+    printf(fh,"  gkyl_mat_set(&rhs_flowE,~a,0,~a); ~%", i-1, expr_flowE[i])
+  ),
+  printf(fh, " ~%"),
+  printf(fh, "} ~%")
+)$
+
+gk_neut_fluid_prim_vars_flowE_set_prob(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rho_e, expr_flowE, i, flowE_e, flowE_c, eq_rho, E_rho, j],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "GKYL_CU_DH void ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, 
+    const double *moms) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // count: integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // A: preallocated LHS matrix. ~%"),
+  printf(fh, "  // rhs: preallocated RHS vector. ~%"),
+  printf(fh, "  // moms: Moments [rho, rho ux, rho uy, rho uz, totalE].~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  struct gkyl_mat A_flowE = gkyl_nmat_get(A, count); ~%"),
+
+  printf(fh, "  struct gkyl_mat rhs_flowE = gkyl_nmat_get(rhs, count); ~%"),
+
+  printf(fh, "  // Clear matrix and rhs.~%"),
+  printf(fh, "  gkyl_mat_clear(&A_flowE, 0.0); gkyl_mat_clear(&rhs_flowE, 0.0); ~%"),
+
+  printf(fh, "  const double *rho   = &moms[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux = &moms[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy = &moms[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz = &moms[~a]; ~%", 3*NC),
+
+  printf(fh, "~%"),
+  /* Terms in sum rhou . rhou */
+  printf(fh, "  double rhouxSq[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rhoux, rhoux, rhouxSq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+  printf(fh, "  double rhouySq[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rhouy, rhouy, rhouySq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+  printf(fh, "  double rhouzSq[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rhouz, rhouz, rhouzSq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  /* Compute 0.5 * (rho u)^2. */
+  printf(fh, "  double rhouSqD2[~a]; ~%", NC),
+  for i : 1 thru NC do (
+    printf(fh, "  rhouSqD2[~a] = 0.5*(rhouxSq[~a] + rhouySq[~a] + rhouzSq[~a]); ~%", i-1, i-1, i-1, i-1)
+  ),
+  printf(fh, "~%"),
+
+  /* Expand rho. */
+  rho_e : doExpand1(rho, bC),
+
+  expr_flowE : float(expand(makelist(rhouSqD2[i],i,0,NC-1))),
+
+  for i : 1 thru length(expr_flowE) do (
+    printf(fh,"  gkyl_mat_set(&rhs_flowE,~a,0,~a); ~%", i-1, expr_flowE[i])
+  ),
+  printf(fh, " ~%"),
+
+  /* Generate matrix of unknown coefficients */
+  flowE_e : doExpand1(flowE,bC),
+  flowE_c : makelist(flowE[i],i,0,NC-1),
+  eq_rho : calcInnerProdList(varsC,flowE_e,bC,rho_e),
+  E_rho : fullratsimp(coefmatrix(eq_rho,flowE_c)),
+
+  /* Matrix is dense so just do a simple write routine */
+  for i : 1 thru NC do (
+    for j : 1 thru NC do (
+      printf(fh,"  gkyl_mat_set(&A_flowE,~a,~a,~a); ~%", i-1, j-1, float(expand(E_rho[i,j]))),
+      printf(fh, " ~%")
+    )
+  ),
+  printf(fh, "} ~%")
+)$
+
+gk_neut_fluid_prim_vars_flowE_get_sol(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, i],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH void ~a(int count, struct gkyl_nmat *xsol, 
+    double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // count: integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // xsol: Input solution vector. ~%"),
+  printf(fh, "  // out: Output volume expansion of flow velocity and temperature;~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  struct gkyl_mat x_flowE = gkyl_nmat_get(xsol, count); ~%"),
+
+  printf(fh, "  double *flowE = &out[~a]; ~%", 0*NC),
+  printf(fh, "~%"),
+
+  /* Fetch volume expansion solution from linear solve */
+  for i : 1 thru NC do (
+    printf(fh,"  flowE[~a] = gkyl_mat_get(&x_flowE,~a,0); ~%", i-1, i-1)
+  ),
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$
+

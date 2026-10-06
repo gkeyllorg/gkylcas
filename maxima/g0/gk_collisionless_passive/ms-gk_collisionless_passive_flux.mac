@@ -1,0 +1,85 @@
+/*
+  Generate the kernel for surface expansions of the phase space characteristics.
+
+  The functions called in this file are in gkFuncs-alpha-surf.mac.
+*/
+load("gk_collisionless_passive/gk_collisionless_passive_flux-surf-conf")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor order basis. No need to generate p=1. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+/* Vdim possibilities for each of Cdim=[1,2,3]. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+clabels : ["x","y","z"]$
+vlabels : ["vpar","mu"]$
+
+/* Options for writing kernels used at multiblock boundaries. One for each
+ dimension. */
+mb_bcOpt : [[false,true],[false,true],[false,true]]$
+mb_bcStr : ["", "multib_boundary_"]$
+
+/* Generate kernels of selected types. */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for gkV : 1 thru length(gkVdims[c]) do (
+      v : gkVdims[c][gkV],
+
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x2v */
+
+      for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
+
+        for mbI : 1 thru length(mb_bcOpt[c]) do (
+          mb_bound : mb_bcOpt[c][mbI],
+          mb_boundStr : mb_bcStr[mbI],
+
+          /* Surface flux in direction dir in configuration space.*/
+          for dir : 1 thru c do (
+
+            fname : sconcat("~/max-out/gk_collisionless_passive_flux_",mb_boundStr,"surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+            disp(printf(false,"Creating flux surf~a ~a file: ~a",clabels[dir],mb_boundStr,fname)),
+      
+            fh : openw(fname),
+            printf(fh, "#include <gkyl_gk_collisionless_passive_flux_kernels.h> ~%"),
+  
+            funcName : sconcat("gk_collisionless_passive_flux_",mb_boundStr,"surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+            build_gk_passive_flux_conf_kernel(dir, fh, funcName, c, v, bName[bInd], polyOrder, false, mb_bound),
+            close(fh),
+  
+            fname : sconcat("~/max-out/gk_collisionless_passive_flux_",mb_boundStr,"edge_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+            disp(printf(false,"Creating flux edge surf~a ~a file: ~a",clabels[dir],mb_boundStr,fname)),
+      
+            fh : openw(fname),
+            printf(fh, "#include <gkyl_gk_collisionless_passive_flux_kernels.h> ~%"),
+  
+            funcName : sconcat("gk_collisionless_passive_flux_",mb_boundStr,"edge_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+            build_gk_passive_flux_conf_kernel(dir, fh, funcName, c, v, bName[bInd], polyOrder, true, mb_bound),
+            close(fh)
+          )
+        )
+        
+      )
+    )
+  )
+)$

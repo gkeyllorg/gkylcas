@@ -18,7 +18,7 @@ printf(fh, "//------------------------------------------------------------------
 printf(fh, "#pragma once~%")$
 printf(fh, "~%")$
 printf(fh, "#include <gkyl_util.h>~%")$
-printf(fh, "#include <math>~%~%")$
+printf(fh, "#include <math.h>~%~%")$
 printf(fh, "~%")$
 
 printf(fh, "EXTERN_C_BEG~%")$
@@ -30,9 +30,9 @@ for bInd : 1 thru length(bName) do (
      for ci : 1 thru 3 do (
 
        for bS : 1 thru 2 do ( /* One kernel for each of lower and upper boundaries. */
-         printf(fh, "  GKYL_CU_DH void ambi_bolt_potential_sheath_calc_~a_~ax_~a_p~a(double sheathDirDx, double q_e, double m_e, double T_e, const double *jacInv, const double *GammaJac_i, const double *m0JacIon, double *out); ~%", boundaryStr[bS], ci, bName[bInd], pi)
+         printf(fh, "  GKYL_CU_DH void ambi_bolt_potential_sheath_calc_~a_~ax_~a_p~a(double sheathDirDx, double q_e, double m_e, double T_e, const double *cmag, const double *jacobtotInv, const double *GammaJac_i, const double *m0Ion, const double *m0JacIon, double *out); ~%", boundaryStr[bS], ci, bName[bInd], pi)
        ),
-       printf(fh, "  GKYL_CU_DH void ambi_bolt_potential_phi_calc_~ax_~a_p~a(double q_e, double T_e, const double *jacInv, const double *m0JacIon, const double *sheathvals, double *phi); ~%", ci, bName[bInd], pi),
+       printf(fh, "  GKYL_CU_DH void ambi_bolt_potential_phi_calc_~ax_~a_p~a(double q_e, double T_e, const double *m0Ion, const double *sheathvals, double *phi); ~%", ci, bName[bInd], pi),
        printf(fh, "~%")
 
      ),

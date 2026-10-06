@@ -56,7 +56,7 @@ for bInd : 1 thru length(bName) do (
         printf(fh, "GKYL_CU_DH void gyrokinetic_self_prim_moments_~ax~av_~a_p~a(struct gkyl_mat *A, struct gkyl_mat *rhs,~%  const double *moms, const double *boundary_corrections, const double *nu); ~%", ci, vi, bName[bInd], pi),
 
         /* Primitive moments for cross-collision GkLBO terms. */
-        printf(fh, "GKYL_CU_DH void gyrokinetic_cross_prim_moments_~ax~av_~a_p~a(struct gkyl_mat *A, struct gkyl_mat *rhs,~%  const double *greene, const double m_self, const double *moms_self, const double *prim_mom_self,~%  const double m_other, const double *moms_other, const double *prim_mom_other,~%  const double *boundary_corrections, const double *nu); ~%", ci, vi, bName[bInd], pi),
+        printf(fh, "GKYL_CU_DH void gyrokinetic_cross_prim_moments_~ax~av_~a_p~a(struct gkyl_mat *A, struct gkyl_mat *rhs,~%  const double *alphaE, const double m_self, const double *moms_self, const double *prim_mom_self,~%  const double m_other, const double *moms_other, const double *prim_mom_other,~%  const double *boundary_corrections, const double *nu); ~%", ci, vi, bName[bInd], pi),
 
         printf(fh, "~%")
       )

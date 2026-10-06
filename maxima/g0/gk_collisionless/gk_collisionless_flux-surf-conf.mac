@@ -29,8 +29,12 @@ buildGKFluxConfESKernel(surfDir, fh, funcNm, cdim, vdim, basisFun, polyOrder, no
   surf_cvars  : delete(surfVar, makelist(varsP[i],i,1,cdim)),
   surf_vvars  : delete(surfVar, makelist(varsP[cdim+i],i,1,vdim)),
 
-  surfIntVarsC : delete(surfVar,varsC), 
-  bSurfC       : basisFromVars(basisFun,surfIntVarsC,polyOrder),
+  if cdim = 1 then (
+    [surfIntVarsC,bSurfC] : loadBasis("ser",1,0)
+  ) else (
+    surfIntVarsC : delete(surfVar,varsC),
+    bSurfC       : basisFromVars(basisFun,surfIntVarsC,polyOrder)
+  ),
   
   if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
     surfNodes : gaussOrdGkHyb(1+1, surf_cvars, surf_vvars),

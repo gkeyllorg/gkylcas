@@ -1,0 +1,117 @@
+/* Generate CX cross section (vSigmaCX) kernels for charge
+   exchange operator */
+
+load("modal-basis");
+load("out-scripts");
+load(stringproc)$
+fpprec : 24$
+
+declareWriteCExprsC(lhs, rhs) := block([expr],
+  expr : float(expand(rhs)),
+  if expr # 0.0 then (
+    ep : string(expr),
+    for i : 0 thru 60 do (
+      ep : ssubst(string(pow(u_ion[i],2.)),string(u_ion[i]^2),ep),
+      ep : ssubst(string(pow(u_neut[i],2.)),string(u_neut[i]^2),ep)	
+    ),
+    printf(fh, "  double ~a = ~a; ~%", lhs, ep)
+  )
+)$
+
+writeCExprsCs(lhs, rhs) := block([expr],
+  expr : float(expand(rhs)),
+  for i : 1 thru length(expr) do (	
+    if expr[i] # 0.0 then (
+      ep : string(expr[i]),
+      ep : ssubst("log(","ln(",ep),	
+      printf(fh, "  ~a = ~a; ~%", lhs[i-1], ep)	
+    )
+  )
+)$
+
+writeCExprsC(lhs, rhs) := block([expr],
+  expr : float(expand(rhs)),
+  if expr # 0.0 then (
+    ep : string(expr),
+    printf(fh, "  ~a = ~a; ~%", lhs, ep)	
+  )
+)$
+
+/* vSigmaCX for charge exchange cross section */
+calcSigmaCXcellAv(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC,bC,NC,m0_e,m0_av,u_ion_av_c,u_neut_av_c,u_ion_av,u_neut_av,vi,vt_sq_ion_av_c,
+   vt_sq_neut_av_c,v_in_sq_c,v_sigma_cx_c,v_sigma_cx_e,v_sigma_cx_av],
+
+  vdim : 3, /* Assume neutrals are always 3v. */
+
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+  NC : length(bC),
+
+  printf(fh, " ~%"),
+  printf(fh, "GKYL_CU_DH static inline ~%"),
+  printf(fh, "double ~a_p~a(const double a, const double b, double vt_sq_ion_min, double vt_sq_neut_min, const double *maxwellian_moms_ion, const double *maxwellian_moms_neut, const double *u_ion, double* GKYL_RESTRICT v_sigma_cx) ~%{ ~%", funcNm, p),
+  printf(fh, "  // a: constant in fitting function.~%"),
+  printf(fh, "  // b: constant in fitting function.~%"),
+  printf(fh, "  // maxwellian_moms_ion[~a]: ion prim vars.~%", NC*(1+2)),
+  printf(fh, "  // maxwellian_moms_neut[~a]: neut prim vars.~%", NC*(3+2)),
+  printf(fh, "  // u_ion[~a]: ion drift velocity vector (upar_i b_1, upar_i b_2, upar_i b_3).~%",NC*3),
+  printf(fh, "  // v_sigma_cx: cell ave cross section fitting eqn.~%"),
+  printf(fh, "~%"),
+
+  m0_neut_e : doExpand1(maxwellian_moms_neut,bC),
+  m0_neut_av_e : innerProd(varsC,1.0,1.0,m0_neut_e)/innerProd(varsC,1.0,1.0,1.0),
+  declareWriteCExprsC(m0_neut_av, m0_neut_av_e),
+  printf(fh, " ~%"),
+
+  printf(fh, "  const double *vt_sq_ion = &maxwellian_moms_ion[~a]; ~%", NC*(1+1)),
+  printf(fh, "  const double *u_neut = &maxwellian_moms_neut[~a]; ~%", NC),	
+  printf(fh, "  const double *vt_sq_neut = &maxwellian_moms_neut[~a]; ~%", NC*(3+1)),
+  printf(fh, " ~%"),
+
+  u_ion_e  : subst(makelist( u_ion[i]=u_ion[i+a0] ,i,0,NC-1), doExpand1(u_ion,bC)),
+  u_neut_e : subst(makelist(u_neut[i]=u_neut[i+a0],i,0,NC-1), doExpand1(u_neut,bC)),
+
+  u_ion_av : makelist(0,i,1,vdim),
+  u_neut_av : makelist(0,i,1,vdim),
+  for vi : 1 thru vdim do (
+    u_ion_av[vi] : innerProd(varsC,1.0,1.0,u_ion_e)/innerProd(varsC,1.0,1.0,1.0),
+    u_ion_av[vi] : fullratsimp(subst(a0=(vi-1)*NC,u_ion_av[vi])),
+
+    u_neut_av[vi] : innerProd(varsC,1.0,1.0,u_neut_e)/innerProd(varsC,1.0,1.0,1.0),
+    u_neut_av[vi] : fullratsimp(subst(a0=(vi-1)*NC,u_neut_av[vi]))
+  ),
+
+  vt_sq_ion_av_c : innerProd(varsC,1.0,1.0, doExpand1(vt_sq_ion,bC))/innerProd(varsC,1.0,1.0,1.0),
+  vt_sq_neut_av_c : innerProd(varsC,1.0,1.0, doExpand1(vt_sq_neut,bC))/innerProd(varsC,1.0,1.0,1.0),
+
+  declareWriteCExprsC(vt_sq_ion_av, vt_sq_ion_av_c),
+  declareWriteCExprsC(vt_sq_neut_av, vt_sq_neut_av_c),
+
+  /* Limit how low the temperature can get (set by the velocity grid). */
+  printf(fh, "  if ((vt_sq_ion_av > 0.) && (vt_sq_ion_av < vt_sq_ion_min)) vt_sq_ion_av = vt_sq_ion_min;~%"),
+  printf(fh, "  if ((vt_sq_neut_av > 0.) && (vt_sq_neut_av < vt_sq_neut_min)) vt_sq_neut_av = vt_sq_neut_min;~%"),
+  printf(fh, "  ~%"),
+  
+  /* Define and write v_sigma_cx */
+  printf(fh, "  if (m0_neut_av <= 0 || vt_sq_neut_av <= 0 || vt_sq_ion_av <= 0) { ~%"),
+  printf(fh, "    v_sigma_cx[0] = 0.0;~%"),
+  printf(fh, "    return 0.0; ~%"),	
+  printf(fh, "  } else {~%"),
+     
+  /* Define v_in variable: v_in_sq = |u_ion - u_neut|^2 */
+  v_in_sq_c : innerProd(varsC,1.0,1.0,sum((u_ion_av[d] - u_neut_av[d])^2,d,1,vdim))/innerProd(varsC,1.0,1.0,1.0),
+  declareWriteCExprsC(v_in_sq_av, v_in_sq_c),
+  printf(fh, " ~%"),
+    
+  printf(fh, "  double v_cx = ~a;~%",float(sqrt(4/%pi*vt_sq_ion_av + 4/%pi*vt_sq_neut_av + v_in_sq_av))),
+  v_sigma_cx_c : calcInnerProdList(varsC,1.0,bC,v_cx*(a - b*ln(v_cx))),
+  writeCExprsCs(v_sigma_cx, v_sigma_cx_c),
+  printf(fh, " ~%"),
+
+  v_sigma_cx_e  : doExpand1(v_sigma_cx,bC),
+  v_sigma_cx_av : innerProd(varsC,1.0,1.0,v_sigma_cx_e)/innerProd(varsC,1.0,1.0,1.0),
+  cflRate : float(expand(fullratsimp(m0_neut_av*v_sigma_cx_av/(2*p+1)))),
+  printf(fh, "  return ~a; ~%",cflRate),
+  printf(fh, "  }~%"),
+  printf(fh, "} ~%")
+)$

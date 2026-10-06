@@ -37,11 +37,13 @@ writeCExprs1s(lhs, rhs) := block([expr],
 )$
 
 calcCrossPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
-  [udim,vDegFreedom,basis,numB,expr,m0_e,m0_c,m2_e,m2_c,vtsq_self_e,vtsq_self_c,
-   vtsq_other_e,vtsq_other_c,vtSqCross_e,vtSqCross_c,cE_e,cE_c,N,u_self_e,u_self_c,
-   u_other_e,u_other_c,m1_e,m1_c,cM_e,cM_c,uCross_e,uCross_c,eq,E,Eflat,Elhs,momRHS_c,
-   ucMSelf_c,ucMSelf_e,ucMOther_c,ucMOther_e,uM1Self_c,uM1Self_e,uM1Other_c,uM1Other_e,
-   uSumSq_c,uSumSq_e,enRHS1_c,enRHS2_c,enRHS_c,tempVars,sqCoeffs],
+  [udim,vDegFreedom,vars,basis,numB,nodes,momsin,vtsqin,m0in_e,m0Corners,m2in_e,
+   m2Corners,vtsqin_e,vtsqCorners,alphaE_c,alphaE_e,alphaECorners,expr,m0_e,m0_c,m2_e,m2_c,
+   vtsq_self_e,vtsq_self_c,vtsq_other_e,vtsq_other_c,vtSqCross_e,vtSqCross_c,cE_e,
+   cE_c,N,u_self_e,u_self_c,u_other_e,u_other_c,m1_e,m1_c,cM_e,cM_c,uCross_e,uCross_c,
+   eq,E,Eflat,Elhs,momRHS_c,ucMSelf_c,ucMSelf_e,ucMOther_c,ucMOther_e,uM1Self_c,
+   uM1Self_e,uM1Other_c,uM1Other_e,uSumSq_c,uSumSq_e,enRHS1_c,enRHS2_c,enRHS_c,
+   tempVars,sqCoeffs],
 
   if (sequal(substring(funcNm,1,7),"vlasov")) then (
     udim : vdim,
@@ -58,14 +60,21 @@ calcCrossPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   numB : length(basis),
 
   /* Function declaration with input/output variables. */
-  printf(fh, "GKYL_CU_DH void ~a(struct gkyl_mat *A, struct gkyl_mat *rhs, const double *greene, const double m_self, const double *moms_self, const double *prim_mom_self, const double m_other, const double *moms_other, const double *prim_mom_other, const double *boundary_corrections, const double *nu) ~%{ ~%", funcNm),
-  printf(fh, "  // greene:               Greene's factor. ~%"),
-  printf(fh, "  // m_:                   mass. ~%"),
-  printf(fh, "  // moms:                 moments of the distribution function. ~%"),
-  printf(fh, "  // prim_mom              self primitive moments: mean flow velocity and thermal speed squared. ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(struct gkyl_mat *A, struct gkyl_mat *rhs, const double *alphaE, const double m_self, const double *moms_self, const double *prim_mom_self, const double m_other, const double *moms_other, const double *prim_mom_other, const double *boundary_corrections, const double *nu) ~%{ ~%", funcNm),
+  printf(fh, "  // A:                    Left-side matrix. ~%"),
+  printf(fh, "  // rhs:                  Right-side vector. ~%"),
+  printf(fh, "  // alphaE:               Morse's alpha_E factor. ~%"),
+  printf(fh, "  // m_self:               self mass. ~%"),
+  printf(fh, "  // moms_self:            self moments of the distribution function. ~%"),
+  printf(fh, "  // prim_mom_self:        self primitive moments: mean flow velocity and thermal speed squared. ~%"),
+  printf(fh, "  // m_other:              mass of other species. ~%"),
+  printf(fh, "  // moms_other:           moments of the other distribution function. ~%"),
+  printf(fh, "  // prim_mom_other:       cross primitive moments: mean flow velocity and thermal speed squared. ~%"),
   printf(fh, "  // boundary_corrections: corrections to momentum and energy conservation due to finite velocity space. ~%"),
-  printf(fh, "  // nu:                   Collision frequency. ~%"),
+  printf(fh, "  // nu:                   Cross-species collision frequency. ~%"),
   printf(fh, " ~%"),
+
+  printf(fh, "  const double m_sumDms = (m_self+m_other)/m_self;~%"),
 
   /* Create pointers to u and vtsq of each species. */
   printf(fh, "  const double *u_self = &prim_mom_self[~a];~%", 0*numB),
@@ -114,6 +123,13 @@ calcCrossPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
       printf(fh, "  if (notCellAvg && (~a < 0)) notCellAvg = false; ~%", vtsqCorners[i])
     ),
     printf(fh, " ~%")
+  ),
+  /* Also check alpha_E. */
+  alphaE_c : makelist(alphaE[i-1],i,1,numB),
+  alphaE_e : doExpand(alphaE_c, basis),
+  alphaECorners : gcfac(float(fullratsimp(evAtNodes(alphaE_e,nodes,vars)))),
+  for i : 1 thru length(nodes) do (
+    printf(fh, "  if (notCellAvg && (~a < 0)) notCellAvg = false; ~%", alphaECorners[i])
   ),
 
   printf(fh, "  if (notCellAvg) { ~%"),
@@ -169,13 +185,11 @@ calcCrossPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "  ~%"),
 
   /* Expansion in configuration space basis and coefficients
-     of m0, m2 and the Greene factor. */
-  m0_c  : makelist(m0r[i-1],i,1,numB),
-  m2_c  : makelist(m2r[i-1],i,1,numB),
-  m0_e  : doExpand(m0_c, basis),
-  m2_e  : doExpand(m2_c, basis),
-  greene_c  : makelist(greene[i-1],i,1,numB),
-  greene_e  : doExpand(greene_c, basis),
+     of m0 and m2. */
+  m0_c : makelist(m0r[i-1],i,1,numB),
+  m2_c : makelist(m2r[i-1],i,1,numB),
+  m0_e : doExpand(m0_c, basis),
+  m2_e : doExpand(m2_c, basis),
   /* Equivalently for  vtSq .*/
   vtsq_self_c  : makelist(vtsq_self[i-1],i,1,numB),
   vtsq_other_c : makelist(vtsq_other[i-1],i,1,numB),
@@ -256,7 +270,7 @@ calcCrossPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
     printf(fh, " ~%"),
  
     /*....... Matrix block corresponding to RHS of momentum equation .......*/
-    expr : calcInnerProdList(vars,1,basis,2*m1_e - greene_e*(u_self_e - u_other_e)),
+    expr : calcInnerProdList(vars,1,basis,2*m1_e - alphaE_e*m_sumDms*(u_self_e - u_other_e)),
     for i : 1 thru numB do (
       printf(fh, "  ~a += ~a; ~%", momRHS[(vd-1)*numB+i-1], float(expr[i]))
     ),
@@ -336,9 +350,8 @@ calcCrossPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "  } ~%"),
   printf(fh, " ~%"),
 
-  printf(fh, "  double m_sum = ~a;~%",m_self + m_other),
   printf(fh, "  double m_diff = ~a;~%",m_other - m_self),
-  enRHS1_c : calcInnerProdList(vars,greene_e/m_sum,basis,
+  enRHS1_c : calcInnerProdList(vars,alphaE_e/m_self,basis,
                                vDegFreedom*(m_other*vtsq_other_e - m_self*vtsq_self_e) + 0.5*m_diff*uSumSq_e),
   enRHS2_c : calcInnerProdList(vars,1,basis,2*m2_e - uM1Self_e - uM1Other_e),
   enRHS_c  : enRHS1_c + enRHS2_c,

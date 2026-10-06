@@ -1,9 +1,6 @@
 /*
-   Generate kernels computing the RHS of the Poisson equation, i.e.
-     \int psi_k*T*rho dV
-   where T is a modal-to-nodal operation and rho is the source.
-   The kernel gets modified at in skin cells depending on the BCs.
-
+   Generate kernels that set the value of the solution in the RHS vector
+   when using the bias plane option.
 */
 
 load("modal-basis");

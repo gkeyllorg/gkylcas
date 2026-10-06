@@ -14,9 +14,9 @@ maxCdim_Ser : 3$
 /* Note that Serendipity, p = 1, is equivalent to Tensor */
 /* Thus no need to calculate p = 1 Tensor basis */
 minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 0$
 minCdim_Tensor : 1$
-maxCdim_Tensor : 2$
+maxCdim_Tensor : 0$
 
 /* Vdim possibilities for each of Cdim=[1,2,3]. */
 gkVdims : [[1,2], [2], [2]]$

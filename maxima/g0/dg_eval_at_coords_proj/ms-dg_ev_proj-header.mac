@@ -1,0 +1,108 @@
+/*
+  Generate the kernels header file for the updater which evaluates a
+  DG field at a coord and projects it onto the target basis.
+*/
+load("dg_eval_at_coords_proj/dg_ev_proj.mac")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+min_dim_Ser : 1$
+max_dim_Ser : 6$
+
+/* Tensor order basis. No need to generate p=1. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+min_dim_Tensor : 1$
+max_dim_Tensor : 4$
+
+/* GkHybrid basis. */
+minCdim_GkHybrid : 1$
+maxCdim_GkHybrid : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+gkVdims : [ [1,2], [2], [2] ]$
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor", "gkhyb"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor, 1                    ]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor, 1                    ]$
+minCdim      : [min_dim_Ser     , min_dim_Tensor     , minCdim_GkHybrid     ]$
+maxCdim      : [max_dim_Ser     , max_dim_Tensor     , maxCdim_GkHybrid     ]$
+minVdim      : [0               , 0                  , 2                    ]$
+maxVdim      : [0               , 0                  , 2                    ]$
+
+
+printPrototypes(fh) := block(
+  [bInd,cdim,vdimList,vI,vdim,pdim,maxPolyOrderB,polyOrder,funcName,varsC_do,bC_do,
+   vars_do,basis_do,ev_var_combos,ivc,ev_vars,ev_dirs1,ev_dirs0,ev_str],
+
+  for bInd : 1 thru length(bName) do (
+    for cdim : minCdim[bInd] thru maxCdim[bInd] do (
+  
+      if (bName[bInd] = "gkhyb") then (
+        vdimList : gkVdims[cdim]
+      ) else (
+        vdimList : [0]
+      ),
+  
+      for vI : 1 thru length(vdimList) do (
+  
+        vdim : vdimList[vI],
+        pdim : cdim+vdim,
+
+        maxPolyOrderB : maxPolyOrder[bInd],
+        if (pdim>4) then maxPolyOrderB : 1,
+  
+        for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
+          if (bName[bInd] = "gkhyb") then (
+            funcName : sconcat("gkyl_dg_eval_at_coord_proj_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder)
+          ) else (
+            funcName : sconcat("gkyl_dg_eval_at_coord_proj_", pdim, "x_", bName[bInd], "_p", polyOrder)
+          ),
+          print(funcName),
+
+          /* Get desired basis. */
+          if (bName[bInd] = "gkhyb") then
+            [varsC_do,bC_do,vars_do,basis_do,gkVsub] : loadGkBasis(bName[bInd], cdim, vdim, polyOrder)
+          else
+            [vars_do,basis_do] : loadBasis(bName[bInd], pdim, polyOrder),
+
+          /* Get combinations of variables to evaluate be evaluated. */
+          ev_var_combos : get_ev_combos(vars_do),
+          
+          for ivc : 1 thru length(ev_var_combos) do (
+            /* Variables to evaluate. */
+            ev_vars : ev_var_combos[ivc],
+
+            /* Directions to evaluate. */
+            ev_dirs1 : makelist(sublist_indices(vars_do, lambda([x], x=ev_vars[i]))[1], i, 1, length(ev_vars)),
+            ev_dirs0 : makelist(ev_dirs1[i]-1, i, 1, length(ev_dirs1)),
+            ev_str : simplode(flatten(ev_dirs0)),
+
+            printf(fh, "GKYL_CU_DH void ~a_eval_dirs_~a(const double *coords, const double *fdo, double *ftar);~%", funcName, ev_str),
+            printf(fh, "GKYL_CU_DH void ~a_eval_dirs_~a_target_basis(int *cdim, int *ndim, enum gkyl_basis_type *btype, int *poly_order, int *num_basis);~%", funcName, ev_str)
+          ),
+          printf(fh, "~%")
+        )
+      )
+    )
+  )
+)$
+
+fh : openw("~/max-out/gkyl_dg_eval_at_coord_proj_kernels.h")$
+printf(fh, "#pragma once~%")$
+printf(fh, "~%")$
+printf(fh, "#include <gkyl_util.h>~%")$
+printf(fh, "#include <gkyl_basis.h>~%")$
+printf(fh, "#include <math.h>~%")$
+printf(fh, "~%")$
+printf(fh, "EXTERN_C_BEG~%")$
+printf(fh, "~%")$
+printPrototypes(fh)$
+printf(fh, "~%")$
+printf(fh, "EXTERN_C_END~%")$
+close(fh)$

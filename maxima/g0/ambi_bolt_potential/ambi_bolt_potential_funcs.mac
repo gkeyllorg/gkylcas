@@ -8,19 +8,22 @@ load("modal-basis");
 load("out-scripts");
 load(stringproc)$
 load("nodal_operations/quadrature_functions")$
+load("utilities_gyrokinetic")$
 fpprec : 24$
 
 genSheathCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
   /* Compute the sheath entrance potential using Gaussian quadrature. */
-  [numQuad,vars,basis,numB,sheathDir,sheathVar,sheathSurfVars,varsLowD,basisLowD,numBLowD,
-   boundaryStr,ghostEvSign,skinEvSign,GammaJacIon_e,GammaJacIonB_c,GammaJacIonB_noZero_c,
-   GammaJacIonB_e,m0JacIon_e,m0JacIonB_c,m0JacIonB_noZero_c,m0JacIonB_e,phiSlowD_c,
-   phiSlowD_e,phiS_c,expr,jacInv_e,m0Ion_c,m0Ion_e,m0IonS_c],
+  [numQuad,vars,basis,numB,bmagBasis,sheathDir,sheathVar,sheathSurfVars,varsLowD,basisLowD,numBLowD,
+   boundaryStr,ghostEvSign,skinEvSign,GammaJacIon_e,GammaJacIonB_c,
+   cmag_e,jacobtotInv_e,x3HalfMomJacElc_e,x3HalfMomJacElcB_c,x3HalfMomJacElcB_e,x3HalfMomJacElcB_n,
+   GammaJacIonB_e,m0JacIon_e,m0JacIonB_c,m0JacIonB_e,phiSlowD_c,
+   phiSlowD_e,phiS_c,expr,m0Ion_c,m0Ion_e,m0IonS_c],
 
   numQuad : polyOrder+1, /* Number of quarature points in 1D. */
 
   [vars, basis] : loadBasis(basisNm, dim, polyOrder),
   numB : length(basis),
+  bmagBasis : getAxisymmetricConfBasis(basis),
 
   sheathDir : dim,  /* Assume the last dimension is the sheath direction. */
   sheathVar : vars[sheathDir],
@@ -48,41 +51,21 @@ genSheathCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
   ghostEvSign : [1, -1],  skinEvSign  : [-1, 1],
 
   for bS : 1 thru 2 do ( /* One kernel for each of lower and upper boundaries. */
-    printf(fh,sconcat("GKYL_CU_DH void ",funcNm,"(double sheathDirDx, double q_e, double m_e, double T_e, const double *jacInv, const double *GammaJac_i, const double *m0JacIon, double *out) ~%{ ~%"), boundaryStr[bS]),
+    printf(fh,sconcat("GKYL_CU_DH void ",funcNm,"(double sheathDirDx, double q_e, double m_e, double T_e, const double *cmag, const double *jacobtotInv, const double *GammaJac_i, const double *m0Ion, const double *m0JacIon, double *out) ~%{ ~%"), boundaryStr[bS]),
     printf(fh,"  // sheathDirDx: cell length in direction of the sheath.~%"),
     printf(fh,"  // q_e:         electron change.~%"),
     printf(fh,"  // m_e:         electron mass.~%"),
     printf(fh,"  // T_e:         electron temperature.~%"),
-    printf(fh,"  // jacInv:      reciprocal of the geometry Jacobian (1/J).~%"),
+    printf(fh,"  // cmag:        Clebsch function in definition of magnetic field.~%"),
+    printf(fh,"  // jacobtotInv: reciprocal of the phase-space and conf-space Jacobians (1/(J*B)).~%"),
     printf(fh,"  // GammaJac_i:  ion particle flux (times the Jacobian) through sheath entrance.~%"),
+    printf(fh,"  // m0Ion:       ion density.~%"),
     printf(fh,"  // m0JacIon:    ion density (times the geometry Jacobian).~%"),
     printf(fh,"  // out:         ion density and electrostatic potential at the sheath entrance.~%"),
     printf(fh,"~%"),
 
-    /* Particle flux expanded in basis. Need to multiply by an extra dx/2
-       because of the way the boundary fluxes are computed. */
-    GammaJacIon_e : (sheathDirDx/2)*doExpand1(GammaJac_i, basis),
-    /* Evaluate the (ghost cell) flux at the boundary surface. */
-    GammaJacIonB_c : calcInnerProdList(varsLowD,1,basisLowD,subst(sheathVar=ghostEvSign[bS], GammaJacIon_e)),
-    GammaJacIonB_noZero_c : makelistNoZeros1(GammaJacIonB_c, GammaJacIonB),
-    GammaJacIonB_e : doExpand(GammaJacIonB_noZero_c,basisLowD),
-    printf(fh,"  double GammaJacIonB[~a];~%", numBLowD),
-    writeCExprs1(GammaJacIonB, GammaJacIonB_c),
-    printf(fh,"~%"),
-
+    m0Ion_e : doExpand1(m0Ion, basis),
     m0JacIon_e : doExpand1(m0JacIon, basis),
-    /* Evaluate the (skin cell) ion density at the boundary surface. */
-    m0JacIonB_c : calcInnerProdList(varsLowD,1,basisLowD,subst(sheathVar=skinEvSign[bS], m0JacIon_e)),
-    m0JacIonB_noZero_c : makelistNoZeros1(m0JacIonB_c, m0JacIonB),
-    m0JacIonB_e : doExpand(m0JacIonB_noZero_c,basisLowD),
-    printf(fh,"  double m0JacIonB[~a];~%", numBLowD),
-    writeCExprs1(m0JacIonB, m0JacIonB_c),
-    printf(fh,"~%"),
-
-    /* Density at the sheath entrance. */
-    jacInv_e : doExpand1(jacInv,basis),
-    m0Ion_c : calcInnerProdList(vars, jacInv_e, basis, m0JacIon_e),
-    m0Ion_e : doExpand(m0Ion_c,basis),
 
     m0IonS_c : calcInnerProdList(vars, 1, basis, subst(sheathVar=skinEvSign[bS],m0Ion_e)),
     printf(fh,"  // Particle number density evaluate at the sheath entrance~%"),
@@ -92,13 +75,47 @@ genSheathCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
     ),
     printf(fh,"~%"),
 
+    /* Particle flux expanded in basis. Need to multiply by an extra dx/2
+       because of the way the boundary fluxes are computed. */
+    GammaJacIon_e : (sheathDirDx/2)*doExpand1(GammaJac_i, basis),
+    /* Evaluate the (ghost cell) flux at the boundary surface. */
+    GammaJacIonB_c : calcInnerProdList(varsLowD,1,basisLowD,subst(sheathVar=ghostEvSign[bS], GammaJacIon_e)),
+    printf(fh,"  double GammaJacIonB[~a];~%", numBLowD),
+    writeCExprs1(GammaJacIonB, GammaJacIonB_c),
+    printf(fh,"~%"),
+    GammaJacIonB_c : makelistNoZeros1(GammaJacIonB_c, GammaJacIonB),
+    GammaJacIonB_e : doExpand(GammaJacIonB_c,basisLowD),
+
+    /*
+      Evaluate the x^3 half moment (over positive or negative vpar) of the electrons,
+      where x^3=C*vpar/(J*B), and assume quasineutrality so n_i appears instead of n_e.
+    */
+    cmag_e : doExpand1(cmag, bmagBasis),
+    jacobtotInv_e : doExpand1(jacobtotInv, bmagBasis),
+    x3HalfMomJacElc_e : (1/sqrt(2*%pi))*cmag_e*jacobtotInv_e*m0JacIon_e*sqrt(T_e/m_e),
+    x3HalfMomJacElcB_c : calcInnerProdList(varsLowD,1,basisLowD,subst(sheathVar=skinEvSign[bS], x3HalfMomJacElc_e)),
+    printf(fh,"  double x3HalfMomJacElcB[~a];~%", numBLowD),
+    writeCExprs1(x3HalfMomJacElcB, x3HalfMomJacElcB_c),
+    printf(fh,"~%"),
+    x3HalfMomJacElcB_c : makelistNoZeros1(x3HalfMomJacElcB_c, x3HalfMomJacElcB),
+    x3HalfMomJacElcB_e : doExpand(x3HalfMomJacElcB_c,basisLowD),
+
+    /* Evaluate the (skin cell) ion density at the boundary surface. */
+    m0JacIonB_c : calcInnerProdList(varsLowD,1,basisLowD,subst(sheathVar=skinEvSign[bS], m0JacIon_e)),
+    printf(fh,"  double m0JacIonB[~a];~%", numBLowD),
+    writeCExprs1(m0JacIonB, m0JacIonB_c),
+    printf(fh,"~%"),
+    m0JacIonB_c : makelistNoZeros1(m0JacIonB_c, m0JacIonB),
+    m0JacIonB_e : doExpand(m0JacIonB_c,basisLowD),
+
     /* Compute the sheath potential
-         phiS = (T_e/q_e)*log( sqrt(2*pi)*GammaJac_i/(n_i*sqrt(T_e/m_e)) )
+         phiS = (T_e/q_e)*log( GammaJac_i/((1/sqrt(2*pi))*(c/(J*B))*n_i*sqrt(T_e/m_e)) )
        using quadrature. If dim=1 no quadrature is needed. */
     phiSlowD_c : makelist(0,i,1,numBLowD),
     if dim=1 then (
+
       printf(fh,"  double phiS_qp[1];~%"),
-      phiSlowD_c : [(T_e/q_e)*log(sqrt(2*%pi)*GammaJacIonB_e/(m0JacIonB_e*sqrt(T_e/m_e)))],
+      phiSlowD_c : [(T_e/q_e)*log(GammaJacIonB_e/x3HalfMomJacElcB_e)],
       printf(fh,"  if ((isfinite(~a)) && (~a>0.) && (~a>0.)) {~%",GammaJacIonB_e,GammaJacIonB_e,m0JacIonB_e),
       printf(fh,"    phiS_qp[0] = ~a;~%",float(expand(phiSlowD_c[1]))),
       printf(fh,"  } else {~%"),
@@ -106,21 +123,25 @@ genSheathCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
       printf(fh,"  }~%"),
       printf(fh,"~%"),
       phiSlowD_e : phiS_qp[0]
+
     ) else (
-      m0JacIonB_n    : makelist(0,i,1,ordNum),
+
+      m0JacIonB_n : makelist(0,i,1,ordNum),
       GammaJacIonB_n : makelist(0,i,1,ordNum),
+      x3HalfMomJacElcB_n : makelist(0,i,1,ordNum),
       for i : 1 thru ordNum do (
         nOrd : normOrds[i],
         cSub : makelist(varsLowD[d]=normOrds[i][d],d,1,dim-1),
 
-        m0JacIonB_n[i]    : subst(cSub, m0JacIonB_e),
-        GammaJacIonB_n[i] : subst(cSub, GammaJacIonB_e)
+        m0JacIonB_n[i] : subst(cSub, m0JacIonB_e),
+        GammaJacIonB_n[i] : subst(cSub, GammaJacIonB_e),
+        x3HalfMomJacElcB_n[i] : subst(cSub, x3HalfMomJacElcB_e)
       ),
 
       printf(fh,"  double phiS_qp[~a];~%", ordNum),
       phiS_n : makelist(0,i,1,ordNum),
       for i : 1 thru ordNum do (
-        phiS_n[i] : (T_e/q_e)*log(sqrt(2*%pi)*GammaJacIonB_n[i]/(m0JacIonB_n[i]*sqrt(T_e/m_e))),
+        phiS_n[i] : (T_e/q_e)*log(GammaJacIonB_n[i]/x3HalfMomJacElcB_n[i]),
         printf(fh,"  if ((isfinite(~a)) && (~a>0.) && (~a>0.)) {~%",float(GammaJacIonB_n[i]),float(GammaJacIonB_n[i]),float(m0JacIonB_n[i])),
         printf(fh,"    phiS_qp[~a] = ~a;~%",i-1,float(expand(phiS_n[i]))),
         printf(fh,"  } else {~%"),
@@ -138,6 +159,7 @@ genSheathCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
         )
       ),
       phiSlowD_e : doExpand(phiSlowD_c, basisLowD)
+
     ),
 
     phiS_c : calcInnerProdList(vars, 1, basis, phiSlowD_e),
@@ -155,8 +177,8 @@ genSheathCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
 
 genPhiCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
   /* Compute the potential in the domain volume using Gaussian quadrature. */
-  [numQuad,vars,basis,numB,normOrds,weights,ordNum,m0JacIon_e,
-  jacInv_e,m0Ion_c,m0Ion_e,m0Ion_noZero_c,m0IonS_e,phiS_e,m0Ion_n,m0IonS_n,
+  [numQuad,vars,basis,numB,normOrds,weights,ordNum,
+  m0Ion_e,m0IonS_e,phiS_e,m0Ion_n,m0IonS_n,
   phiS_n,nOrd,cSub,phi_n,phi_c],
 
   numQuad : polyOrder+1, /* Number of quarature points in 1D. */
@@ -168,25 +190,15 @@ genPhiCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
   [normOrds, weights] : gaussOrdWeight(numQuad,dim),
   ordNum : length(normOrds),
 
-  printf(fh,sconcat("GKYL_CU_DH void ",funcNm,"(double q_e, double T_e, const double *jacInv, const double *m0JacIon, const double *sheathvals, double *phi) ~%{ ~%")),
-  printf(fh,"  // q_e:        electron change.~%"),
-  printf(fh,"  // T_e:        electron temperature.~%"),
-  printf(fh,"  // jacInv:     reciprocal of the geometry Jacobian (1/J).~%"),
-  printf(fh,"  // m0JacIon:   ion density.~%"),
+  printf(fh,sconcat("GKYL_CU_DH void ",funcNm,"(double q_e, double T_e, const double *m0Ion, const double *sheathvals, double *phi) ~%{ ~%")),
+  printf(fh,"  // q_e: electron change.~%"),
+  printf(fh,"  // T_e: electron temperature.~%"),
+  printf(fh,"  // m0Ion: ion density.~%"),
   printf(fh,"  // sheathvals: ion density and electrostatic potential at the sheath entrance.~%"),
-  printf(fh,"  // phi:        electrostatic potential in domain volume.~%"),
+  printf(fh,"  // phi: electrostatic potential in domain volume.~%"),
   printf(fh,"~%"),
 
-  m0JacIon_e : doExpand1(m0JacIon, basis),
-
-  jacInv_e : doExpand1(jacInv,basis),
-  m0Ion_c : calcInnerProdList(vars, jacInv_e, basis, m0JacIon_e),
-  m0Ion_e : doExpand(m0Ion_c,basis),
-  m0Ion_noZero_c : makelistNoZeros1(m0Ion_c, m0Ion),
-  m0Ion_e : doExpand(m0Ion_noZero_c,basis),
-  printf(fh,"  double m0Ion[~a];~%", numB),
-  writeCExprs1(m0Ion, m0Ion_c),
-  printf(fh,"~%"),
+  m0Ion_e : doExpand1(m0Ion, basis),
 
   m0IonS_e : doExpand(makelist(sheathvals[i-1],i,1,numB), basis),
   phiS_e   : doExpand(makelist(sheathvals[numB+i-1],i,1,numB), basis),
@@ -206,12 +218,20 @@ genPhiCalcKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
     phiS_n[i]   : subst(cSub, phiS_e)
   ),
 
+  printf(fh,"  double phi_qp[~a];~%", ordNum),
+  printf(fh,"  double m0IonS_curr;~%"),
   phi_n : makelist(0,i,1,ordNum),
   for i : 1 thru ordNum do (
-    phi_n[i] : phiS_n[i] - (T_e/q_e)*log(m0Ion_n[i]/m0IonS_n[i])
+    printf(fh,"  m0IonS_curr = ~a;~%",float(expand(m0IonS_n[i]))),
+
+    phi_n[i] : phiS_n[i] - (T_e/q_e)*log(fmax(m0Ion_n[i],m0IonS_curr)/m0IonS_curr),
+
+    printf(fh,"  if ((isfinite(~a)) && (~a>0.)) {~%",m0IonS_curr,m0IonS_curr),
+    printf(fh,"    phi_qp[~a] = ~a;~%",i-1,float(expand(phi_n[i]))),
+    printf(fh,"  } else {~%"),
+    printf(fh,"    phi_qp[~a] = 0.0;~%",i-1),
+    printf(fh,"  }~%")
   ),
-  printf(fh,"  double phi_qp[~a];~%", ordNum),
-  writeCExprs1(phi_qp, phi_n),
   printf(fh,"~%"),
 
   phi_c : makelist(0,i,1,numB),

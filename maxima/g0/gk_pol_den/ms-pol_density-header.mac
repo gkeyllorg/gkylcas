@@ -40,7 +40,13 @@ for bInd : 1 thru length(bName) do (
 
   for cd : minCdim[bInd] thru maxCdim[bInd] do (
     for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
-      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder),
+      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder,"_from_phi_",bName[bInd],"_p",polyOrder),
+      printf(fh, "GKYL_CU_DH void ~a(const double *dx, const double *epsilon, const double *phi, double *out);~%", funcName),
+
+      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder,"_from_phi_",bName[bInd],"_p",polyOrder+1),
+      printf(fh, "GKYL_CU_DH void ~a(const double *dx, const double *epsilon, const double *phi, double *out);~%", funcName),
+
+      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder,"_from_phi_","tensor","_p",polyOrder+1),
       printf(fh, "GKYL_CU_DH void ~a(const double *dx, const double *epsilon, const double *phi, double *out);~%", funcName)
     )
   ),

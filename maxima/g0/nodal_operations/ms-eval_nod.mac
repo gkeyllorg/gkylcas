@@ -31,6 +31,9 @@ minCdim_gkhyb : 1$
 maxCdim_gkhyb : 3$
 vDims_gkhyb : [[1,2], [2], [2]]$  /* Vdim for each of Cdim. */
 
+/* GK hybrid vel basis. */
+vDims_gkhyb_vel : [1,2]$
+
 /* ...... END OF USER INPUTS........ */
 
 bName        : ["ser","tensor"]$
@@ -43,6 +46,9 @@ bNameHyb   : ["hyb","gkhyb"]$
 minCdimHyb : [minCdim_hyb, minCdim_gkhyb]$
 maxCdimHyb : [maxCdim_hyb, maxCdim_gkhyb]$
 vDims      : [vDims_hyb, vDims_gkhyb]$
+
+bNameHybVel : ["gkhyb_vel"]$
+vDimsHybVel : [vDims_gkhyb_vel]$
 
 writeNodeCoordsKernel(dim, basisName, pOrder) := block([nodes,numNodes,n,dir],
   printf(fh, "GKYL_CU_DH~%"),
@@ -89,6 +95,28 @@ writeNodeCoordsKernelHyb(cdim, vdim, basisName) := block([nodes,numNodes,n,dir],
   printf(fh, "}~%~%")
 )$
 
+writeNodeCoordsKernelHybVel(vdim, basisName) := block([nodes,numNodes,n,dir],
+  printf(fh, "GKYL_CU_DH~%"),
+  printf(fh, "void~%"),
+  printf(fh, "node_coords_~ad_~a_p1(double *node_coords)~%", vdim, basisName),
+  printf(fh, "{~%"),
+
+  /* Get equi-distant node locations */
+  if basisName = "gkhyb_vel" then (
+    nodes : getNodesGkHyb(0, vdim)
+  ),
+  numNodes : length(nodes),
+
+  pdim : vdim,
+
+  for n : 1 thru numNodes do (
+    for dir : 1 thru pdim do (
+      printf(fh, "  node_coords[~a] = ~a;~%", (n-1)*pdim + dir-1, nodes[n][dir])
+    )
+  ),
+  printf(fh, "}~%~%")
+)$
+
 /* Generate a file for regular bases. */
 for bInd : 1 thru length(bName) do (
   fname : sconcat("~/max-out/basis_node_coords_",bName[bInd], ".c"),
@@ -118,6 +146,20 @@ for bInd : 1 thru length(bNameHyb) do (
     for v : vmin thru vmax do (
       writeNodeCoordsKernelHyb(c, v, bNameHyb[bInd])
     )
+  ),
+  close(fh)
+);
+
+/* Generate a file for gkhybrid vel basis. */
+for bInd : 1 thru length(bNameHybVel) do (
+  fname : sconcat("~/max-out/basis_node_coords_",bNameHybVel[bInd], ".c"),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_basis_~a_kernels.h>~%", bNameHybVel[bInd]),
+
+  vmin : xreduce(min,vDimsHybVel[bInd]),
+  vmax : xreduce(max,vDimsHybVel[bInd]),
+  for v : vmin thru vmax do (
+    writeNodeCoordsKernelHybVel(v, bNameHybVel[bInd])
   ),
   close(fh)
 );

@@ -1,0 +1,43 @@
+/* Generate kernels for calculating the local derivative of a DG field. */
+load("modal-basis");
+load("out-scripts");
+load(stringproc)$
+fpprec : 24$
+
+gen_dg_diff_local(fh, funcName, cdim, basisType, polyOrder) := block(
+  [maxDiffOrder,vars,basis,numB,dir,order,der_c,diff_dir],
+
+  /* Maximum derivative order to calculate. */
+  maxDiffOrder : 2,
+
+  /* Load basis of dimensionality requested. */
+  [vars,basis] : loadBasis(basisType, cdim, polyOrder),
+  numB : length(basis),
+
+  f_e : doExpand1(fin, basis),
+
+  for dir : 1 thru cdim do (
+
+    diff_dir : vars[dir],
+
+    for diff_order : 1 thru maxDiffOrder do (
+      /* Function declaration with input/output variables. */
+      printf(fh, "GKYL_CU_DH void ~%"),
+      printf(fh, "~a_dir~a_order~a(double dx, const double *fin, double *out) ~%{ ~%", funcName, dir-1, diff_order),
+      printf(fh, "  // dx: cell size in each direction. ~%"),
+      printf(fh, "  // fin: Input scalar DG field. ~%"),
+      printf(fh, "  // out: output derivative of fin. ~%"),
+      printf(fh, "~%"),
+
+      printf(fh, "  const double rdx2fac = pow(2.0/dx, ~a);~%",diff_order),
+
+      der_c : rdx2fac*calcInnerProdList(vars, 1, basis, diff(f_e,diff_dir,diff_order)),
+      
+      writeCExprsWithZeros1(out, der_c),
+      printf(fh, "~%"),
+
+      printf(fh, "}~%"),
+      printf(fh, "~%")
+    )
+  )
+)$

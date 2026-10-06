@@ -37,10 +37,11 @@ generate_fem_parproj_src_stencil(fh, funcNm, dim, basisFun, pMin, pMax, isweight
 
   /* Types of boundary conditions for which to generate kernels.
        =0 nondirichlet
-       =1 dirichlet
+       =1 dirichlet ghost
+       =2 dirichlet skin
   */
-  bcTypes : [0, 1],
-  bcStrs  : ["nondirichlet", "dirichlet"],
+  bcTypes : [0, 1, 2],
+  bcStrs  : ["nondirichlet", "dirichlet_ghost", "dirichlet_skin"],
   bcKey   : makelist([bcTypes[i],bcStrs[i]],i,1,length(bcTypes)),
 
   for sI : 1 thru length(stencilLoc) do (
@@ -102,7 +103,7 @@ generate_fem_parproj_src_stencil(fh, funcNm, dim, basisFun, pMin, pMax, isweight
            k-th node to phi_k = phiBC_k. So we need to replace the source at
            this node by the boundary value. */
         insertVal : makelist(false,k,1,numB),
-        if currBC[1] = 1 then (
+        if currBC[1] = 1 or currBC[1] = 2 then (
           /* Evaluate phiBC at the boundary surface nodes. */
           phiBC_m : mod2nod . makelist(phiBC[k-1],k,1,numB),
           phiBC_c : makelist(fullratsimp(phiBC_m[i][1]),i,1,numB),
@@ -112,7 +113,7 @@ generate_fem_parproj_src_stencil(fh, funcNm, dim, basisFun, pMin, pMax, isweight
           for k : 1 thru length(dirichletNodesI) do (
             /* Evaluate phiBC at +1/-1 when at the lower/upper boundary.*/
             bcNode : copylist(dirichletNodes[k]),
-            bcNode[dir] : bcNode[dir],
+            bcNode[dir] : ((-1)^currBC[1])*bcNode[dir],
             bcNodeI : sublist_indices(nodes,lambda([x],x=bcNode))[1],
             src_c[dirichletNodesI[k]]     : phiBC_c[bcNodeI],
             insertVal[dirichletNodesI[k]] : true

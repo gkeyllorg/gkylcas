@@ -1,0 +1,86 @@
+/*
+  Generate the surface kernels for gyrokinetics with general geometry.
+  Assumes surface alpha pre-computed so kernels are agnostic to different
+  forms of gyrokinetics (electrostatic vs. electromagnetic, etc.)
+
+  The functions called in this file are in gkFuncs-surf.mac.
+*/
+load("gk_collisionless_passive/dg_gk_passive-surf")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor order basis. No need to generate p=1. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 0$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* Vdim possibilities for each of Cdim=[1,2,3]. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* ...... END OF USER INPUTS........ */
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+clabels : ["x","y","z"]$
+vlabels : ["vpar","mu"]$
+
+/* Possible combinations of variable dependence of background magnetic field.
+   with [] = const. Note that we assume axisymmetry, which means B cannot depend on y. */
+bVarsList : [x,z]$
+
+includeSurfHeaders(fhIn, bname, c, v, porder, dir) := block([],
+  printf(fhIn, "#include <gkyl_dg_gyrokinetic_passive_kernels.h>~%"),
+  if porder = 1 then (  /* Force hybrid basis (p=2 in velocity space). */
+    printf(fhIn, "#include <gkyl_basis_gkhyb_~ax~av_p1_upwind_quad_to_modal.h> ~%", c, v)
+  ) elseif porder > 1 then (
+    printf(fhIn, "#include <gkyl_basis_~a_~ax_p~a_upwind_quad_to_modal.h> ~%", bname, c+v, porder)
+  )
+)$
+
+/* Generate kernels of selected types. */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for gkV : 1 thru length(gkVdims[c]) do (
+      v : gkVdims[c][gkV],
+
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x2v */
+      for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
+        for dir : 1 thru c do (
+          /* Advection in configuration space.*/
+          fname : sconcat("~/max-out/dg_gyrokinetic_passive_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
+          disp(printf(false,"Creating surface file: ~a",fname)),
+  
+          fh : openw(fname),
+          includeSurfHeaders(fh, bName[bInd], c, v, polyOrder, dir),
+          funcName : sconcat("dg_gyrokinetic_passive_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+          gen_gk_passive_surf_update_in_dir(dir, fh, funcName, c, v, bName[bInd], polyOrder, bVarsList),
+          close(fh),
+
+          /* Advection in configuration space in the skin cell (for boundary flux operations) .*/
+          fname : sconcat("~/max-out/dg_gyrokinetic_passive_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p",polyOrder, ".c"),
+          disp(printf(false,"Creating surface file: ~a",fname)),
+
+          fh : openw(fname),
+          includeSurfHeaders(fh, bName[bInd], c, v, polyOrder, dir),
+          funcName : sconcat("dg_gyrokinetic_passive_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+          gen_gk_passive_boundary_surf_update_in_dir(dir, fh, funcName, c, v, bName[bInd], polyOrder, bVarsList),
+          close(fh)
+        )
+
+      )
+    )
+  )
+)$

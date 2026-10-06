@@ -5,6 +5,7 @@
 #include "tensor_mono.h"
 #include "hyb_mono.h"
 #include "gkhyb_mono.h"
+#include "gkhyb_vel_mono.h"
 #include <modal_basis.h>
 
 // Serendipity basis function monomial list for each dimension: mo_list[ndim].ev[polyOrder]
@@ -51,6 +52,13 @@ static struct { GiNaC::lst (*ev[4])(const std::vector<GiNaC::symbol>&);
   {NULL,          NULL, gkhyb_3x2v_p1, NULL},
 };
 
+// Serendipity GK hybrid velocity basis function monomial list for each dimension: mo_list[ndim].ev[polyOrder]
+static struct { GiNaC::lst (*ev[4])(const std::vector<GiNaC::symbol>&);
+} gkhyb_vel_mo_list[] = {
+  {NULL, NULL, NULL, NULL}, // No 0D basis functions
+  {NULL, gkhyb_vel_1v_p1, gkhyb_vel_2v_p1, NULL},
+};
+
 Gkyl::ModalBasis::ModalBasis(ModalBasisType type, int ndim, int vdim, const std::vector<GiNaC::symbol>& invars, int polyOrder)
 : ndim(ndim), vdim(vdim), polyOrder(polyOrder)
 {
@@ -79,6 +87,12 @@ Gkyl::ModalBasis::ModalBasis(ModalBasisType type, int ndim, int vdim, const std:
     int cdim = ndim-vdim;
     assert(gkhyb_mo_list[cdim].ev[vdim] != NULL);
     bc = gsOrthoNorm(gkhyb_mo_list[cdim].ev[vdim](vars));
+  }  
+  else if (type == Gkyl::MODAL_GKHYB_VEL) {
+    assert(vdim > 0 && vdim < 3);
+    assert(polyOrder == 1);
+    assert(gkhyb_vel_mo_list[1].ev[vdim] != NULL);
+    bc = gsOrthoNorm(gkhyb_vel_mo_list[1].ev[vdim](vars));
   }  
 }
 

@@ -323,6 +323,35 @@ writeCExprs1noPowers(lhs, rhs, qPow, alreadyDecl) := block(
   return(alreadyDecl)
 )$
 
+writeCExprsWithZeros1noPowers(lhs, rhs, qPow, alreadyDecl) := block(
+  [i,subList,expr,ep,outStr],
+  /* Search for powers of the quantities in qPow. If one of them is found
+     then define a temporary variable for it before writing out the increment.
+       qPow: list of quantities whose powers to search for.
+       numElemMax: maximum number of elements in each quantity of qPow.
+       writeDecl: indicate whether to write out the declaration of temporary variables.
+     We return the list of declared temporary variables, to be used in avoiding
+     redefining the same variables.
+  */
+
+  [subList,alreadyDecl] : findReplacePowers(rhs, qPow, 1, alreadyDecl), 
+
+  expr : float(rhs),
+  for i : 1 thru length(rhs) do (
+    ep : string(expr[i]),
+    if (length(subList) > 0) then (
+      outStr : ssubst(subList[1][2],subList[1][1],ep),
+      for s : 2 thru length(subList) do (
+        outStr : ssubst(subList[s][2],subList[s][1],outStr)
+      )
+    ) else (
+      outStr : ep
+    ),
+    printf(fh, "  ~a = ~a; ~%", lhs[i-1], outStr)
+  ),
+  return(alreadyDecl)
+)$
+
 writeCExprsCollect1noPowers(lhs, rhs, clst, qPow, alreadyDecl) := block(
   [i,subList,expr,ep,outStr],
 

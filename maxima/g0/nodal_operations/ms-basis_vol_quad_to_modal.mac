@@ -29,18 +29,24 @@ minCdim_gkhyb : 1$
 maxCdim_gkhyb : 3$
 vDims_gkhyb : [[1,2], [2], [2]]$  /* Vdim for each of Cdim. */
 
+/* GK hybrid vel basis. */
+vDims_gkhyb_vel : [1,2]$
+
 /* ...... END OF USER INPUTS........ */
 
-bName : ["ser","tensor"]$
+bName        : ["ser","tensor"]$
 minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
 maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
-minDim : [minDim_Ser, minDim_Tensor]$
-maxDim : [maxDim_Ser, maxDim_Tensor]$
+minDim       : [minDim_Ser, minDim_Tensor]$
+maxDim       : [maxDim_Ser, maxDim_Tensor]$
 
-bNameHyb : ["hyb","gkhyb"]$
+bNameHyb   : ["hyb","gkhyb"]$
 minCdimHyb : [minCdim_hyb, minCdim_gkhyb]$
 maxCdimHyb : [maxCdim_hyb, maxCdim_gkhyb]$
-vDims : [vDims_hyb, vDims_gkhyb]$
+vDims      : [vDims_hyb, vDims_gkhyb]$
+
+bNameHybVel : ["gkhyb_vel"]$
+vDimsHybVel : [vDims_gkhyb_vel]$
 
 /* Generate kernels that take the f at Gauss-Legendre quadrature nodes,
    and do a nodal-to-modal transformation to yield the modal DG coefficients of f. */
@@ -74,6 +80,21 @@ for bInd : 1 thru length(bNameHyb) do (
       disp(printf(false,sconcat("Creating quad_to_modal ",bNameHyb[bInd]," ~ax~av_p1"),c,v)),     
       genQuadToModalKernelHyb(fh, c, v, bNameHyb[bInd])
     )
+  ),
+  close(fh)
+)$
+
+/* Generate the hybrid basis vel kernels. */
+for bInd : 1 thru length(bNameHybVel) do (
+  fname : sconcat("~/max-out/basis_quad_to_modal_", bNameHybVel[bInd], ".c"),
+  fh : openw(fname), 
+  printf(fh, "#include <gkyl_basis_~a_kernels.h> ~%", bNameHybVel[bInd]),
+
+  vmin : xreduce(min,vDimsHybVel[bInd]),
+  vmax : xreduce(max,vDimsHybVel[bInd]),
+  for v : vmin thru vmax do (
+    disp(printf(false,sconcat("Creating quad_to_modal ",bNameHybVel[bInd]," ~ad_p1"),v)),
+    genQuadToModalKernelHybVel(fh, v, bNameHybVel[bInd])
   ),
   close(fh)
 )$

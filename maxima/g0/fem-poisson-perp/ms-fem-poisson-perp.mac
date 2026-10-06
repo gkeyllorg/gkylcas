@@ -11,6 +11,8 @@ load("fem-poisson-perp/fem-poisson-perp-local_to_global")$
 load("fem-poisson-perp/fem-poisson-perp-lhs_stencil")$
 load("fem-poisson-perp/fem-poisson-perp-src_stencil")$
 load("fem-poisson-perp/fem-poisson-perp-sol_stencil")$
+load("fem-poisson-perp/fem-poisson-perp-bias_lhs")$
+load("fem-poisson-perp/fem-poisson-perp-bias_src")$
 
 /* ...... USER INPUTS........ */
 
@@ -22,7 +24,7 @@ minCdim_Ser : 2$
 /* Tensor product basis. */
 minPolyOrder_Tensor : 2$
 maxPolyOrder_Tensor : 0$
-minCdim_Tensor : 2$
+minCdim_Tensor : 4$ /* Set to >3 to turn off. */
 
 /* ...... END OF USER INPUTS........ */
 
@@ -67,6 +69,7 @@ for bInd : 1 thru length(bName) do (
 **/
 
 
+/**
 /* LHS stencil kernels. */
 disp(printf(false,"Creating fem_poisson_perp_lhs_stencil.c"))$
 for bInd : 1 thru length(bName) do (
@@ -77,7 +80,6 @@ for bInd : 1 thru length(bName) do (
   )
 )$
 
-/**
 /* Solution nodal-to-modal kernels. */
 disp(printf(false,"Creating fem_poisson_perp_sol_stencil.c"))$
 for bInd : 1 thru length(bName) do (
@@ -103,3 +105,27 @@ for bInd : 1 thru length(bName) do (
 )$
 
 **/
+
+/* ............. Biased line kernels ................ */
+
+/* Function to replace LHS equations with 0's and 1's to enforce the biasing of
+   a point (2D) or a line (3D). */
+disp(printf(false,"Creating fem_poisson_perp_bias_line_lhs.c"))$
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru cdimMax do (
+    funcName : sconcat("fem_poisson_perp_bias_line_lhs_", c, "x_", bName[bInd]),
+    disp(printf(false,sconcat("Working on fem_poisson_perp_bias_line_lhs_", c, "x_", bName[bInd]))),
+    generate_fem_poisson_perp_bias_line_lhs(funcName, c, bName[bInd], minPolyOrder[bInd], maxPolyOrder[bInd])
+  )
+)$
+
+/* Function to replace RHS source vectors with biasing potential to
+   enforce the biasing of a point (2D) or a line (3D). */
+disp(printf(false,"Creating fem_poisson_perp_bias_line_src.c"))$
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru cdimMax do (
+    funcName : sconcat("fem_poisson_perp_bias_line_src_", c, "x_", bName[bInd]),
+    disp(printf(false,sconcat("Working on fem_poisson_perp_bias_line_src_", c, "x_", bName[bInd]))),
+    generate_fem_poisson_perp_bias_line_src(funcName, c, bName[bInd], minPolyOrder[bInd], maxPolyOrder[bInd])
+  )
+)$

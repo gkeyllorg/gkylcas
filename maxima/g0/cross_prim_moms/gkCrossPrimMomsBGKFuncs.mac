@@ -9,18 +9,16 @@ load("nodal_operations/nodal_functions");
 load(stringproc)$
 fpprec : 24$
 
-calcGKCrossPrimMomsBGK(fh, funcNm, cdim, vgk, basisFun, polyOrder) := block(
+calcGKCrossPrimMomsBGK(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   [varsC, bC, NC],
-
-  kill(varsC, bC),
 
   /* Load basis of dimensionality requested. */
   [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
 
   /* Number of basis monomials. */
-  NC  : length(bC),
+  NC : length(bC),
 
-  print("gk ", cdim,"x", vgk, "v", polyOrder, "p"),
+  print("gk ", cdim,"x", vdim, "v", polyOrder, "p"),
   
   /* Include the header files. */
   printf(fh, "#include <gkyl_gyrokinetic_cross_prim_moms_bgk_kernels.h> ~%"),
@@ -29,9 +27,13 @@ calcGKCrossPrimMomsBGK(fh, funcNm, cdim, vgk, basisFun, polyOrder) := block(
   printf(fh, " ~%"),
   
   /* Function declaration with input/output variables. */
-  printf(fh, "GKYL_CU_DH void ~a(const double betaGreenep1, const double m_self, const double *prim_moms_self, const double m_other, const double *prim_moms_other, const double *nu_sr, const double *nu_rs, double *prim_moms_cross) ~%{ ~%", funcNm),
-  printf(fh, "  // m_:              mass. ~%"),
-  printf(fh, "  // prim_moms_:      primitive moments of the distribution function. ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double delta_sr, const double betaGreenep1, const double m_self, const double *prim_moms_self, const double m_other, const double *prim_moms_other, double *prim_moms_cross) ~%{ ~%", funcNm),
+  printf(fh, "  // delta_sr: Free parameter in relation between nu_sr and alpha_E. ~%"),
+  printf(fh, "  // betaGreenep1: Greene's beta + 1. ~%"),
+  printf(fh, "  // m_self: mass of this species. ~%"),
+  printf(fh, "  // prim_moms_self: primitive moments of this species. ~%"),
+  printf(fh, "  // m_other: mass of other species. ~%"),
+  printf(fh, "  // prim_moms_other: primitive moments of other species. ~%"),
   printf(fh, "  // prim_moms_cross: cross primitive moments. ~%"),
   printf(fh, " ~%"),
 
@@ -49,41 +51,6 @@ calcGKCrossPrimMomsBGK(fh, funcNm, cdim, vgk, basisFun, polyOrder) := block(
   printf(fh, "  double *n_sr = &prim_moms_cross[~a]; ~%", 0),
   printf(fh, "  double *upar_sr = &prim_moms_cross[~a]; ~%", NC*1),
   printf(fh, "  double *vtsq_sr = &prim_moms_cross[~a]; ~%", NC*2),
-  printf(fh, " ~%"),
-  /* Create the arrays of the temps. */
-  printf(fh, "  double msNsNusr[~a] = {0.0}; ~%", NC),
-  printf(fh, "  double mrNrNurs[~a] = {0.0}; ~%", NC),
-  printf(fh, "  double m_n_nu[~a] = {0.0}; ~%", NC),
-  printf(fh, "  double m_n_nu_inv[~a] = {0.0}; ~%", NC),
-  printf(fh, "  double alphaE[~a] = {0.0}; ~%", NC),     
-  printf(fh, "~%"),
-  printf(fh, "  double msNsNusr_inv[~a] = {0.0}; ~%", NC),
-  printf(fh, "  double coeff[~a] = {0.0}; ~%", NC), 
-  printf(fh, "  double dUpar[~a] = {0.0}; ~%", NC), 
-  printf(fh, "  double cUpar[~a] = {0.0}; ~%", NC),
-  printf(fh, "~%"),
-  printf(fh, "  double dv; ~%"),
-  printf(fh, "  double T1[~a] = {0.0}; ~%", NC), 
-  printf(fh, "  double T2[~a] = {0.0}; ~%", NC), 
-  printf(fh, "  double T3[~a] = {0.0}; ~%", NC), 
-  printf(fh, "  double cVtsq[~a] = {0.0}; ~%", NC),
-  printf(fh, "  bool negative_cross_temp = false; ~%"),
-  printf(fh, "~%"),
-
-  /* Caculate alphaE. */
-  printf(fh, "  binop_mul_~ad_~a_p~a(n_s, nu_sr, msNsNusr); ~%", cdim, basisFun, polyOrder),
-  printf(fh, "  binop_mul_~ad_~a_p~a(n_r, nu_rs, mrNrNurs); ~%", cdim, basisFun, polyOrder),
-  for i : 1 thru NC do (
-    printf(fh, "  msNsNusr[~a] = m_s * msNsNusr[~a]; ~%", i-1, i-1),
-    printf(fh, "  mrNrNurs[~a] = m_r * mrNrNurs[~a]; ~%", i-1, i-1),
-    printf(fh, "  m_n_nu[~a] = msNsNusr[~a] + mrNrNurs[~a]; ~%", i-1, i-1, i-1)
-  ),
-  printf(fh, "  ~a_~ax_p~a_inv(m_n_nu, m_n_nu_inv); ~%", basisFun, cdim, polyOrder),
-  printf(fh, "  binop_mul_~ad_~a_p~a(msNsNusr, mrNrNurs, alphaE); ~%", cdim, basisFun, polyOrder),
-  printf(fh, "  binop_mul_~ad_~a_p~a(alphaE, m_n_nu_inv, alphaE); ~%", cdim, basisFun, polyOrder),
-  for i : 1 thru NC do (
-    printf(fh, "  alphaE[~a] = alphaE[~a] * 2.0 * betaGreenep1 / (m_s+m_r); ~%", i-1, i-1)
-  ),
   printf(fh, "~%"),
 
   /* Calculate cross density n_sr. */
@@ -93,39 +60,40 @@ calcGKCrossPrimMomsBGK(fh, funcNm, cdim, vgk, basisFun, polyOrder) := block(
   printf(fh, " ~%"),
 
   /* Calculate cross parallel velocity upar_sr. */
-  printf(fh, "  ~a_~ax_p~a_inv(msNsNusr, msNsNusr_inv); ~%", basisFun, cdim, polyOrder),
-  printf(fh, "  binop_mul_~ad_~a_p~a(alphaE, msNsNusr_inv, coeff); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  const double deltaTbetap1 = delta_sr*betaGreenep1;~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double dUpar[~a]; ~%", NC), 
   for i : 1 thru NC do (
     printf(fh, "  dUpar[~a] = upar_r[~a] - upar_s[~a]; ~%", i-1, i-1, i-1)
   ),
-  printf(fh, "  binop_mul_~ad_~a_p~a(coeff, dUpar, cUpar); ~%", cdim, basisFun, polyOrder),
   for i : 1 thru NC do (
-    printf(fh, "  upar_sr[~a] = upar_s[~a] + cUpar[~a]*(m_s+m_r)/2.0; ~%", i-1, i-1, i-1)
+    printf(fh, "  upar_sr[~a] = upar_s[~a] + 0.5*deltaTbetap1*dUpar[~a]; ~%", i-1, i-1, i-1)
   ),
   printf(fh, " ~%"),
   
   /* Calculate cross thermal velocity square vtsq_sr. */
-  if vgk=1 then (
-    printf(fh, "  dv = 1.0; ~%")
-  ) else (
-    printf(fh, "  dv = 3.0; ~%")
-  ),
+  printf(fh, "  const double vdimPhys = ~a; ~%", (vdim-1)*2+1),
+  printf(fh, "  const double mSum = m_self + m_other;~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double dTemp[~a] = {0.0}; ~%", NC), 
   for i : 1 thru NC do (
-    printf(fh, "  T1[~a] = dv * (m_r*vtsq_r[~a]-m_s*vtsq_s[~a]); ~%", i-1, i-1, i-1)
+    printf(fh, "  dTemp[~a] = vdimPhys * (m_r*vtsq_r[~a]-m_s*vtsq_s[~a]); ~%", i-1, i-1, i-1)
   ),
-  printf(fh, "  binop_mul_~ad_~a_p~a(dUpar, dUpar, T2); ~%", cdim, basisFun, polyOrder),
-  printf(fh, "  binop_mul_~ad_~a_p~a(coeff, T2, T3); ~%", cdim, basisFun, polyOrder),
+
+  printf(fh, "  double dUparSq[~a] = {0.0}; ~%", NC), 
+  printf(fh, "  binop_mul_~ad_~a_p~a(dUpar, dUpar, dUparSq); ~%", cdim, basisFun, polyOrder),
+
+  printf(fh, "  const double dUparSq_fac = (m_r-0.25*deltaTbetap1*mSum/vdimPhys);~%"),
   for i : 1 thru NC do (
-    printf(fh, "  cVtsq[~a] = T1[~a] + m_r*T2[~a] - (m_s+m_r)*(m_s+m_r)/4.0*T3[~a] ; ~%", i-1, i-1, i-1, i-1)
-  ),
-  printf(fh, "  binop_mul_~ad_~a_p~a(coeff, cVtsq, cVtsq); ~%", cdim, basisFun, polyOrder),
-  for i : 1 thru NC do (
-    printf(fh, "  vtsq_sr[~a] = vtsq_s[~a] + cVtsq[~a]/dv; ~%", i-1, i-1, i-1)
+    printf(fh, "  vtsq_sr[~a] = vtsq_s[~a] + deltaTbetap1/(vdimPhys*mSum)*(dTemp[~a]+dUparSq_fac*dUparSq[~a]); ~%", i-1, i-1, i-1, i-1)
   ),
   printf(fh, " ~%"),
 
   /* Turn collisions off when vtsq_sr is not positive-definite. */
   printf(fh, "  // If vtsq_sr is negative at a corner, turn off collisions.~%"),
+  printf(fh, "  bool negative_cross_temp = false; ~%"),
   nodes : getNodes(basisFun, cdim, 1),
   vtsq_sr_e : doExpand1(vtsq_sr,bC),
   vtsq_sr_corners : gcfac(float(fullratsimp( evAtNodes(vtsq_sr_e,nodes,varsC) ))),
