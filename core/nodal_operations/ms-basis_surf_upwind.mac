@@ -1,0 +1,211 @@
+/* Generate kernels that take the upwinded f at quadrature nodes,
+   and does a nodal-to-modal transformation to yield the DG
+   coefficients of the upwinded f. */
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+load("scifac")$
+load("core/nodal_operations/nodal_functions.mac")$
+fpprec : 24$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor product basis. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* see begining of v loop below though. */
+maxCdim_Tensor : 3$
+maxVdim_Tensor : 3$
+
+/* Hybrid basis. */
+minCdim_hyb : 1$
+maxCdim_hyb : 3$
+vDims_hyb : [[1,2,3], [1,2,3], [1,2,3]]$  /* Vdim for each of Cdim. 3x2v for GK. */
+
+/* GK hybrid basis. */
+minCdim_gkhyb : 1$
+maxCdim_gkhyb : 3$
+vDims_gkhyb : [[1,2], [2], [2]]$  /* Vdim for each of Cdim. */
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+bNameHyb   : ["hyb","gkhyb"]$
+minCdimHyb : [minCdim_hyb, minCdim_gkhyb]$
+maxCdimHyb : [maxCdim_hyb, maxCdim_gkhyb]$
+vDims      : [vDims_hyb, vDims_gkhyb]$
+
+genSurfUpdwindQuadToModalKernel(cdim, vdim, basisName, pOrder) := block(
+  [pdim,vars,basis,surfNodes,numNodes,f_e,xv,surfVars,
+   bSurf,fname,fh,basisNodal,fHatNodal_e,fHatModProj_e],
+
+  pdim : cdim+vdim,
+
+  [vars,basis] : loadBasis(basisName, pdim, pOrder),
+
+  /* Surface nodes given by tensor product of Gauss-Legendre quadrature points. */
+  surfNodes : gaussOrd(pOrder+1, pdim-1),
+  numNodes  : length(surfNodes),
+
+  f_e : doExpand1(f, basis),
+  /* xv = variable in direction of surface update.
+     Note that which variable is deleted for this operation is irrelevant.
+     The projection from the surface (tensor) nodal basis to the modal basis
+     only depends on dimensionality  */
+  xv : vars[cdim],
+  /* Surface variables to integrate over. */
+  surfVars : delete(xv,vars),
+  /* Generate surface basis. this produces the ndim-1 orthogonal basis with no xv dependence. */
+  bSurf : basisFromVars(basisName,surfVars,pOrder),
+
+  fname : sconcat("~/max-out/gkyl_basis_",basisName,"_", pdim, "x_p", pOrder, "_upwind_quad_to_modal", ".h"),
+  fh : openw(fname),
+  /* Do not inline the functions for the high-dimensional cases */
+  if (cdim + vdim > 4) then (
+    printf(fh, "GKYL_CU_DH static void ~%")
+  )
+  else (
+    printf(fh, "GKYL_CU_DH static inline void ~%")
+  ),
+  printf(fh, "~a_~ax_p~a_upwind_quad_to_modal(const double* fUpwindQuad, double* GKYL_RESTRICT fUpwind) { ~%", basisName, pdim, pOrder),
+
+  /* Make nodal expansions in tensor nodal basis where nodes are Gauss-Legendre quadrature points */
+  if (pOrder = 1) then (
+    /* Serendipity and Tensor are identical for p=1 */
+    basisNodal  : getVarsNodalBasisWithNodes("Ser", pdim-1, pOrder, surfVars, surfNodes)
+  )
+  else (
+    basisNodal  : getVarsNodalBasisWithNodes("Tensor", pdim-1, pOrder, surfVars, surfNodes)
+  ),  
+  fHatNodal_e : doExpand1(fUpwindQuad,basisNodal),
+  /* Project nodal basis back onto modal basis */
+  fHatModProj_e : fullratsimp(calcInnerProdList(surfVars, 1, bSurf, fHatNodal_e)),
+
+  /* Write out projection of tensor nodal basis onto modal basis */
+  /* Clever factorization is possible for polyOrder = 1, but for higher
+     polynomial orders, factorization is *too* clever and can lead to 
+     deeply nested parentheses, not ideal for compiler optimizations */
+  if (polyOrder = 1) then (
+    writeCExprsNoExpand1(fUpwind, fHatModProj_e)
+  ) else (
+    writeCExprs1(fUpwind, fHatModProj_e)
+  ),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "} ~%"),
+  close(fh)
+)$
+
+genSurfUpdwindQuadToModalKernelHyb(cdim, vdim, basisName) := block(
+  [pdim,varsc,basisc,varsp,basisp,vSub,dirlabels,dims,fname,fh,f_e,dcurr,xv,
+   surfVars,surf_cdim,surf_vdim,surfNodes,varsV,surfcvars,surfvvars,
+   numNodes,bSurf,basisNodal,fHatNodal_e,fHatModProj_e],
+
+  pdim : cdim+vdim,
+
+  if basisName = "hyb" then (
+    [varsc,basisc,varsp,basisp] : loadPhaseBasis(basisName, cdim, vdim, 1),
+    dirlabels : ["xdir","vdir"],
+    dims      : [cdim,cdim+vdim]
+  ) elseif basisName = "gkhyb" then (
+    [varsc,basisc,varsp,basisp,vsub] : loadGkBasis(basisName, cdim, vdim, 1),
+    dirlabels : ["xdir","vpardir","mudir"],
+    dims      : makelist(cdim+i,i,0,vdim)
+  ),
+
+  fname : sconcat("~/max-out/gkyl_basis_",basisName,"_", cdim, "x", vdim, "v_p1_upwind_quad_to_modal", ".h"),
+  fh : openw(fname),
+
+  f_e : doExpand1(f, basisp),
+  for dcurr : 1 thru length(dims) do (
+    xv       : varsp[dims[dcurr]],  /* xv = variable in direction of surface update. */
+    surfVars : delete(xv,varsp),    /* Surface variables to integrate over. */
+
+    surf_cdim : cdim,  surf_vdim : vdim,
+    if dcurr = 1 then (surf_cdim : cdim-1) else (surf_vdim : vdim-1),
+    /* Surface nodes given by tensor product of Gauss-Legendre quadrature points. */
+    if basisName = "hyb" then (
+      surfNodes : gaussOrdHyb(1+1, surf_cdim, surf_vdim)
+    ) elseif basisName = "gkhyb" then (
+      varsV : listify(setdifference(setify(varsp),setify(varsc))),
+      surfcvars : delete(xv, varsc),
+      surfvvars : delete(xv, varsV),
+      surfNodes : gaussOrdGkHyb(1+1, surfcvars, surfvvars)
+    ),
+    numNodes : length(surfNodes),
+  
+    /* Generate surface basis. this produces the ndim-1 orthogonal basis with no xv dependence. */
+    bSurf : basisFromVars(basisName,surfVars,1),
+  
+    /* Do not inline the functions for the high-dimensional cases */
+    if (cdim + vdim > 4) then (
+      printf(fh, "GKYL_CU_DH static void ~%")
+    )
+    else (
+      printf(fh, "GKYL_CU_DH static inline void ~%")
+    ),
+    printf(fh, "~a_~ax~av_p1_~a_upwind_quad_to_modal(const double* fUpwindQuad, double* GKYL_RESTRICT fUpwind) { ~%", basisName, cdim, vdim, dirlabels[dcurr]),
+  
+    /* Make nodal expansions in tensor nodal basis where nodes are Gauss-Legendre quadrature points */
+    basisNodal  : getVarsNodalBasisWithNodesHyb(basisName, surf_cdim, surf_vdim, surfVars, surfNodes),
+    fHatNodal_e : doExpand1(fUpwindQuad,basisNodal),
+    /* Project nodal basis back onto modal basis */
+    fHatModProj_e : fullratsimp(calcInnerProdList(surfVars, 1, bSurf, fHatNodal_e)),
+  
+    /* Write out projection of tensor nodal basis onto modal basis. */
+    writeCExprs1(fUpwind, fHatModProj_e),
+    printf(fh, "~%"),
+    flush_output(fh),
+  
+    printf(fh, "} ~%"),
+    printf(fh, "~%")
+  ),
+  close(fh)
+)$
+
+/* Generate kernels that take the upwinded f at quadrature nodes,
+   and does a nodal-to-modal transformation to yield the DG
+   coefficients of the upwinded f. */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for v : max(c,minVdim[bInd]) thru maxVdim[bInd] do (
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        disp(printf(false,sconcat("Creating quad_to_modal ",bName[bInd]," ~ax_p~a"),c+v,polyOrder)),
+        genSurfUpdwindQuadToModalKernel(c, v, bName[bInd], polyOrder)
+      )
+    )
+  )
+)$
+
+/* Generate the hybrid basis kernels. */
+for bInd : 1 thru length(bNameHyb) do (
+  for c : minCdimHyb[bInd] thru maxCdimHyb[bInd] do (
+    vmin : xreduce(min,vDims[bInd][c]),
+    vmax : xreduce(max,vDims[bInd][c]),
+    for v : vmin thru vmax do (
+      disp(printf(false,sconcat("Creating quad_to_modal ",bNameHyb[bInd]," ~ax~av_p1"),c,v)),
+      genSurfUpdwindQuadToModalKernelHyb(c, v, bNameHyb[bInd])
+    )
+  )
+)$

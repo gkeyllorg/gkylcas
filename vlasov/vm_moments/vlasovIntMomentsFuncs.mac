@@ -1,0 +1,90 @@
+/* Functions called by int-moment-calc.mac in order to 
+   generate kernels for IntegratedDGMoment updater. */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+fpprec : 24$
+
+let(wx1^2, wx1_sq)$
+let(wx2^2, wx2_sq)$
+let(wx3^2, wx3_sq)$
+let(dv1^2, dv1_sq)$
+let(dv2^2, dv2_sq)$
+let(dv3^2, dv3_sq)$
+
+vTrans  : [vx*dv1/2+wx1, vy*dv2/2+wx2, vz*dv3/2+wx3]$
+wTrans  : [wx1, wx2, wx3]$
+dvTrans : [vx*dv1/2, vy*dv2/2, vz*dv3/2]$
+
+volExpr(totDim) := prod(dxv[i-1], i, 1, totDim)$
+
+calcIntFiveMomentsDist(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,varsSub,f_e,m0,m1,m2,M],
+  /* Computes the integral of M0, M1i and M2 at the same time. */
+  /* Load basis of dimensionality requested. */
+  if (basisFun="tensor") then (
+    /* If we are using the tensor basis, just use the simple load command */
+    [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP,bP] : loadBasis(basisFun, cdim+vdim, polyOrder), 
+    /* Do a variable substitution for the lower dimensional tensor basis functions
+       to construct the correct set of variables for the subsequent operations */
+    if (cdim+vdim = 2) then (
+      varsSub : [y=vx],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+    else if (cdim+vdim = 3) then (
+      varsSub : [y=vx, z=vy],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+    else if (cdim = 2 and vdim = 2) then (
+      varsSub : [vx=y, vy=vx, vz=vy],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+  )
+  else (
+    /* Load the specific desired basis, including the loading of the hybrid basis if p=1 */
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ),
+    
+  printf(fh, "GKYL_CU_DH void ~a_int_five_moments_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  printf(fh, "  const double volFact = ~a*~a; ~%", volExpr(cdim+vdim), float(1/(2^(cdim+vdim))) ),
+  for i : 1 thru vdim do (
+    printf(fh, "  const double wx~a = w[~a], dv~a = dxv[~a]; ~%", i, cdim+i-1, i, cdim+i-1),
+    printf(fh, "  const double wx~a_sq = wx~a*wx~a, dv~a_sq = dv~a*dv~a; ~%", i, i, i, i, i, i)
+  ),
+
+  printf(fh, " ~%"),
+
+  f_e : doExpand1(f, bP),
+
+  M : [],
+
+  /* Integrated M0. */
+  m0 : fullratsimp(innerProd(varsP, 1, 1, f_e)),
+  M  : endcons(m0,M),
+
+  /* Integrated momentum. */
+  for v : 1 thru vdim do (
+    m1 : fullratsimp(innerProd(varsP, 1, vTrans[v], f_e)),
+    M  : endcons(m1,M)
+  ),
+
+  /* Integrated particle energy. */
+  m2 : sum(innerProd(varsP, 1, vTrans[d]*vTrans[d], f_e), d, 1, vdim),
+  M  : endcons(m2, M),
+
+  M : map(letsimp, M),
+  clst : [volFact],
+  writeCIncrExprsCollect1(out, volFact*M, clst),
+
+  printf(fh, "} ~%")
+)$
+
+calcIntMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block([],
+  printf(fh, "#include <gkyl_mom_vlasov_kernels.h> ~%"),
+  calcIntFiveMomentsDist(fh, funcNm, cdim, vdim, basisFun, polyOrder)
+)$

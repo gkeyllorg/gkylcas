@@ -1,0 +1,265 @@
+/* 
+   Create kernels for the boundary surface term of the radiation drag operator.
+*/
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcGkRADDragBoundaryUpdateVPar(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,vSub,NP,NC,pDim,vid1,vv,surfVars,
+   fl_e,fc_e,fr_e, 
+   bSurf,alphaDrSurf_l_e,alphaDrSurf_r_e,
+   Ghat_r_c,Ghat_l_c,Ghat_l_e,Ghat_r_e,
+   incr_l,incr_r,pOrderCFL],
+  
+/* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC),  NP : length(bP),
+
+  surfDir  : 1,
+  pDim     : cdim+vdim,
+  vid1     : makelist(i,i,cdim,cdim+vdim-1),
+  varsV    : makelist(varsP[d],d,cdim+1,pDim),
+  vv       : varsV[surfDir],
+  surfVars : delete(vv,varsP),
+
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *vmap,
+    const double *vmap_prime_edge, const double *vmap_prime_skin,
+    const double *nvnu_edge, const double *nvnu_skin, const double *nvsqnu_edge, const double *nvsqnu_skin, 
+    const int edge, const double *fedge, const double *fskin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[~a]:     cell-center coordinates. ~%", cdim+vdim),
+  printf(fh, "  // dxv[~a]:   cell spacing. ~%", cdim+vdim),
+  printf(fh, "  // vmap: velocity space mapping.~%"),
+  printf(fh, "  // vmap_prime_edge,vmap_prime_skin: velocity space mapping derivative in edge and skin cells.~%"),
+  printf(fh, "  // nvnu_edge: Surface expansion sum_s n_s*nu_s(v) in vparallel direction on the lower edges of the edge cell.~%"),
+  printf(fh, "  // nvnu_skin: Surface expansion sum_s n_s*nu_s(v) in vparallel direction on the lower edges of the skin cell.~%"),
+  printf(fh, "  // nvsqnu_edge: Surface expansion sum_s n_s*nu_s(v) in mu direction on the lower edges of the edge cell.~%"),
+  printf(fh, "  // nvsqnu_skin: Surface expansion sum_s n_s*nu_s(v) in mu direction on the lower edges of the edge skin.~%"),
+  printf(fh, "  // edge: determines if the update is for the left edge (-1) or right edge (+1).~%"),
+  printf(fh, "  // fskin,fedge: distribution function in skin cell/last edge cell.~%"),
+  printf(fh, "  // out: output increment in center cell.~%"),
+  printf(fh, "~%"),
+  
+  printf(fh, "  double rdv2 = 2.0/dxv[~a]; ~%", vid1[surfDir]),
+  printf(fh, "~%"),
+  
+  /* Expand the velocity map fields. */
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_prime_fac_edge : subst(vmap_prime=vmap_prime_edge, vmap_prime_e[surfDir]),
+  vmap_prime_fac_skin : subst(vmap_prime=vmap_prime_skin, vmap_prime_e[surfDir]),
+
+  /* Create expansions of distribution function in edge and skin cell in volume basis. */
+  fEdge_e : doExpand1(fedge, bP)/vmap_prime_fac_edge,
+  fSkin_e : doExpand1(fskin, bP)/vmap_prime_fac_skin,
+  
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    bSurf : basisFromVars("gkhyb",surfVars,polyOrder)
+  ) else (
+    bSurf : basisFromVars(basisFun,surfVars,polyOrder)
+  ),
+
+  alphaDrSurf_l_e : doExpand1(nvnu_skin, bSurf),
+  alphaDrSurf_r_e : doExpand1(nvnu_edge, bSurf),
+
+  /* if edge == -1, we are doing the left edge boundary and the skin cell needs to be evaluated at +1 */
+  printf(fh, "  if (edge == -1) { ~%~%"),
+
+  printf(fh, "  double Ghat_r[~a] = {0.0}; ~%", length(bSurf)),  
+  printf(fh, "  if (~a>0) {~%~%",float(expand(subst(vv=0,vmap_e[surfDir])))),
+
+  /* Because v > 0, need right edge value */
+  /* Evaluate surface projection of Ghat_r = alphaDr_r f_r. */
+  Ghat_r_c : calcInnerProdList(surfVars, alphaDrSurf_r_e, bSurf, subst(vv=-1, fEdge_e)),
+  writeCExprsNoExpand1(Ghat_r, gcfac(float(expand(Ghat_r_c)))),  
+  printf(fh, "~%"),
+  flush_output(fh),
+  Ghat_r_e : doExpand1(Ghat_r, bSurf), 
+
+  printf(fh, "  } else { ~%~%"),
+
+  /* Because v < 0, need left edge value */
+  /* Evaluate surface projection of Ghat_r = alphaDr_r f_c. */
+  Ghat_r_c : calcInnerProdList(surfVars, alphaDrSurf_r_e, bSurf, subst(vv=1, fSkin_e)),
+  writeCExprsNoExpand1(Ghat_r, gcfac(float(expand(Ghat_r_c)))),  
+  printf(fh, "~%"),
+  flush_output(fh),
+  Ghat_r_e : doExpand1(Ghat_r, bSurf), 
+
+  printf(fh, "  } ~%"),
+  
+  /* Compute surface contribution integral(phi^- Ghat) on the right. */
+  incr_r : calcInnerProdList(surfVars, 1, subst(vv=1.0, bP), Ghat_r_e),
+  writeCIncrExprsCollect1lhsc(out, rdv2*incr_r),
+  printf(fh, "~%"),
+
+  /* Otherwise, edge == 1, and we are doing the right edge boundary and the skin cell needs to be evaluated at -1 */
+  printf(fh, "  } else { ~%~%"), 
+
+  printf(fh, "  double Ghat_l[~a] = {0.0}; ~%", length(bSurf)),
+  printf(fh, "  if (~a>0) {~%~%",w[cdim]),
+
+  /* Because v > 0, need right edge value */
+  /* Evaluate surface projection of Ghat_l = alphaDr_l f_c. */
+  Ghat_l_c : calcInnerProdList(surfVars, alphaDrSurf_l_e, bSurf, subst(vv=-1, fSkin_e)),  
+
+  writeCExprsNoExpand1(Ghat_l, gcfac(float(expand(Ghat_l_c)))),
+  printf(fh, "~%"),
+  flush_output(fh),
+  Ghat_l_e : doExpand1(Ghat_l, bSurf), 
+
+  printf(fh, "  } else { ~%~%"),
+
+  /* Because v < 0, need left edge value */
+  /* Evaluate surface projection of Ghat_l = alphaDr_l f_l. */
+  Ghat_l_c : calcInnerProdList(surfVars, alphaDrSurf_l_e, bSurf, subst(vv=1, fEdge_e)),
+
+  writeCExprsNoExpand1(Ghat_l, gcfac(float(expand(Ghat_l_c)))),
+  printf(fh, "~%"),
+  flush_output(fh),
+  Ghat_l_e : doExpand1(Ghat_l, bSurf), 
+
+  printf(fh, "  } ~%"),
+  
+  /* Compute surface contribution integral(phi^- Ghat) on the right. */
+  incr_l : calcInnerProdList(surfVars, -1, subst(vv=-1.0, bP), Ghat_l_e),
+  writeCIncrExprsCollect1lhsc(out, rdv2*incr_l),
+  printf(fh, "~%"),
+  flush_output(fh),
+  printf(fh, "  } ~%~%"), 
+
+  /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+     mean gkhybrid basis. */
+  pOrderCFL : polyOrder,
+  if polyOrder=1 then ( pOrderCFL : 2 ),
+
+  printf(fh, "  double vmap_prime_min = fmin(fabs(~a),fabs(~a));~%",vmap_prime_edge[surfDir-1],vmap_prime_skin[surfDir-1]),
+  /* Extra 1/2 factor is because we are multiplying by 2/dx and we only need 1/dx 
+     Also need to divide out 1/sqrt(2^(pDim-1)) to convert 0th component of surface alpha
+     expansion to cell average (so we take the surface averaged alpha as our estimate of the
+     maximum velocity to compute the largest frequency) */
+  printf(fh, "  double cflFreq = fmax(fabs(nvnu_edge[0]/vmap_prime_min), fabs(nvnu_skin[0]/vmap_prime_min)); ~%"),
+  printf(fh, "  return ~a*cflFreq; ~%",float(0.5*(2*pOrderCFL+1)*rdv2*2.0^(-0.5*(pDim-1)))),
+  printf(fh, "~%"),
+  printf(fh, "} ~%"),
+  flush_output(fh)
+)$
+
+calcGkRADDragBoundaryUpdateMu(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block( 
+  [varsC,bC,varsP,bP,vSub,NP,NC,pDim,vid1,vv,surfVars,
+   fl_e,fc_e,fr_e, 
+   bSurf,alphaDrSurf_l_e,alphaDrSurf_r_e,
+   Ghat_r_c,Ghat_l_c,Ghat_l_e,Ghat_r_e,
+   incr_l,incr_r,pOrderCFL],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC),  NP : length(bP),
+
+  surfDir  : 2,
+  pDim     : cdim+vdim,
+  vid1     : makelist(i,i,cdim,cdim+vdim-1),
+  varsV    : makelist(varsP[d],d,cdim+1,pDim),
+  vv       : varsV[surfDir],
+  surfVars : delete(vv,varsP),
+
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *vmap,
+    const double *vmap_prime_edge, const double *vmap_prime_skin,
+    const double *nvnu_edge, const double *nvnu_skin, const double *nvsqnu_edge, const double *nvsqnu_skin, 
+    const int edge, const double *fedge, const double *fskin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[~a]:     cell-center coordinates. ~%", cdim+vdim),
+  printf(fh, "  // dxv[~a]:   cell spacing. ~%", cdim+vdim),
+  printf(fh, "  // vmap: velocity space mapping.~%"),
+  printf(fh, "  // vmap_prime_edge,vmap_prime_skin: velocity space mapping derivative in edge and skin cells.~%"),
+  printf(fh, "  // nvnu_edge: Surface expansion sum_s n_s*nu_s(v) in vparallel direction on the lower edges of the edge cell.~%"),
+  printf(fh, "  // nvnu_skin: Surface expansion sum_s n_s*nu_s(v) in vparallel direction on the lower edges of the skin cell.~%"),
+  printf(fh, "  // nvsqnu_edge: Surface expansion sum_s n_s*nu_s(v) in mu direction on the lower edges of the edge cell.~%"),
+  printf(fh, "  // nvsqnu_skin: Surface expansion sum_s n_s*nu_s(v) in mu direction on the lower edges of the edge skin.~%"),
+  printf(fh, "  // edge: determines if the update is for the left edge (-1) or right edge (+1).~%"),
+  printf(fh, "  // fskin,fedge: distribution function in skin cell/last edge cell.~%"),
+  printf(fh, "  // out: output increment in center cell.~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  double rdv2 = 2.0/dxv[~a]; ~%", vid1[surfDir]),
+  printf(fh, "~%"),
+
+  /* Expand the velocity map fields. */
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_prime_fac_edge : subst(vmap_prime=vmap_prime_edge, vmap_prime_e[surfDir]),
+  vmap_prime_fac_skin : subst(vmap_prime=vmap_prime_skin, vmap_prime_e[surfDir]),
+
+  /* Create expansions of distribution function in edge and skin cell in volume basis. */
+  fEdge_e : doExpand1(fedge, bP)/vmap_prime_fac_edge,
+  fSkin_e : doExpand1(fskin, bP)/vmap_prime_fac_skin,
+  
+  /* Surface basis (equivalent to basis of one lower
+     dimensionality without surface variable) */
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    bSurf : basisFromVars("gkhyb",surfVars,polyOrder)
+  ) else (
+    bSurf : basisFromVars(basisFun,surfVars,polyOrder)
+  ),
+  
+  alphaDrSurf_l_e : doExpand1(nvsqnu_skin, bSurf),
+  alphaDrSurf_r_e : doExpand1(nvsqnu_edge, bSurf),
+
+  /* if edge == -1, we are doing the left edge boundary and the skin cell needs to be evaluated at +1 */
+  printf(fh, "  if (edge == -1) { ~%~%"),
+
+  printf(fh, "  double Ghat_r[~a] = {0.0}; ~%", length(bSurf)),  
+
+  /* Because -vsqnu is negative definite, need right edge value */
+  /* Evaluate surface projection of Ghat_r = alphaDr_r f_r. */
+  Ghat_r_c : calcInnerProdList(surfVars, alphaDrSurf_r_e, bSurf, subst(vv=-1, fEdge_e)),
+
+  writeCExprsNoExpand1(Ghat_r, gcfac(float(expand(Ghat_r_c)))),  
+  printf(fh, "~%"),
+  flush_output(fh),
+  Ghat_r_e : doExpand1(Ghat_r, bSurf), 
+
+  /* Compute surface contribution integral(phi^- Ghat) on the right. */
+  incr_r : calcInnerProdList(surfVars, 1, subst(vv=1.0, bP), Ghat_r_e),
+  writeCIncrExprsCollect1lhsc(out, rdv2*incr_r),
+  printf(fh, "~%"),
+
+  /* Otherwise, edge == 1, and we are doing the right edge boundary and the skin cell needs to be evaluated at -1 */
+  printf(fh, "  } else { ~%~%"), 
+
+  printf(fh, "  double Ghat_l[~a] = {0.0}; ~%", length(bSurf)),
+
+  /* Because -vsqnu is negative definite, need right edge value */
+  /* Evaluate surface projection of Ghat_l = alphaDr_l f_c. */
+  Ghat_l_c : calcInnerProdList(surfVars, alphaDrSurf_l_e, bSurf, subst(vv=-1, fSkin_e)),
+
+  writeCExprsNoExpand1(Ghat_l, gcfac(float(expand(Ghat_l_c)))),
+  printf(fh, "~%"),
+  flush_output(fh),
+  Ghat_l_e : doExpand1(Ghat_l, bSurf), 
+
+  /* Compute surface contribution integral(phi^- Ghat) on the right. */
+  incr_l : calcInnerProdList(surfVars, -1, subst(vv=-1.0, bP), Ghat_l_e),
+  writeCIncrExprsCollect1lhsc(out, rdv2*incr_l),
+  printf(fh, "~%"),
+  flush_output(fh),
+  printf(fh, "  } ~%~%"), 
+
+  /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+     mean gkhybrid basis. */
+  pOrderCFL : polyOrder,
+  if polyOrder=1 then ( pOrderCFL : 2 ),
+
+  printf(fh, "  double vmap_prime_min = fmin(fabs(~a),fabs(~a));~%",vmap_prime_edge[surfDir-1],vmap_prime_skin[surfDir-1]),
+  /* Extra 1/2 factor is because we are multiplying by 2/dx and we only need 1/dx 
+     Also need to divide out 1/sqrt(2^(pDim-1)) to convert 0th component of surface alpha
+     expansion to cell average (so we take the surface averaged alpha as our estimate of the
+     maximum velocity to compute the largest frequency) */
+  printf(fh, "  double cflFreq = fmax(fabs(nvsqnu_edge[0]/vmap_prime_min), fabs(nvsqnu_skin[0]/vmap_prime_min)); ~%"),
+  printf(fh, "  return ~a*cflFreq; ~%",float(0.5*(2*pOrderCFL+1)*rdv2*2.0^(-0.5*(pDim-1)))),
+  printf(fh, "~%"),
+  printf(fh, "} ~%"),
+  flush_output(fh)
+)$

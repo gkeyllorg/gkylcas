@@ -1,0 +1,181 @@
+/* Compute the volume term for the streaming (v . grad(f)) term
+   in the Vlasov neutral eqn with general geometry. 
+   Uses pre-computed cotangent vectors e^i = g^ij e_j 
+   to construct v^i = v . e^i */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+fpprec : 24$
+
+cidx(cdim)      := makelist(i,i,0,cdim-1)$
+vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+
+doExpandLst(lst, basis) := sum(lst[i]*basis[i], i, 1, length(basis))$
+
+calcVlasovStreamGenGeoVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NC,NP,varsV,varsC_p1,bC_p1,varsP_p1,bP_p1,NP_p1,cid,vid,
+   e1_x_e,e1_y_e,e1_z_e,
+   e2_x_e,e2_y_e,e2_z_e,
+   e3_x_e,e3_y_e,e3_z_e,
+   vx_c,vxNoZero_c,vx_e,
+   vy_c,vyNoZero_c,vy_e,
+   vz_c,vzNoZero_c,vz_e,f_e,
+   vx_f_c,vx_fNoZero_c,vx_f_e,
+   vy_f_c,vy_fNoZero_c,vy_f_e,
+   vz_f_c,vz_fNoZero_c,vz_f_e,
+   incr_c_x,incr_c_y,incr_c_z,clst],
+
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC),
+  NP : length(bP),
+  varsV : makelist(varsP[i],i,cdim+1,cdim+vdim),
+
+  printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, const double *cot_vec, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // w[NDIM]:   Cell-center coordinates.~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing.~%"),
+  printf(fh, "  // cot_vec:   cotangent vectors.~%"),
+  printf(fh, "  // f:         Input distribution function.~%"),
+  printf(fh, "  // out:       Incremented output.~%"),
+
+  cid : cidx(cdim),
+  vid : vidx(cdim,vdim),
+
+  for dir : 1 thru cdim do (
+    printf(fh, "  const double dx1~a = 2/dxv[~a]; ~%", dir-1, cid[dir])
+  ),
+
+  printf(fh, "  const double *e1_x = &cot_vec[~a]; ~%", NC*0),
+  printf(fh, "  const double *e1_y = &cot_vec[~a]; ~%", NC*1),
+  printf(fh, "  const double *e1_z = &cot_vec[~a]; ~%", NC*2),
+  printf(fh, "  const double *e2_x = &cot_vec[~a]; ~%", NC*3),
+  printf(fh, "  const double *e2_y = &cot_vec[~a]; ~%", NC*4),
+  printf(fh, "  const double *e2_z = &cot_vec[~a]; ~%", NC*5),
+  printf(fh, "  const double *e3_x = &cot_vec[~a]; ~%", NC*6),
+  printf(fh, "  const double *e3_y = &cot_vec[~a]; ~%", NC*7),
+  printf(fh, "  const double *e3_z = &cot_vec[~a]; ~%", NC*8),
+  printf(fh, "~%"),
+
+  /* Do the integrations over v first for every combination of v and grad(psi) 
+     and store them in the temporary variable Gbar before multiplying by the
+     corresponding cotangent vector for the final update */
+  printf(fh, "  double Gbar[~a] = {0.0}; ~%", NC),
+  Gbar_e : doExpand1(Gbar, bC),
+
+  /* Expand distribution function in phase basis. */
+  f_e : doExpand1(f, bP),
+
+  /* vx grad(psi) f integrated over velocity space */
+  Gbar_xx_c : calcInnerProdList(varsV, dxv[vid[1]]/2.0*varsV[1] + w[vid[1]], diff(bP,varsP[1]), f_e),
+  Gbar_xy_c : calcInnerProdList(varsV, dxv[vid[2]]/2.0*varsV[2] + w[vid[2]], diff(bP,varsP[1]), f_e),
+  Gbar_xz_c : calcInnerProdList(varsV, dxv[vid[3]]/2.0*varsV[3] + w[vid[3]], diff(bP,varsP[1]), f_e),
+
+  /* vy grad(psi) f integrated over velocity space */
+  Gbar_yx_c : calcInnerProdList(varsV, dxv[vid[1]]/2.0*varsV[1] + w[vid[1]], diff(bP,varsP[2]), f_e),
+  Gbar_yy_c : calcInnerProdList(varsV, dxv[vid[2]]/2.0*varsV[2] + w[vid[2]], diff(bP,varsP[2]), f_e),
+  Gbar_yz_c : calcInnerProdList(varsV, dxv[vid[3]]/2.0*varsV[3] + w[vid[3]], diff(bP,varsP[2]), f_e),
+
+  /* vz grad(psi) f integrated over velocity space */
+  Gbar_zx_c : calcInnerProdList(varsV, dxv[vid[1]]/2.0*varsV[1] + w[vid[1]], diff(bP,varsP[3]), f_e),
+  Gbar_zy_c : calcInnerProdList(varsV, dxv[vid[2]]/2.0*varsV[2] + w[vid[2]], diff(bP,varsP[3]), f_e),
+  Gbar_zz_c : calcInnerProdList(varsV, dxv[vid[3]]/2.0*varsV[3] + w[vid[3]], diff(bP,varsP[3]), f_e),
+
+  /* Expand the cotangent vectors in configuration space */
+  e1_x_e : doExpand1(e1_x, bC),
+  e1_y_e : doExpand1(e1_y, bC),
+  e1_z_e : doExpand1(e1_z, bC),
+  e2_x_e : doExpand1(e2_x, bC),
+  e2_y_e : doExpand1(e2_y, bC),
+  e2_z_e : doExpand1(e2_z, bC),
+  e3_x_e : doExpand1(e3_x, bC),
+  e3_y_e : doExpand1(e3_y, bC),
+  e3_z_e : doExpand1(e3_z, bC),
+
+  for i : 1 thru NP do (
+    /* Project velocity integrals onto configuration basis 
+       for vx grad(psi) f integrated over velocity space */ 
+    if Gbar_xx_c[i] # 0 then ( 
+      G_xx_c : calcInnerProdList(varsC, 1, bC, Gbar_xx_c[i]),
+      writeCExprs1(Gbar, G_xx_c),
+      incr_xx_c : float(expand(innerProd(varsC, 1, Gbar_e, e1_x_e))),
+      printf(fh, "  ~a += dx10*(~a); ~%", out[i-1], incr_xx_c),
+      printf(fh, "~%")
+    ),
+
+    if Gbar_xy_c[i] # 0 then ( 
+      G_xy_c : calcInnerProdList(varsC, 1, bC, Gbar_xy_c[i]),
+      writeCExprs1(Gbar, G_xy_c),
+      incr_xy_c : float(expand(innerProd(varsC, 1, Gbar_e, e1_y_e))),
+      printf(fh, "  ~a += dx10*(~a); ~%", out[i-1], incr_xy_c),
+      printf(fh, "~%")
+    ), 
+
+    if Gbar_xz_c[i] # 0 then ( 
+      G_xz_c : calcInnerProdList(varsC, 1, bC, Gbar_xz_c[i]),
+      writeCExprs1(Gbar, G_xz_c),
+      incr_xz_c : float(expand(innerProd(varsC, 1, Gbar_e, e1_z_e))),
+      printf(fh, "  ~a += dx10*(~a); ~%", out[i-1], incr_xz_c),
+      printf(fh, "~%")
+    ), 
+
+    /* Project velocity integrals onto configuration basis 
+       for vy grad(psi) f integrated over velocity space */ 
+    if Gbar_yx_c[i] # 0 then ( 
+      G_yx_c : calcInnerProdList(varsC, 1, bC, Gbar_yx_c[i]),
+      writeCExprs1(Gbar, G_yx_c),
+      incr_yx_c : float(expand(innerProd(varsC, 1, Gbar_e, e2_x_e))),
+      printf(fh, "  ~a += dx11*(~a); ~%", out[i-1], incr_yx_c),
+      printf(fh, "~%")
+    ),
+
+    if Gbar_yy_c[i] # 0 then ( 
+      G_yy_c : calcInnerProdList(varsC, 1, bC, Gbar_yy_c[i]),
+      writeCExprs1(Gbar, G_yy_c),
+      incr_yy_c : float(expand(innerProd(varsC, 1, Gbar_e, e2_y_e))),
+      printf(fh, "  ~a += dx11*(~a); ~%", out[i-1], incr_yy_c),
+      printf(fh, "~%")
+    ), 
+
+    if Gbar_yz_c[i] # 0 then ( 
+      G_yz_c : calcInnerProdList(varsC, 1, bC, Gbar_yz_c[i]),
+      writeCExprs1(Gbar, G_yz_c),
+      incr_yz_c : float(expand(innerProd(varsC, 1, Gbar_e, e2_z_e))),
+      printf(fh, "  ~a += dx11*(~a); ~%", out[i-1], incr_yz_c),
+      printf(fh, "~%")
+    ), 
+
+    /* Project velocity integrals onto configuration basis 
+       for vz grad(psi) f integrated over velocity space */ 
+    if Gbar_zx_c[i] # 0 then ( 
+      G_zx_c : calcInnerProdList(varsC, 1, bC, Gbar_zx_c[i]),
+      writeCExprs1(Gbar, G_zx_c),
+      incr_zx_c : float(expand(innerProd(varsC, 1, Gbar_e, e3_x_e))),
+      printf(fh, "  ~a += dx12*(~a); ~%", out[i-1], incr_zx_c),
+      printf(fh, "~%")
+    ),
+
+    if Gbar_zy_c[i] # 0 then ( 
+      G_zy_c : calcInnerProdList(varsC, 1, bC, Gbar_zy_c[i]),
+      writeCExprs1(Gbar, G_zy_c),
+      incr_zy_c : float(expand(innerProd(varsC, 1, Gbar_e, e3_y_e))),
+      printf(fh, "  ~a += dx12*(~a); ~%", out[i-1], incr_zy_c),
+      printf(fh, "~%")
+    ), 
+
+    if Gbar_zz_c[i] # 0 then ( 
+      G_zz_c : calcInnerProdList(varsC, 1, bC, Gbar_zz_c[i]),
+      writeCExprs1(Gbar, G_zz_c),
+      incr_zz_c : float(expand(innerProd(varsC, 1, Gbar_e, e3_z_e))),
+      printf(fh, "  ~a += dx12*(~a); ~%", out[i-1], incr_zz_c),
+      printf(fh, "~%")
+    )     
+  ),
+  flush_output(fh),
+  printf(fh, "~%"),
+  printf(fh, "  return 0.0; ~%"),
+  printf(fh, "} ~%"),
+  printf(fh, "~%")
+)$

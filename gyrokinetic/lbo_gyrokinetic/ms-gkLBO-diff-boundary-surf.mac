@@ -1,0 +1,68 @@
+load("gyrokinetic/lbo_gyrokinetic/gkLBOFuncs-diff-boundary-surf.mac")$
+load(stringproc)$
+
+/* This script calls the functions which calculate the
+   updates from the boundary surface contribution of the
+   diffusion term in the Lenard-Bernstein collision operator */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 0$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* Number of velocity dimensions allowed for each
+   configuration-space dimension. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+varsV : [vpar, mu]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for gkV : 1 thru length(gkVdims[c]) do (
+      v : gkVdims[c][gkV],
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+
+      if (c+v>4 and maxPolyOrderB > 2) then maxPolyOrderB : 2,
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      
+        disp(printf(false,sconcat("Creating diff boundary surface gyrokinetic LBO ",bName[bInd]," ~ax~av p~a"),c,v,polyOrder)),
+        for dir : 1 thru v do (
+          fname : sconcat("~/max-out/lbo_gyrokinetic_diff_boundary_surf", varsV[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder , ".c"),
+          fh : openw(fname),
+          printf(fh, "#include <gkyl_lbo_gyrokinetic_kernels.h> ~%"),
+
+          /* Mapped diff LBO. */
+          funcName : sconcat("lbo_gyrokinetic_diff_mapped_boundary_surf", varsV[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+          calcGkLBOBoundaryDiffUpdateInDir(dir, fh, funcName, c, v, bName[bInd], polyOrder, true),
+          printf(fh, "~%"),
+
+          /* Not mapped diff LBO. */
+          funcName : sconcat("lbo_gyrokinetic_diff_notmapped_boundary_surf", varsV[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+          calcGkLBOBoundaryDiffUpdateInDir(dir, fh, funcName, c, v, bName[bInd], polyOrder, false),
+          close(fh)
+        )
+      )
+    )
+  )
+);

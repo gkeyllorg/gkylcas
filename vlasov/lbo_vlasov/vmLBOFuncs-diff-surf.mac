@@ -1,0 +1,80 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("core/recovery.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* This script generates the kernels for the surface term
+   diffusion contribution from Lenard Bernstein operator. */
+
+vvarsAll : [vx, vy, vz]$
+vidx1(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+
+calcVmLBODiffUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,pDim,vid1,surfVar,bType,h_e,nuVtSqSum_e,f_xx_c,f_xx_e,incr_c],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NP : length(bP),  NC : length(bC),
+  
+  pDim    : cdim+vdim,
+  vid1    : vidx1(cdim,vdim),
+  surfVar : vvarsAll[dir],
+
+  /* Construct the recovery polynomial */
+  if polyOrder=1 then /* Force p=1 to mean hybrid. */
+    bType : "hyb"
+  else
+    bType : basisFun,
+  h_e : calcRecov1CellGen(bType, surfVar, varsP, polyOrder, 1,
+    dg(makelist(fl[i-1],i,1,NP)), dg(makelist(fc[i-1],i,1,NP)), dg(makelist(fr[i-1],i,1,NP))),
+  /*............. RECOVERY DONE ..............................*/
+    
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *nuSum, const double *nuPrimMomsSum, const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[~a]: cell-center coordinates. ~%", cdim+vdim),
+  printf(fh, "  // dxv[~a]: cell spacing. ~%", cdim+vdim),
+  printf(fh, "  // nuSum: collisionalities added (self and cross species collisionalities). ~%"),
+  printf(fh, "  // nuPrimMomsSum[~a]: sum of bulk velocities and thermal speeds squared times their respective collisionalities. ~%", (vdim+1)*NC),
+  printf(fh, "  // fl/fc/fr: distribution function in cells ~%"),
+  printf(fh, "  // out: incremented distribution function in cell ~%"),
+  printf(fh, "~%"),
+
+  /* Create a pointer to nuVtSqSum. */
+  printf(fh, "  const double *nuVtSqSum = &nuPrimMomsSum[~a];~%", vdim*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  double rdvSq4 = 4.0/(dxv[~a]*dxv[~a]); ~%", vid1[dir], vid1[dir]),
+  printf(fh, "  double incr[~a]; ~%", NP),
+  printf(fh, "~%"),
+
+  nuVtSqSum_e : doExpand1(nuVtSqSum,bC),
+    
+  if (polyOrder=1 or sdowncase(basisFun)="tensor") then (
+    /* This simplification only works for p=1 because it is a tensor product of
+       conf and velocity space (remains to be checked for tensor basis). */
+
+    /* Write out the second derivative of the recovered distribution. */
+    printf(fh, "  double f_xx[~a] = {0.0}; ~%", NP),
+    f_xx_c : calcInnerProdList(varsP, 1, bP, diff(h_e, surfVar, 2)),
+    writeCExprs1(f_xx, f_xx_c),
+    printf(fh, "~%"),
+
+    f_xx_e : doExpand(makelistNoZeros1(f_xx_c, f_xx),bP)
+  ) else (
+    f_xx_e : diff(h_e, surfVar, 2)
+  ),
+
+  incr_c : calcInnerProdList(varsP, nuVtSqSum_e, bP, f_xx_e),
+  writeCExprs1(incr, incr_c),
+  printf(fh, "~%"),
+    
+  writeCIncrExprs1(out, rdvSq4*makelistNoZeros1(incr_c, incr)),
+  printf(fh, "~%"),
+
+  printf(fh, "  return 0.;~%"),  /* Return CFL frequency in volume kernel. */
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+);

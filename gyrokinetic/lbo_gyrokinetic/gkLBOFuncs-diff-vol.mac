@@ -1,0 +1,132 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* This script generates the kernels for the diffusion volume
+   kernel of the Lenard Bernstein operator for the
+   gyrokinetic equation. It only computes the CFL frequency. */
+
+calcGkLBODiffVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,vmap_e,vmapSq_e,vmap_prime_e,pOrderVpar,vidx1,dir,f_e,nuSum_e,
+   nuVtSqSum_e,zr,facDiff_c,facDiff_e,i,bmagInv_e,
+   expr,polyFact,facDiff_mid],
+
+  printf(fh, "#include <gkyl_lbo_gyrokinetic_kernels.h> ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "GKYL_CU_DH double ~a(const double *dxv, const double *vmap, const double *vmap_prime, const double m_, const double *bmag_inv, const double *nuSum, const double *nuPrimMomsSum, const double *fin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // dxv[~a]: cell spacing. ~%", cdim+vdim),
+  printf(fh, "  // vmap: velocity space mapping.~%"),
+  printf(fh, "  // vmap_prime: velocity space mapping derivative.~%"),
+  printf(fh, "  // m_: species mass.~%"),
+  printf(fh, "  // bmag_inv: 1/(magnetic field magnitude). ~%"),
+  printf(fh, "  // nuSum: collisionalities added (self and cross species collisionalities). ~%"),
+  printf(fh, "  // nuPrimMomsSum: sum of bulk velocities and thermal speeds squared times their respective collisionalities. ~%"),
+  printf(fh, "  // fin: input distribution function.~%"),
+  printf(fh, "  // out: incremented output ~%"),
+  printf(fh, "~%"),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC),  NP : length(bP),
+
+  /* Expand velocity mapping fields. */
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+     mean hybrid basis. */
+  pOrderVpar : polyOrder,
+  if polyOrder=1 then ( pOrderVpar : 2 ),
+
+  vidx1 : makelist(i,i,cdim,cdim+vdim-1),
+
+  /* Create a pointer to nuVtSqSum. */
+  printf(fh, "  const double *nuVtSqSum = &nuPrimMomsSum[~a];~%", 1*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  double rdvVmapPrimeSq4[~a]; ~%", vdim),
+  for dir : 1 thru vdim do (
+    printf(fh, "  rdvVmapPrimeSq4[~a] = 4.0/(dxv[~a]*dxv[~a]*vmap_prime[~a]*vmap_prime[~a]); ~%", dir-1, vidx1[dir], vidx1[dir], dir-1, dir-1)
+  ),
+  printf(fh, "~%"),
+
+  /* Expand distribution function f in phase basis. */
+  f_e : doExpand1(fin, bP),
+
+  /* Expand flow speed sum(nu*u) and sum(nu*vtSq) in configuration basis. */
+  nuSum_e     : doExpand1(nuSum, bC),
+  nuVtSqSum_e : doExpand1(nuVtSqSum, bC),
+
+  vol_c : makelist(0,i,1,NP), /* Volume term. */
+
+  /* Specify a point to evaluate alpha at for use in computing CFL.
+     Here we choose the middle of the cell, where coordinates = 0. */
+  zr : makelist(varsP[d]=0, d, 1, length(varsP)),
+
+  cflFreq : 0,
+
+  /* ..................... vpar contribution ...................... */
+
+  /* Polynomial order factor in CFL frequency. */
+  polyFact : (pOrderVpar+1)^2,
+
+  /* facDiff = (2/(Delta vpar))^2 * < psi, nuVtSqSum/vpar'^2 >. */
+  facDiff_c : calcInnerProdList(varsC, 1, bC, rdvVmapPrimeSq4[0]*nuVtSqSum_e),
+
+  if pOrderVpar>1 then (
+    /* Only used in increment if polyOrderVpar>1. */
+    printf(fh, "  // Expand nuVtSqSum/vpar'^2 in conf basis.~%"),
+    printf(fh, "  double facDiffVpar[~a] = {0.};~%", NC),
+    writeCExprsCollect1lhsc(facDiffVpar, radcan(facDiff_c)),
+    printf(fh, "~%"),
+
+    /* Zero out components of alpha which are empty. */
+    facDiff_c : makelistNoZeros1(facDiff_c, facDiffVpar)
+  ),
+
+  facDiff_e : doExpand(facDiff_c, bC),
+
+  vol_c : vol_c + calcInnerProdList(varsP, facDiff_e, diff(bP, vpar, 2), f_e),
+
+  cflFreq : cflFreq + gcfac(float(expand(subst(zr, polyFact*facDiff_e )))),
+
+  /* ..................... mu contribution ...................... */
+
+  if vdim > 1 then (
+
+    /* Polynomial order factor in CFL frequency. */
+    polyFact : (polyOrder+1)^2,
+
+    /* Axisymmetric basis (independent of y). */
+    bmagBasis : getAxisymmetricConfBasis(bC),
+
+    bmagInv_e : doExpand1(bmag_inv,bmagBasis),
+
+    /* facDiff = (2/(Delta mu))^2 * < psi, 2*m_*bmag_inv*nuVtSqSum/mu'^2 >. */
+    facDiff_c : calcInnerProdList(varsC,1,bC,2*m_*rdvVmapPrimeSq4[1]*bmagInv_e*nuVtSqSum_e),
+
+    printf(fh, "  // Expand 2*m*nuVtSqSum/bmag/mu'^2 in conf basis.~%"),
+    printf(fh, "  double facDiffMu[~a] = {0.};~%", NC),
+    writeCExprsCollect1lhsc(facDiffMu, radcan(facDiff_c)),
+    printf(fh, "~%"),
+
+    /* Zero out components of alpha which are empty. */
+    facDiff_c : makelistNoZeros1(facDiff_c, facDiffMu),
+    facDiff_e : doExpand(facDiff_c, bC),
+
+    vol_c : vol_c + calcInnerProdList(varsP, facDiff_e, diff(vmap_e[2]*diff(bP, mu),mu), f_e),
+
+    cflFreq : cflFreq + gcfac(float(expand(subst(zr, polyFact*vmap_e[2]*facDiff_e ))))
+  ),
+
+  writeCIncrExprs1(out, vol_c),
+  printf(fh, "~%"),
+
+  printf(fh, "  return fabs(~a); ~%", cflFreq),
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+
+);

@@ -1,0 +1,59 @@
+load("vlasov/vlasov_maxwell/vlasovStreamGenGeoFuncs-surf-C.mac")$
+load(stringproc)$
+/* This script calls the functions which calculate the
+   updates from the surface term for the v . grad(f) and
+   E + v x B term in the Vlasov equation. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 3$
+minVdim_Ser : 3$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser"]$
+minPolyOrder : [minPolyOrder_Ser]$
+maxPolyOrder : [maxPolyOrder_Ser]$
+minCdim      : [minCdim_Ser]$
+minVdim      : [minVdim_Ser]$
+maxCdim      : [maxCdim_Ser]$
+maxVdim      : [maxVdim_Ser]$
+
+clabels : ["x","y","z"]$
+
+/* Compute the surface contribution in velocity space from the acceleration term */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for v : max(c,minVdim[bInd]) thru maxVdim[bInd] do (
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        disp(printf(false,sconcat("Creating surface Vlasov ",bName[bInd]," ~ax~av_p~a"),c,v,polyOrder)),
+        for dir : 1 thru c do ( 
+        /*
+          fname : sconcat("~/max-out/vlasov_gen_geo_surf", clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+          fh : openw(fname),
+          printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+          funcName : sconcat("vlasov_gen_geo_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+          calcVlasovStreamGenGeoUpdateInDir(dir, fh, funcName, c, v, bName[bInd], polyOrder), 
+          close(fh),
+        */
+          fname : sconcat("~/max-out/vlasov_gen_geo_boundary_surf", clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+          fh : openw(fname),
+          printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+          funcName : sconcat("vlasov_gen_geo_boundary_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+          calcVlasovBoundaryStreamGenGeoUpdateInDir(dir, fh, funcName, c, v, bName[bInd], polyOrder), 
+          close(fh)
+        )
+      )
+    )
+  )
+);

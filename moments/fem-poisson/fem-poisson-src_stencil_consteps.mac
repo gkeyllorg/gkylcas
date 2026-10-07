@@ -1,0 +1,193 @@
+/*
+   Generate kernels computing the RHS of the Poisson equation, i.e.
+     \int psi_k*T*rho dV
+   where T is a modal-to-nodal operation and rho is the source.
+   The kernel gets modified at in skin cells depending on the BCs.
+*/
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac");
+load("moments/bvp_utilities/bvp-util.mac");
+load("moments/fem/fem-util.mac");
+fpprec : 24$
+
+generate_fem_poisson_src_stencil_consteps(fh, funcNm, dim, basisFun, pMax) := block(
+  [coordVarS,stencilLoc,bcTypes,bcStrs,bcKey,bcCombos,currBC,stencilStr,bN,numB,vars,nodes,numNodes,
+   massNod,massM,mod2nod,massMod2nod,rho_c,src,src_c,domSurfs,phi_e,surf_c,insertVal,dirichletDirs,opStr,dir,
+   phiBC_m,phiBC_c,dirichletNodes,dirichletNodesI,bcNode,bcNodeI,dirVar,surfVars,off3,bcValsIdx,bcValues,
+   dphidnBC,sI,d,bcsInDir,i,bcI,polyOrder,dI,k],
+
+  kill(varsC, varsP, basisC, basisP),
+
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x", ".lisp")),
+
+  /* Associative list between stencil location (-1,0,1) and variable strings in kernel name. */
+  coordVarS : getCoordVarS(varsC),
+
+  /* List of stencil locations. Each entry is a dim-dimensional list
+     with -1 meaning it is at a lower boundary, 1 upper boundary, or
+     0 away from boundaries in that direction. */
+  stencilLoc : getStencilCoords(dim),
+
+  /* Types of boundary conditions for which to generate kernels.
+       =0 periodic
+       =1 dirichlet
+       =2 neumann
+       =3 robin
+       =4 dirichletvar (=1 with spatially varying BC).
+  */
+  bcTypes : [0, 1, 2, 3, 4],
+  bcStrs  : ["periodic", "dirichlet", "neumann", "robin", "dirichletvar"],
+  bcKey   : makelist([bcTypes[i],bcStrs[i]],i,1,length(bcTypes)),
+
+  for sI : 1 thru length(stencilLoc) do (
+
+    /* Obtain the different BC combinations for this stencil.
+       Will generate a separate kernel for each. */
+    bcCombos : [[0]],
+    if stencilLoc[sI][1] # 0 then ( bcCombos : makelist([bcTypes[i]],i,1,length(bcTypes)) ),
+    for d : 2 thru dim do (
+      bcsInDir : [[0]],
+      if stencilLoc[sI][d] # 0 then ( bcsInDir : makelist([bcTypes[i]],i,1,length(bcTypes)) ),
+      bcCombos : listify(cartesian_product(setify(bcCombos),setify(bcsInDir))),
+      for i : 1 thru length(bcCombos) do ( bcCombos[i] : flatten(bcCombos[i]) )
+    ),
+
+    /* Loop over BC combinations. Will create a separate kernel for each. */
+    for bcI : 1 thru length(bcCombos) do (
+
+      currBC : copylist(bcCombos[bcI]),
+
+      /* String used in kernel name, identifying stencil location and BC. */
+      stencilStr : "",
+      for d : 1 thru dim do (
+        stencilStr : sconcat(stencilStr,"_",assoc(stencilLoc[sI][d],[[-1,"lo"],[0,"in"],[1,"up"]]),
+                     assoc(stencilLoc[sI][d],coordVarS)[d],"_",assoc(currBC[d],bcKey),string(varsC[d]))
+      ),
+
+      for polyOrder : 1 thru pMax do (
+
+        printf(fh, "GKYL_CU_DH void ~a_p~a~a(const double *epsilon, const double *dx, const double *rho, const double *bcVals, const double *phiBC, const long *globalIdxs, double *bsrc) ~%{ ~%", funcNm, polyOrder, stencilStr),
+        printf(fh, "  // epsilon: permittivity.~%"),
+        printf(fh, "  // rho: right side source.~%"),
+        printf(fh, "  // bcVals[3*2*dim]: values to impose as BCs, i.e. bcVals[0]*phi+bcVals[1]*d(phi)/dx=bcVals[2].~%"),
+        printf(fh, "  // phiBC: Dirichlet boundary potential, given as a DG (volume) expansion in the skin cell.~%"),
+        printf(fh, "  // globalIdxs: global linear index of each basis function/node in current cell.~%"),
+        printf(fh, "  // bsrc: global right side source vector.~%"),
+        printf(fh, "~%"),
+
+        bN   : getNodalBasis(basisFun, dim, polyOrder),
+        numB : length(bN),
+        vars : listofvars(bN),
+
+        nodes    : args(getNodes(basisFun, dim, polyOrder)),
+        numNodes : length(nodes),
+
+        massM   : calcMassUnweighted(dim, basisFun, polyOrder),
+        mod2nod : calcModToNod(basisFun, dim, polyOrder),
+
+        massMod2nod : massM . mod2nod,
+
+        rho_c : makelist(rho[k-1],k,1,numB),
+
+        src   : massMod2nod . rho_c,
+        src_c : makelist(fullratsimp(src[i][1]),i,1,numB),
+
+        /* Calculate contributions to the surface term, since some of them have
+           to be moved to the RHS source vector (e.g. they are not proportional
+           to an unkown phi). */
+        /* Only domain surface terms with non-periodic and non-Dirichlet BCs contribute a surface term. */
+        domSurfs : sublist_indices(currBC, lambda([x],x # 0 and x # 1)),
+        if length(domSurfs)>0 then (
+          /* Surface factors based on cell lengths. */
+          printf(fh, "  double rdx2Sq[~a]; ~%", dim),
+          for d : 1 thru dim do (
+            printf(fh, "  rdx2Sq[~a] = 4.0/(dx[~a]*dx[~a]); ~%", d-1, d-1, d-1)
+          ),
+          printf(fh, "~%")
+        ),
+        phi_e : doExpand1(phi,bN),
+        surf_c : makelist(0,k,1,numB),
+        for dI : 1 thru length(domSurfs) do (
+          dir      : domSurfs[dI],
+          dirVar   : vars[dir],
+          surfVars : delete(dirVar,vars),
+
+          off3 : 3*((stencilLoc[sI][dir]+1)/2),
+          bcValsIdx   : 6*(dir-1)+off3,
+          if currBC[dir]=2 then (
+            /* Neumman. */
+            bcValues : [0, 1, bcVals[bcValsIdx+2]]
+          ) elseif currBC[dir]=3 then (
+            /* Robin. */
+            bcValues : [bcVals[bcValsIdx], bcVals[bcValsIdx+1], bcVals[bcValsIdx+2]]
+          ),
+
+          dphidnBC : (bcValues[3] - bcValues[1]*phi_e)/bcValues[2],
+
+          surf_c : surf_c-epsilon[0]*stencilLoc[sI][dir]*rdx2Sq[dir-1]
+                  *calcInnerProdList(surfVars,1,subst(dirVar=stencilLoc[sI][dir],bN),
+                                                subst(dirVar=stencilLoc[sI][dir],dphidnBC))
+        ),
+        /* Set phi[i]=0 since we don't want to add those that are proportional
+           to unknown phi's (which are accounted for in the LHS matrix. */
+        src_c : src_c - subst(makelist(phi[k-1]=0,k,1,numB),surf_c),
+
+        /* For Dirichlet BCs we'll simply set the equation corresponding to the
+           k-th node to phi_k = bcVals[2]. So we need to replace the source at
+           this node by the boundary value. */
+        insertVal : makelist(false,k,1,numB),
+        dirichletDirs : append([], sublist_indices(currBC, lambda([x],x = 1 or x = 4))),
+        for dI : 1 thru length(dirichletDirs) do (
+          dir : dirichletDirs[dI],
+          if (currBC[dir] = 1) then (
+            /* Used homogeneous boundary phi value. */
+            bcValsIdx : 6*(dir-1)+2+max(0,3*stencilLoc[sI][dir])
+          ) else (
+            /* Evaluate phiBC at the boundary surface nodes. */
+            phiBC_m : mod2nod . makelist(phiBC[k-1],k,1,numB),
+            phiBC_c : makelist(fullratsimp(phiBC_m[i][1]),i,1,numB)
+          ),
+          dirichletNodes  : sublist(nodes,lambda([x],x[dir]=stencilLoc[sI][dir])),
+          dirichletNodesI : sublist_indices(nodes,lambda([x],x[dir]=stencilLoc[sI][dir])),
+          for k : 1 thru length(dirichletNodesI) do (
+            if (currBC[dir] = 1) then (
+              src_c[dirichletNodesI[k]] : bcVals[bcValsIdx]
+            ) else (
+              /* Evaluate phiBC at +1/-1 when at the lower/upper boundary.*/
+              bcNode : copylist(dirichletNodes[k]),
+              bcNode[dir] : bcNode[dir],
+              bcNodeI : sublist_indices(nodes,lambda([x],x=bcNode))[1],
+              src_c[dirichletNodesI[k]] : phiBC_c[bcNodeI]
+            ),
+            insertVal[dirichletNodesI[k]] : true
+          )
+        ),
+
+        /* Write out the coefficients of each basis_i*sum_j basis_j*rho_j
+           (modified by BCS) to RHS vector via triples object.*/
+        for k : 1 thru numB do (
+          printf(fh, "  #ifdef __CUDA_ARCH__~%"),
+          if insertVal[k] then (
+            opStr : "atomicExch",
+            printf(fh, "  ~a((unsigned long long int*) &bsrc[globalIdxs[~a]],__double_as_longlong(~a));~%",opStr,k-1,expand(float(src_c[k])))
+          ) else (
+            opStr : "atomicAdd",
+            printf(fh, "  ~a(&bsrc[globalIdxs[~a]],~a);~%",opStr,k-1,expand(float(src_c[k])))
+          ),
+          printf(fh, "  #else~%"),
+          if insertVal[k] then (opStr : "=") else (opStr : "+="),
+          printf(fh, "  bsrc[globalIdxs[~a]] ~a ~a;~%",k-1,opStr,expand(float(src_c[k]))),
+          printf(fh, "  #endif~%")
+        ),
+        printf(fh, "~%"),
+
+        printf(fh, "}~%")
+
+      )
+    )
+
+  )
+
+)$

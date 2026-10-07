@@ -1,0 +1,43 @@
+load("pkpm/pkpm/SelfPrimMoms-vlasovPKPMFuncs.mac")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor order basis. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$    /* BoundaryEval fails for polyOrder>2 for some reason. */
+minCdim_Tensor : 1$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    /* Vlasov pkpm primitive moments. */
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+    
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      disp(printf(false,sconcat("Creating VlasovPKPMSelfPrimMoments ~ax1v ", bName[bInd], " p~a"),d,polyOrder)),
+      fname : sconcat("~/max-out/pkpm_self_prim_moments_", d, "x1v_", bName[bInd],"_p",polyOrder, ".c"),
+      fh : openw(fname),
+      printf(fh, "#include <gkyl_prim_lbo_pkpm_kernels.h> ~%"),
+      printf(fh, " ~%"),
+      funcName : sconcat("pkpm_self_prim_moments_", d, "x1v_", bName[bInd],"_p",polyOrder),
+      calcSelfPrimMoms(fh, funcName, d, 1, bName[bInd], polyOrder),
+      close(fh)
+    )
+  )
+);

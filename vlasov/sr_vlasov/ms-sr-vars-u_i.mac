@@ -1,0 +1,65 @@
+load("vlasov/sr_vlasov/sr-vars-u_i.mac")$
+load(stringproc)$
+/* This script calls the functions which calculate 
+   the bulk four-velocity (GammaV, GammaV*V_drift) using weak division
+   GammaV = M0/n
+   GammaV*V_drift = M1i/n */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* see begining of v loop below though. */
+maxCdim_Tensor : 0$
+maxVdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for v : c thru maxVdim[bInd] do (
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        fname : sconcat("~/max-out/sr_vars_u_i_set_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        funcName : sconcat("sr_vars_u_i_set_",  c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+        if (polyOrder = 1) then (
+          set_sr_u_i_p1(fh, funcName, c, v, bName[bInd], polyOrder)
+        )
+        else (
+          set_sr_u_i(fh, funcName, c, v, bName[bInd], polyOrder)
+        ),
+        close(fh),
+
+        fname : sconcat("~/max-out/sr_vars_u_i_copy_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        funcName : sconcat("sr_vars_u_i_copy_",  c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+        copy_sr_u_i(fh, funcName, c, v, bName[bInd], polyOrder),
+        close(fh)
+      )
+    )
+  )
+);

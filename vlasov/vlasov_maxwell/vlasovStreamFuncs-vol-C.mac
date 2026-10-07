@@ -1,0 +1,91 @@
+/* Compute the volume term for ONLY the streaming (v . grad(f)) term
+   in Vlasov-Maxwell equations. */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+fpprec : 24$
+
+varsVAll : [vx, vy, vz]$
+
+cidx1(cdim)      := makelist(i,i,0,cdim-1)$
+vidx1(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+
+calcVlasovStreamVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,cid1,vid1,wDdx,dvDdx,dir,f_e,volTerm,clst,strOut,d],
+
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+
+  pOrderV : polyOrder,
+  /* Load basis of dimensionality requested. */
+  if (basisFun="tensor") then (
+    /* If we are using the tensor basis, just use the simple load command */
+    [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP,bP] : loadBasis(basisFun, cdim+vdim, polyOrder), 
+    /* Do a variable substitution for the lower dimensional tensor basis functions
+       to construct the correct set of variables for the subsequent operations */
+    if (cdim+vdim = 2) then (
+      varsSub : [y=vx],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+    else if (cdim+vdim = 3) then (
+      varsSub : [y=vx, z=vy],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+    else if (cdim = 2 and vdim = 2) then (
+      varsSub : [vx=y, vy=vx, vz=vy],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+  )
+  else (
+    /* Load the specific desired basis, including the loading of the hybrid basis if p=1 */
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+    /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+       mean hybrid basis. */
+    if polyOrder=1 then ( pOrderV : 2 )
+  ),
+
+  printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // w[NDIM]:   Cell-center coordinates.~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing.~%"),
+  printf(fh, "  // f:         Input distribution function.~%"),
+  printf(fh, "  // out:       Incremented output.~%"),
+
+  cid1 : cidx1(cdim),
+  vid1 : vidx1(cdim,vdim),
+
+  wDdx  : makelist(eval_string(sconcat("w",vid1[i],"Ddx",cid1[i])),i,1,cdim),
+  dvDdx : makelist(eval_string(sconcat("dv",vid1[i],"Ddx",cid1[i])),i,1,cdim),
+
+  /* Cell center and cell length divided by velocity cell length. */
+  for dir : 1 thru cdim do (
+    printf(fh, "  double w~aDdx~a  = w[~a]/dxv[~a]; ~%", vid1[dir], dir-1, vid1[dir], cid1[dir]),
+    printf(fh, "  double dv~aDdx~a = dxv[~a]/dxv[~a]; ~%", vid1[dir], dir-1, vid1[dir], cid1[dir])
+  ),
+
+  /* Expand distribution function in phase basis. */
+  f_e : doExpand1(f, bP),
+
+  /* Inner product of grad(psi) . v f, where psi is a basis function. */
+  volTerm : 0,
+  for dir : 1 thru cdim do (
+    volTerm : volTerm
+             +calcInnerProdList(varsP, 2*wDdx[dir]+dvDdx[dir]*varsVAll[dir], diff(bP,varsP[dir]), f_e)
+  ),
+  printf(fh, "~%"),
+
+  clst : append(wDdx,dvDdx),
+  writeCIncrExprsCollect1(out,volTerm,clst),
+  printf(fh, "~%"),
+
+  strOut : sconcat("fabs(w",vid1[1],"Ddx",0,")+0.5*dv",vid1[1],"Ddx",0),
+  for d : 2 thru cdim do (
+    strOut : sconcat(strOut,"+fabs(w",vid1[d],"Ddx",d-1,")+0.5*dv",vid1[d],"Ddx",d-1)
+  ),
+  printf(fh, "  return ~a*(~a);~%",float(2*polyOrder+1),strOut),
+  printf(fh, "} ~%")
+)$

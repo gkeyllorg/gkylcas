@@ -1,0 +1,394 @@
+/* This script generates the kernels for the surface term of the E + v x B 
+   advection in velocity space for the Vlasov equation (full EM) */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+load("scifac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("util_maxima/utilities.mac")$
+fpprec : 24$
+
+varsV : [vx, vy, vz]$
+cvars : [x, y, z]$
+vvars : [vx, vy, vz]$
+
+dvdx  : [dv0dx0, dv1dx1, dv2dx2]$
+wdx   : [w0dx0, w1dx1, w2dx2]$
+dx11  : [dx10, dx11, dx12]$
+dv11  : [dv10, dv11, dv12]$
+
+Efld  : [E0, E1, E2]$
+Bfld  : [B0, B1, B2]$
+
+/* Helper function for switching to eta = (v - w)/(dv/2) coordinates */
+vTransSubs : [vvx=vx*dv1/2+wv1, vvy=vy*dv2/2+wv2, vvz=vz*dv3/2+wv3]$
+
+ax(vx, vy, vz, bc) := doExpand1(Efld[1],bc) + vy*doExpand1(Bfld[3],bc) - vz*doExpand1(Bfld[2],bc)$
+ay(vx, vy, vz, bc) := doExpand1(Efld[2],bc) + vz*doExpand1(Bfld[1],bc) - vx*doExpand1(Bfld[3],bc)$
+az(vx, vy, vz, bc) := doExpand1(Efld[3],bc) + vx*doExpand1(Bfld[2],bc) - vy*doExpand1(Bfld[1],bc)$
+
+vzero(vdim) := if vdim = 1 then [vvy=0, vvz=0] elseif vdim = 2 then [vvz=0] else [] $
+
+calcAccel(vdir, vdim, bc) :=
+  if vdir = 1
+    then subst(vTransSubs, subst(vzero(vdim), ax(vvx,vvy,vvz,bc)))
+  elseif vdir = 2
+    then subst(vTransSubs, subst(vzero(vdim), ay(vvx,vvy,vvz,bc)))
+  else
+    subst(vTransSubs, subst(vzero(vdim), az(vvx,vvy,vvz,bc)))$
+
+cidx(cdim)      := makelist(i,i,0,cdim-1)$
+vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+
+calcVlasovStreamBoundaryUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [numBasisP,cid,vid,cv,vv,surfVars,bSurf,fskin_e,fedge_e,incr],
+
+  pOrderV : polyOrder,
+  /* Load basis of dimensionality requested. */
+  if (basisFun="tensor") then (
+    /* If we are using the tensor basis, just use the simple load command */
+    [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP,bP] : loadBasis(basisFun, cdim+vdim, polyOrder), 
+    /* Do a variable substitution for the lower dimensional tensor basis functions
+       to construct the correct set of variables for the subsequent operations */
+    if (cdim+vdim = 2) then (
+      varsSub : [y=vx],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+    else if (cdim+vdim = 3) then (
+      varsSub : [y=vx, z=vy],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+    else if (cdim = 2 and vdim = 2) then (
+      varsSub : [vx=y, vy=vx, vz=vy],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+  )
+  else (
+    /* Load the specific desired basis, including the loading of the hybrid basis if p=1 */
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+    /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+       mean hybrid basis. */
+    if polyOrder=1 then ( pOrderV : 2 )
+  ),
+
+  numBasisP : length(bP),
+
+  print("Working on ", funcNm),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, 
+  const double *alpha_surf_edge, const double *alpha_surf_skin, 
+  const double *sgn_alpha_surf_edge, const double *sgn_alpha_surf_skin, 
+  const int *const_sgn_alpha_edge, const int *const_sgn_alpha_skin, 
+  const int edge, const double *fedge, const double *fskin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]: cell-center.~%"),
+  printf(fh, "  // dxv[NDIM]: cell length.~%"),
+  printf(fh, "  // alpha_surf_edge: Surface expansion of phase space flux on the lower edges of the edge cell (used by general geometry version).~%"),
+  printf(fh, "  // alpha_surf_skin: Surface expansion of phase space flux on the lower edges of the skin cell (used by general geometry version).~%"),
+  printf(fh, "  // sgn_alpha_surf_edge: sign(alpha_surf_edge) at quadrature points (used by general geometry version).~%"),
+  printf(fh, "  // sgn_alpha_surf_skin: sign(alpha_surf_skin) at quadrature points (used by general geometry version).~%"),
+  printf(fh, "  // const_sgn_alpha_edge: Boolean array true if sign(alpha_surf_edge) is only one sign, either +1 or -1 (used by general geometry version).~%"),
+  printf(fh, "  // const_sgn_alpha_skin: Boolean array true if sign(alpha_surf_skin) is only one sign, either +1 or -1 (used by general geometry version).~%"),
+  printf(fh, "  // edge: determines if the update is for the left edge (-1) or right edge (+1).~%"),
+  printf(fh, "  // fskin,fedge: distribution function in skin cell/last edge cell.~%"),
+  printf(fh, "  // out: output increment in center cell.~%"),
+  printf(fh, "~%"),
+
+  cid : cidx(cdim),
+  vid : vidx(cdim,vdim),
+
+  /* Surface contribution is defined as integral(phi^- Ghat) over the surface. */
+
+  /* cv = variable in direction of surface update. */
+  cv : varsP[dir],
+  vv : varsV[dir],
+
+  /* Surface variables to integrate over. */
+  surfVars : delete(cv,varsP),
+
+  /* Generate surface basis. this produces the ndim-1 orthogonal basis with no vv dependence. */
+  if polyOrder=1 then (  /* Force p=1 to use hybrid basis. */
+    bSurf : basisFromVars("hyb",surfVars,polyOrder)
+  ) else (
+    bSurf : basisFromVars(basisFun,surfVars,polyOrder)
+  ),
+
+  /* Create expansions of f_skin, f_edge on volume basis. */
+  fskin_e : doExpand1(fskin, bP),
+  fedge_e : doExpand1(fedge, bP),
+
+  printf(fh, "  const double dx1~a = 2/dxv[~a]; ~%", dir-1, cid[dir]),
+  printf(fh, "  const double dv = dxv[~a], wv = w[~a]; ~%", vid[dir], vid[dir]),
+  printf(fh, "  double Ghat[~a]; ~%", length(bSurf)),
+    printf(fh, "~%"),
+
+  /* Function that computes the surface increment (without a 2/dx factor)
+     with upwinding based on the grid velocity. */
+  evSurfIncr(fL_e, fR_e, evAt) := block([Ghat_c,GhatNoZero_c,Ghat_e,incrOut],
+    printf(fh, "  if (~a>0) { ~%~%",wv),
+
+    /* Evaluate surface projection of Ghat = v f_left. */
+    Ghat_c : calcInnerProdList(surfVars, wv+(dv/2)*vv, bSurf, subst(cv=1, fL_e)),
+    writeCExprsCollect1lhsc(Ghat, radcan(Ghat_c)),
+    printf(fh, "~%"),
+    flush_output(fh),
+    /* Zero out components of Ghat which are empty. */
+    GhatNoZero_c : makelistNoZeros1(Ghat_c, Ghat),
+    Ghat_e       : doExpand(GhatNoZero_c, bSurf),
+
+    printf(fh, "  } else { ~%~%"),
+
+    /* Evaluate surface projection of Ghat = v f_right. */
+    Ghat_c : calcInnerProdList(surfVars, wv+(dv/2)*vv, bSurf, subst(cv=-1, fR_e)),
+    writeCExprsCollect1lhsc(Ghat, radcan(Ghat_c)),
+    printf(fh, "~%"),
+    flush_output(fh),
+    /* Zero out components of Ghat which are empty. */
+    GhatNoZero_c : makelistNoZeros1(Ghat_c, Ghat),
+    Ghat_e       : doExpand(GhatNoZero_c, bSurf),
+
+    printf(fh, "  } ~%"),
+    printf(fh, "~%"),
+
+    /* Compute surface contribution integral(phi^- Ghat) on the left/right. */
+    incrOut : calcInnerProdList(surfVars, -evAt, subst(cv=evAt, bP), Ghat_e),
+    return(incrOut)
+  ),
+
+  /* NOTE: WE ARE USING L TO DENOTE THE LEFT EDGE UPDATE AND R TO DENOTE RIGHT EDGE UPDATE OF GLOBAL DOMAIN */
+  /* if edge == -1, we are doing the left edge boundary and the skin cell needs to be evauluated at +1 */
+  printf(fh, "  if (edge == -1) { ~%~%"),
+
+  incr : evSurfIncr(fskin_e, fedge_e, 1.0),
+  writeCIncrExprsCollect1lhsc(out, dx11[dir]*incr),
+
+  /* otherwise edge == +1, we are doing the right edge boundary and the skin cell needs to be evauluated at -1 */
+  printf(fh, "~%  } else { ~%~%"),
+
+  incr : evSurfIncr(fedge_e, fskin_e, -1.0),
+  writeCIncrExprsCollect1lhsc(out, dx11[dir]*incr),
+
+  printf(fh, "~%  } ~%"),
+
+  printf(fh, "  return 0.;~%"),  /* Return CFL frequency in volume kernel. */
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+)$
+
+calcVlasovLorentzBoundaryUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [bC,bP,numC,numP,pDim,cid,vid,vv,surfVars,bSurf,fSkin_e,fEdge_e,acc_e,
+   alphaV_c,alphaNoZero,alpha_e,surfNodes,numNodes,exprAtNodes,alphaOrd_n,
+   rcoFac,fHatSurf_e,Ghat_c,GhatNoZero,Ghat_e,incr,varsC,varsP,basisC,basisP],
+
+  pOrderV : polyOrder,
+  /* Load basis of dimensionality requested. */
+  if (basisFun="tensor") then (
+    /* If we are using the tensor basis, just use the simple load command */
+    [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP,bP] : loadBasis(basisFun, cdim+vdim, polyOrder), 
+    /* Do a variable substitution for the lower dimensional tensor basis functions
+       to construct the correct set of variables for the subsequent operations */
+    if (cdim+vdim = 2) then (
+      varsSub : [y=vx],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+    else if (cdim+vdim = 3) then (
+      varsSub : [y=vx, z=vy],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+    else if (cdim = 2 and vdim = 2) then (
+      varsSub : [vx=y, vy=vx, vz=vy],
+      bP : subst(varsSub, copylist(bP)),  
+      varsP : subst(varsSub, copylist(varsP))
+    )
+  )
+  else (
+    /* Load the specific desired basis, including the loading of the hybrid basis if p=1 */
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+    /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+       mean hybrid basis. */
+    if polyOrder=1 then ( pOrderV : 2 )
+  ),
+
+  numC  : length(bC),
+  numP  : length(bP),
+  pDim  : length(varsP),
+
+  printf(fh, "GKYL_CU_DH double ~a~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *field, int edge, const double *fEdge, const double *fSkin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, vvars[dir], cdim, vdim, basisFun, polyOrder),
+  printf(fh, "  // w:           Cell-center coordinates.~%"),
+  printf(fh, "  // dxv[NDIM]:   Cell spacing.~%"),
+  printf(fh, "  // field:       q/m*EM fields.~%"),
+  printf(fh, "  // edge:        Determines if the update is for the left edge (-1) or right edge (+1).~%"),
+  printf(fh, "  // fSkin/fEdge: Input Distribution function in skin cell/last edge cell ~%"),
+  printf(fh, "  // out:         Output distribution function in skin cell ~%"),
+
+  cid : cidx(cdim),
+  vid : vidx(cdim,vdim),
+
+  printf(fh, "  const double dv1~a = 2/dxv[~a]; ~%", dir-1, vid[dir]),
+  for d : 1 thru vdim do (
+    printf(fh, "  const double dv~a = dxv[~a], wv~a = w[~a]; ~%", d, vid[d], d, vid[d])
+  ),
+
+  printf(fh, "  const double *E~a = &field[~a]; ~%", dir-1, numC*(dir-1)),
+  /* If vdim = 1, then no magnetic field. */
+  if vdim > 1 then (
+    if vdim = 2 then (
+      /* In 2 velocity dimensions, only Bz. */
+      printf(fh, "  const double *B~a = &field[~a]; ~%", 2, numC*2+3*numC)
+    ),
+    if vdim = 3 then (
+      for d : 1 thru 3 do (
+        printf(fh, "  const double *B~a = &field[~a]; ~%", d-1, numC*(d-1)+3*numC)
+      )            
+    )
+  ),
+  printf(fh, "~%"),
+
+  /* Surface contribution is defined as integral(phi^- Ghat) over the surface. */
+
+  /* vv = variable in direction of surface update. */
+  vv : varsV[dir],
+
+  /* Surface variables to integrate over. */
+  surfVars : delete(vv,varsP),
+
+  /* Generate surface basis. this produces the ndim-1 orthogonal basis with no vv dependence. */
+  /* Also generate necessary basis strings and surface nodes given by tensor product of Gauss-Legendre quadrature points */
+  if (polyOrder=1 and basisFun="ser") then (  /* Force p=1 Serendipity to use hybrid basis. */
+    bSurf : basisFromVars("hyb",surfVars,polyOrder),
+
+    surf_cdim : cdim,  surf_vdim : vdim-1,
+    surfNodes : gaussOrdHyb(1+1, surf_cdim, surf_vdim),
+
+    basisStr : sconcat("hyb_", cdim, "x", vdim, "v", "_p", polyOrder)
+  ) else (
+    bSurf : basisFromVars(basisFun,surfVars,polyOrder), 
+
+    surfNodes : gaussOrd(polyOrder+1, pDim-1),
+
+    basisStr : sconcat(basisFun, "_", cdim+vdim, "x", "_p", polyOrder)
+  ),
+  NSurf : length(bSurf),
+  numNodes : length(surfNodes),
+
+  /* Create expansions of f_skin, f_edge on volume basis. */
+  fSkin_e : doExpand1(fSkin, bP),
+  fEdge_e : doExpand1(fEdge, bP),
+
+  /* alpha is the phase space flux at the surface. */
+  /* NOTE: Due to the form of the Vlasov-Maxwell system of equations, this phase space
+     flux is the same evaluated at the left edge and right edge in a given direction
+     (i.e., the flux does not explicitly depend on the coordinate in the surface direction)
+     For example, vx flux is q/m (Ex + vy*Bz - vz*By) */
+  printf(fh, "  double alpha[~a] = {0.0}; ~%", length(bSurf)),
+  printf(fh, "~%"),
+
+  /* alpha_v = q/m*(E + v x B) */
+  acc_e : calcAccel(dir, vdim, bC),
+  /* Project alpha_v onto surface basis, and print resulting coefficients. */
+  alphaV_c : calcInnerProdList(surfVars, 1, bSurf, subst(vv=1, acc_e)),
+  writeCExprsCollect1lhsc(alpha, radcan(alphaV_c)),
+  printf(fh, "~%"),
+  flush_output(fh),
+  /* Zero out components of alpha which are empty. */
+  alphaNoZero : makelistNoZeros1(alphaV_c, alpha),
+  alpha_e     : doExpand(alphaNoZero, bSurf),
+
+  /* Evaluate alpha at ordinates.
+     Note: alphaSurf_e is already a surface expansion. 
+     In addition, it is continuous and does not vary with respect to the surface variable.
+     Thus, there is no need for alpha_l and alpha_r. We only need alpha at the ordinates. */
+  alphaOrd_n : gcfac(float(evAtNodes(alpha_e,surfNodes,surfVars))),
+
+  printf(fh, "  double fUpwindQuad[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double fUpwind[~a] = {0.0};~%", length(bSurf)),
+  printf(fh, "  double Ghat[~a] = {0.0}; ~%", length(bSurf)),
+  printf(fh, "~%"),
+  /* NOTE: WE ARE USING L TO DENOTE THE LEFT EDGE UPDATE AND R TO DENOTE RIGHT EDGE UPDATE OF GLOBAL DOMAIN */
+  /* if edge == -1, we are doing the left edge boundary and the skin cell needs to be evauluated at +1 */
+  printf(fh, "  if (edge == -1) { ~%~%"),
+
+  /* Write out fUpwindQuad for the far left edge */
+  for i : 1 thru length(alphaOrd_n) do (
+    printf(fh, "  if (~a > 0) { ~%", alphaOrd_n[i]),
+    printf(fh, "    fUpwindQuad[~a] = ~a_surfx~a_eval_quad_node_~a_r(fSkin); ~%", i-1, basisStr, cdim+dir, i-1),
+    printf(fh, "  } else { ~%"),
+    printf(fh, "    fUpwindQuad[~a] = ~a_surfx~a_eval_quad_node_~a_l(fEdge); ~%", i-1, basisStr, cdim+dir, i-1),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, "~%"),
+  printf(fh, "  // Project tensor nodal quadrature basis back onto modal basis. ~%"),
+  if (polyOrder=1 and basisFun="ser") then (  /* Force p=1 Serendipity to use hybrid basis. */
+    printf(fh, "  hyb_~ax~av_p1_vdir_upwind_quad_to_modal(fUpwindQuad, fUpwind); ~%", cdim, vdim)
+  )
+  else (
+    printf(fh, "  ~a_~ax_p~a_upwind_quad_to_modal(fUpwindQuad, fUpwind); ~%", basisFun, cdim+vdim, polyOrder)
+  ),
+  printf(fh, "~%"),
+
+  /* Create expansions of f_hat (upwinded f) in the surface basis. */
+  fHatSurf_e : doExpand1(fUpwind, bSurf),
+
+  /* Print C exprs for Ghat across surface boundary */
+  Ghat_c : fullratsimp(innerProd(surfVars, alpha_e, bSurf, fHatSurf_e)),
+  writeCExprs1(Ghat, Ghat_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Expand G_hat in surface basis. */
+  Ghat_e : doExpand1(Ghat, bSurf),
+
+  incr : calcInnerProdList(surfVars, -1, subst(vv=1.0, bP), Ghat_e),
+  writeCIncrExprsCollect1lhsc(out, dv11[dir]*incr),  
+
+  /* otherwise edge == +1, we are doing the right edge boundary and the skin cell needs to be evauluated at -1 */
+  printf(fh, "~%  } else { ~%~%"),
+
+  /* Write out fUpwindQuad for the far right edge */
+  for i : 1 thru length(alphaOrd_n) do (
+    printf(fh, "  if (~a > 0) { ~%", alphaOrd_n[i]),
+    printf(fh, "    fUpwindQuad[~a] = ~a_surfx~a_eval_quad_node_~a_r(fEdge); ~%", i-1, basisStr, cdim+dir, i-1),
+    printf(fh, "  } else { ~%"),
+    printf(fh, "    fUpwindQuad[~a] = ~a_surfx~a_eval_quad_node_~a_l(fSkin); ~%", i-1, basisStr, cdim+dir, i-1),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, "~%"),
+  printf(fh, "  // Project tensor nodal quadrature basis back onto modal basis. ~%"),
+  if (polyOrder=1 and basisFun="ser") then (  /* Force p=1 Serendipity to use hybrid basis. */
+    printf(fh, "  hyb_~ax~av_p1_vdir_upwind_quad_to_modal(fUpwindQuad, fUpwind); ~%", cdim, vdim)
+  )
+  else (
+    printf(fh, "  ~a_~ax_p~a_upwind_quad_to_modal(fUpwindQuad, fUpwind); ~%", basisFun, cdim+vdim, polyOrder)
+  ),
+  printf(fh, "~%"),
+
+  /* Create expansions of f_hat (upwinded f) in the surface basis. */
+  fHatSurf_e : doExpand1(fUpwind, bSurf),
+
+  /* Print C exprs for Ghat across surface boundary */
+  Ghat_c : fullratsimp(innerProd(surfVars, alpha_e, bSurf, fHatSurf_e)),
+  writeCExprs1(Ghat, Ghat_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Expand G_hat in surface basis. */
+  Ghat_e : doExpand1(Ghat, bSurf),
+
+  incr : calcInnerProdList(surfVars, 1, subst(vv=-1.0, bP), Ghat_e),
+  writeCIncrExprsCollect1lhsc(out, dv11[dir]*incr),
+  printf(fh, "~%  } ~%"),
+
+  printf(fh, "  return 0.;~%"),  /* Return CFL frequency in volume kernel. */
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+);

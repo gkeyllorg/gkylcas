@@ -1,0 +1,77 @@
+load("vlasov/lbo_vlasov/vmLBOFuncs-drag-boundary-surf.mac")$
+load(stringproc)$
+
+/* This script calls the functions which calculate the
+   updates from the surface term for the Lenard-Bernstein
+   collision operator, grad_v dot ((v-u) f + vthSq grad_v f).
+   The surface terms involve a single integration by parts
+   for the drag term and two integrations by parts for the 
+   diffusion term. */
+
+/* ...... USER INPUTS........ */
+
+/* Generate kernels for "uni"form, "nonuni"form or "both" grid types. */
+grid : "uni"$
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* see begining of v loop below though. */
+maxCdim_Tensor : 0$
+maxVdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+varsV : [vx, vy, vz]$
+
+/* Is non-uniform booleans. */
+
+if     grid="uni"    then (gridType : [false])
+elseif grid="nonuni" then (gridType : [true])
+elseif grid="both"   then (gridType : [false,true])$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for v : max(c,minVdim[bInd]) thru maxVdim[bInd] do (
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      
+        for gridInd : 1 thru length(gridType) do (
+          isNonuniform : gridType[gridInd],
+          if isNonuniform then (gridStr : "nonuniform") else (gridStr : ""),
+          disp(printf(false,sconcat("Creating boundary surface Vlasov LBO ~a",bName[bInd]," ~ax~avP~a"),gridStr,c,v,polyOrder)),
+          for dir:1 thru v do (
+            fname : sconcat("~/max-out/lbo_vlasov_drag_boundary_surf", varsV[dir],"_", gridStr, c, "x", v, "v_", bName[bInd], "_p", polyOrder , ".c"),
+            fh : openw(fname),
+            funcName : sconcat("lbo_vlasov_drag_boundary_surf", varsV[dir],"_", gridStr, c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+            printf(fh, "#include <gkyl_lbo_vlasov_kernels.h> ~%"),
+            printf(fh, "#include <gkyl_basis_~a_~ax_p~a_surfx~a_eval_quad.h> ~%", bName[bInd], c+v, polyOrder, c+dir),
+            printf(fh, "#include <gkyl_basis_~a_~ax_p~a_upwind_quad_to_modal.h> ~%", bName[bInd], c+v, polyOrder),
+            calcBoundaryDragUpdateInDir(dir, fh, funcName, c, v, bName[bInd], polyOrder, isNonuniform),
+            close(fh)
+          )
+        )
+      )
+    )
+  )
+);

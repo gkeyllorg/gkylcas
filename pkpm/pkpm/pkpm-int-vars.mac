@@ -1,0 +1,80 @@
+/* This script generates the kernels for integrating the fluid variables
+   for diagnostic purposed. Integrates rho, p_parallel, p_perp, rho ux^2, rho uy^2, rho uz^2 */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+fpprec : 24$
+
+calcPKPMIntVars(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rhoux_e, rhouy_e, rhouz_e, 
+   rho_e, p_par_e, p_perp_e, 
+   ux_e, uy_e, uz_e, 
+   int_rho_c, int_p_par_c, int_p_perp_c, int_rhoux2_c, int_rhouy2_c, int_rhouz2_c],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a_p~a(const double *vlasov_pkpm_moms, const double *euler_pkpm, 
+  const double* prim, double* GKYL_RESTRICT int_pkpm_vars) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // vlasov_pkpm_moms: [rho, p_parallel, p_perp], Moments computed from kinetic equation in pkpm model.~%"),
+  printf(fh, "  // euler_pkpm:       [rho ux, rho uy, rho uz], Fluid input state vector.~%"),
+  printf(fh, "  // prim:             [ux, uy, uz, 1/rho div(p_par b), T_perp/m, m/T_perp].~%"),
+  printf(fh, "  // int_pkpm_vars:    Output integrated variables.~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho = &vlasov_pkpm_moms[~a]; ~%", 0*NC),
+  printf(fh, "  const double *p_parallel = &vlasov_pkpm_moms[~a]; ~%", 1*NC),
+  printf(fh, "  const double *p_perp = &vlasov_pkpm_moms[~a]; ~%", 2*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rhoux = &euler_pkpm[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhouy = &euler_pkpm[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouz = &euler_pkpm[~a]; ~%", 2*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux = &prim[~a]; ~%", 0*NC),
+  printf(fh, "  const double *uy = &prim[~a]; ~%", 1*NC),
+  printf(fh, "  const double *uz = &prim[~a]; ~%", 2*NC),
+  printf(fh, "~%"),
+
+  /* Expansion of mass, parallel pressure, perpendicular pressure, 
+     momentum density, and flow velocity */
+  rho_e : doExpand1(rho, bC),
+  p_par_e : doExpand1(p_parallel, bC),
+  p_perp_e : doExpand1(p_perp, bC),
+  rhoux_e : doExpand1(rhoux, bC),
+  rhouy_e : doExpand1(rhouy, bC),
+  rhouz_e : doExpand1(rhouz, bC),
+  ux_e : doExpand1(ux, bC),
+  uy_e : doExpand1(uy, bC),
+  uz_e : doExpand1(uz, bC),
+
+  int_rho_c : calcInnerProdList(varsC, 1, [1], rho_e), 
+  int_rhoux_c : calcInnerProdList(varsC, 1, [1], rhoux_e), 
+  int_rhouy_c : calcInnerProdList(varsC, 1, [1], rhouy_e), 
+  int_rhouz_c : calcInnerProdList(varsC, 1, [1], rhouz_e), 
+  int_rhoux2_c : calcInnerProdList(varsC, 1, [1], rhoux_e*ux_e), 
+  int_rhouy2_c : calcInnerProdList(varsC, 1, [1], rhouy_e*uy_e), 
+  int_rhouz2_c : calcInnerProdList(varsC, 1, [1], rhouz_e*uz_e), 
+  int_p_par_c : calcInnerProdList(varsC, 1, [1], p_par_e), 
+  int_p_perp_c : calcInnerProdList(varsC, 1, [1], p_perp_e), 
+
+  printf(fh, "  // Order of integrated variables is (rho, rhoux, rhouy, rhouz, rho ux^2, rho uy^2, rho uz^2, p_parallel, p_perp) ~%"),
+  printf(fh, "  int_pkpm_vars[0] += ~a; ~%", float(expand(int_rho_c[1]))),
+  printf(fh, "  int_pkpm_vars[1] += ~a; ~%", float(expand(int_rhoux_c[1]))),
+  printf(fh, "  int_pkpm_vars[2] += ~a; ~%", float(expand(int_rhouy_c[1]))),
+  printf(fh, "  int_pkpm_vars[3] += ~a; ~%", float(expand(int_rhouz_c[1]))),
+  printf(fh, "  int_pkpm_vars[4] += ~a; ~%", float(expand(int_rhoux2_c[1]))),
+  printf(fh, "  int_pkpm_vars[5] += ~a; ~%", float(expand(int_rhouy2_c[1]))),
+  printf(fh, "  int_pkpm_vars[6] += ~a; ~%", float(expand(int_rhouz2_c[1]))),
+  printf(fh, "  int_pkpm_vars[7] += ~a; ~%", float(expand(int_p_par_c[1]))),
+  printf(fh, "  int_pkpm_vars[8] += ~a; ~%", float(expand(int_p_perp_c[1]))),
+
+  printf(fh, "} ~%")
+)$

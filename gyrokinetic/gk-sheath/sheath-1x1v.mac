@@ -1,0 +1,169 @@
+/* 
+   Gyrokinetic sheath function for 1x2v kernel.
+*/
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load(stringproc)$
+fpprec : 24$
+
+genGkSheathKer1x1v(fh, cdim, vdim, basisFun, polyOrder) := block(
+  [pdim,varsC,bC,varsP,bP,vSub,NP,varsV,vmap_e,vmapSq_e,vmap_prime_e,vparLo_e,vparUp_e,surfPerpVar,
+   surfVars,surfVarsC,bSurf,bV,bVpar,bMu,numBsurf,zvSurfVars,nodesMu,numNodesMu,bNMu,f_e,edge,
+   surfPerpVal,sI,phiSheath_e,phiWall_e,deltaPhi_e,deltaPhi_q,vcutsq_q,fSurf_c,fSurf_e,fSurfMu_q,
+   fReflSurfMu_e,j,nodeIdx,fSurfMu_c,fSurfMu_e,intLims,fReflSurfMu_c,
+   xBar_v,xSqBar_v,fReflSurf_c,fReflSurf_e,fRefl_c], 
+
+  pdim : cdim+vdim,
+
+  /* Get desired basis. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NP : length(bP),
+  varsV : copylist(varsP),  for d : 1 thru cdim do (varsV : delete(varsC[d],varsV)),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  /* Get name of last config space dimension, which is always assumed to be
+     the direction parallel to the magnetic field (z). */
+  surfPerpVar : varsC[cdim],
+  surfVars  : delete(surfPerpVar, varsP),  /* = vpar. */
+  surfVarsC : delete(surfPerpVar, varsC),  /* = none. */
+
+  /* Set up various bases with reduced dimension. */
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    bSurf : basisFromVars("gkhyb",surfVars,polyOrder),
+    bV    : basisFromVars("gkhyb",[vpar],polyOrder),
+    bVpar : basisFromVars("gkhyb",[vpar],polyOrder)
+  ) else (
+    bSurf : basisFromVars(basisFun,surfVars,polyOrder),
+    bV    : basisFromVars(basisFun,[vpar],polyOrder),
+    bVpar : basisFromVars(basisFun,[vpar],polyOrder)
+  ),
+  numBsurf : length(bSurf),
+  
+  zvSurfVars : append(surfVarsC, []),  /* = none. */
+
+  /* Expand input distribution function f on phase-space basis using input coeffs. */
+  f_e : doExpand1(f, bP),
+    
+  /* Generate separate kernels for lower/upper boundaries. */
+  edge        : ["lower", "upper"],
+  surfPerpVal : [-1, 1],
+
+  for sI : 1 thru length(edge) do (
+  
+    printf(fh, "~%"),
+    printf(fh, "GKYL_CU_DH void bc_sheath_gyrokinetic_reflectedf_~a_~ax~av_~a_p~a(const double *vmap, const double *vcutsq, const double *f, double *fRefl) ~%{ ~%", edge[sI], cdim, vdim, basisFun, polyOrder),
+
+    /* Evaluate f at the z surface. */
+    fSurf_c : calcInnerProdList(surfVars, 1, bSurf, subst(surfPerpVar=surfPerpVal[sI], f_e)),
+    fSurf_e : doExpand(fSurf_c, bSurf),
+
+    /* Variable declarations/allocations. */
+    printf(fh, "  double fReflSurf[~a] = {0.}; ~%", length(bV)),
+    printf(fh, "~%"),
+    
+    vparLo_e : subst(vpar=-1, vmap_e[1]),
+    vparUp_e : subst(vpar=1, vmap_e[1]),
+    printf(fh, "  double vparLo = ~a;~%", float(expand(vparLo_e))),
+    printf(fh, "  double vparUp = ~a;~%", float(expand(vparUp_e))),
+    printf(fh, "~%"),
+
+    printf(fh, "  double vparAbsSqLo = vmap[0]>0.? vparLo*vparLo : vparUp*vparUp;~%"),
+    printf(fh, "  double vparAbsSqUp = vmap[0]>0.? vparUp*vparUp : vparLo*vparLo;~%"),
+    printf(fh, "~%"),
+
+    /* vcutsq is passed as a pre-computed DG field; read the single surface value. */
+    printf(fh, "  double vcutsq_n = vcutsq[0]; ~%"),
+    printf(fh, "~%"),
+    
+    /* If vcut^2 at this node is below all vpar^2 in this cell, BC at this node should be absorbing
+       so set coefficients of fRefl to 0 (no reflection from this node). */
+    printf(fh, "  if (vcutsq_n <= vparAbsSqLo) { // absorb (no reflection) ~%"),
+    printf(fh, "~%"),
+
+    writeCExprsWithZeros1(fReflSurf, makelist(0.,j,1,length(bV))),
+    printf(fh, "~%"),
+    
+    /* If vcut^2 at this node is above all vpar^2 in this cell, BC at this node should be full reflection. */
+    /* So set coefficients of fRefl to coefficients of f. */
+    printf(fh, "  } else if (vcutsq_n > vparAbsSqUp) { // full reflection ~%"),
+    printf(fh, "~%"),
+
+    /* Project f onto vpar basis (bV). */
+    fSurf_c : gcfac(fullratsimp(calcInnerProdList(varsV, 1, bV, fSurf_e))),
+    /* Full reflection: set fRefl coefficients to f coefficients. */
+    writeCExprsNoExpand1(fReflSurf, fSurf_c),
+    printf(fh, "~%"),
+    
+    /* If vcut^2 at this node is in this cell, BC at this node is partial reflection. */
+    printf(fh, "  } else { // partial reflection ~%"),
+    printf(fh, "~%"),
+    
+    /* Reflected f(vpar). */
+    fReflSurf_e : 0,
+
+    printf(fh, "    double xBar, xSqBar;~%"),
+    printf(fh, "~%"),
+
+    printf(fh, "    double wv = ~a;~%", float(fullratsimp((vparUp + vparLo)/2))),
+    printf(fh, "    double dv = ~a;~%", float(fullratsimp(vparUp - vparLo))),
+    printf(fh, "~%"),
+
+    printf(fh, "    if (wv > 0.) {~%"),
+    printf(fh, "      // vcut in logical space.~%"),
+    printf(fh, "      double vcut_l = 2.*(sqrt(vcutsq_n)-wv)/dv;~%"),
+    printf(fh, "~%"),
+
+    intLims : [[-1,vcut_l]],
+    fReflSurf_c : calcInnerProdListGen([vpar], intLims, 1, bVpar, fSurf_e),
+    tempVars1 : [],
+    tempVars1 : writeCExprs1noPowers(fReflSurf, fReflSurf_c, [vcut_l], tempVars1),
+    printf(fh, "~%"),
+
+    printf(fh, "    } else {~%"),
+    printf(fh, "      // vcut in logical space.~%"),
+    printf(fh, "      double vcut_l = 2.*(-sqrt(vcutsq_n)-wv)/dv;~%"),
+    printf(fh, "~%"),
+
+    intLims : [[vcut_l,1]],
+    fReflSurf_c : calcInnerProdListGen([vpar], intLims, 1, bVpar, fSurf_e),
+    tempVars2 : [],
+    tempVars2 : writeCExprs1noPowers(fReflSurf, fReflSurf_c, [vcut_l], tempVars2),
+    printf(fh, "~%"),
+
+    printf(fh, "    }~%"),
+    printf(fh, "~%"),
+
+    /* Evaluate realizability. In 1D a function is realization if
+       |bar{x}|<=1 and |bar{x^2}|<=1, where bar{g}=int g*f dx/int f dx. */
+    xBar_v   : gcfac(float(fReflSurf[1]/(sqrt(3)*fReflSurf[0]))),
+    xSqBar_v : gcfac(float((2*sqrt(5)*fReflSurf[2]+5*fReflSurf[0])/(15*fReflSurf[0]))),
+    printf(fh, "  // If the cut distribution f(vpar), where vpar \in [-1,vcut_l] or [vcut_l/1],~%"),
+    printf(fh, "  // has a cell average < 0, set to 0. If it's >0 but not realizable, set to p=0.~%"),
+    printf(fh, "  xBar = ~a;~%", xBar_v),
+    printf(fh, "  xSqBar = ~a;~%", xSqBar_v),
+    printf(fh, "  if (fReflSurf[0]<0.) {~%",j-1),
+    writeCExprsWithZeros1(fReflSurf, makelist(0,i,1,length(bVpar))),
+    printf(fh, "  } else if (fabs(xBar)>=1. || fabs(xSqBar)>=1.) {~%"),
+    writeCExprsWithZeros1(fReflSurf, makelist(0,i,1,length(bVpar))),
+    printf(fh, "  }~%"),
+    printf(fh, "~%"),
+
+    printf(fh, "  }~%"), /* End of partial reflection else. */
+    printf(fh, "~%"),
+
+    /* Expansion in vpar of fReflSurf. */
+    fReflSurf_e : doExpand1(fReflSurf, bV),
+
+    /* Project expansion onto phase-space basis bP. */
+    fRefl_c : gcfac(fullratsimp(calcInnerProdList(varsP, 1, bP, fReflSurf_e))),
+    /* Write coefficients. */
+    writeCExprsWithZerosNoExpand1(fRefl, fRefl_c),
+
+    printf(fh, "}~%")
+
+  )
+
+)$

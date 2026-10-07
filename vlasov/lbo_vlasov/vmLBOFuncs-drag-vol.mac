@@ -1,0 +1,102 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac");
+load(stringproc)$
+fpprec : 24$
+
+/* This script generates the kernels for the volume drag term
+   contribution from Lenard Bernstein operator. */
+
+vidx1(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+varsCAll : [x, y, z]$
+vvarsAll : [vx, vy, vz]$
+rdv2     : [rdvx2, rdvy2, rdvz2]$
+
+calcVmLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,pOrderV,zr,vid1,dir,f_e,nuSum_e,nuUSum_e,
+   incrDrag,cflFreq_mid,vdir,alphaDrag_e,expr,i,
+   alphaDrag_NoZero,alphaDrag_NoZero_e],
+
+  printf(fh, "#include <gkyl_lbo_vlasov_kernels.h> ~%"),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NP : length(bP),  NC : length(bC),
+
+  /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+     mean hybrid basis. */
+  pOrderV : polyOrder,
+  if polyOrder=1 then ( pOrderV : 2 ),
+
+  /* Specify a point to evaluate alpha at for use in computing CFL */
+  /* Here we choose to evaluate things in the middle of the cell, where
+     coordinates = 0. */
+  zr : makelist(varsP[d]=0, d, 1, cdim+vdim),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *nuSum, const double *nuPrimMomsSum, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[~a]: Cell-center coordinates. ~%", cdim+vdim),
+  printf(fh, "  // dxv[~a]: Cell spacing. ~%", cdim+vdim),
+  printf(fh, "  // nuSum: collisionalities added (self and cross species collisionalities). ~%"),
+  printf(fh, "  // nuPrimMomsSum: sum of bulk velocities and thermal speeds (squared) times their respective collisionalities. ~%"),
+  printf(fh, "  // f: Input distribution function.~%"),
+  printf(fh, "  // out: Incremented output ~%"),
+
+  /* Create a pointer to nuUSum. */
+  printf(fh, "  const double *nuUSum = nuPrimMomsSum;~%"),
+  printf(fh, "~%"),
+
+  vid1 : vidx1(cdim,vdim),
+  for dir : 1 thru vdim do (
+    printf(fh, "  const double rd~a2 = 2.0/dxv[~a]; ~%", vvarsAll[dir], vid1[dir])
+  ),
+  printf(fh, "~%"),
+
+  /* Expand distribution function f in phase basis. */
+  f_e : doExpand1(f, bP),
+
+  /* Expand flow speed sum(nu*u) and sum(nu*vtSq) in configuration basis. */
+  nuSum_e  : doExpand1(nuSum, bC),
+  nuUSum_e : doExpand1(nuUSum, bC),
+  /* To allow for multiple components change the cofficient indices in u. */
+  nuUSum_e : psubst(makelist(nuUSum[i]=nuUSum[a0+i],i,0,NC-1),nuUSum_e),
+
+  /* alphaDrag = nuSum*v-nuUSum. */
+  printf(fh, "  double alphaDrag[~a]; ~%", vdim*NP),
+  incrDrag : 0,
+  cflFreq_mid : makelist(0, i, 1, vdim),
+  for vdir : 1 thru vdim do (
+    /* alphaDrag = rdv2*< psi, -(nuSum*v - nuUSum) >. */
+    alphaDrag_c : calcInnerProdList(varsP, 1, bP, -nuSum_e*(w[vid1[vdir]]+0.5*dxv[vid1[vdir]]*vvarsAll[vdir])+subst(a0=NC*(vdir-1),nuUSum_e)),
+    expr : gcfac(float(expand(radcan(rdv2[vdir]*alphaDrag_c)))),
+    /* Write out the component of alphaDrag's phase space expansion. */
+    printf(fh, "  // Expand rdv2*(nu*~a-nuUSum~a) in phase basis.~%",vvarsAll[vdir],varsCAll[vdir]),
+    for i : 1 thru NP do (
+        if expr[i] # 0.0 then printf(fh, "  ~a = ~a; ~%", alphaDrag[NP*(vdir-1)+i-1], expr[i])
+    ),
+    printf(fh, "~%"),
+    /* Zero out components of alpha which are empty. */
+    alphaDrag_NoZero   : makelistNoZerosOff1(alphaDrag_c, alphaDrag, a0),
+    alphaDrag_NoZero_e : doExpand(alphaDrag_NoZero, bP),
+    /* Evaluate alpha_vdim at zr to approximate
+       max(abs(alpha_vdim))/(dv_i/(2p+1)). */
+    cflFreq_mid[vdir] : gcfac(float(expand(subst(zr,(2*pOrderV+1)*0.5*subst(a0=NP*(vdir-1),alphaDrag_NoZero_e))))),
+    /* Volume increment from configuration space. */
+    incrDrag : incrDrag+subst(a0=NP*(vdir-1),calcInnerProdList(varsP, 1, diff(bP,vvarsAll[vdir]), alphaDrag_NoZero_e*f_e))
+  ),
+
+  /* Write out first attempts to simplify the radicals with radcan, e.g.
+     force sqrt(3)*sqrt(5) = sqrt(15). */
+  /* Outscripts loads scifac and uses the aggressive factorization routine "gcfac". */
+  writeCExprsCollect1c(radcan(incrDrag)),
+  printf(fh, "~%"),
+  if vdim = 1 then (
+    printf(fh, "  return fabs(~a); ~%", cflFreq_mid[1])
+  ) elseif vdim = 2 then (
+    printf(fh, "  return fabs(~a)+fabs(~a); ~%", cflFreq_mid[1], cflFreq_mid[2])
+  ) else (
+    printf(fh, "  return fabs(~a)+fabs(~a)+fabs(~a); ~%", cflFreq_mid[1], cflFreq_mid[2], cflFreq_mid[3])
+  ),
+  printf(fh, "~%"),
+  printf(fh, "} ~%")
+);

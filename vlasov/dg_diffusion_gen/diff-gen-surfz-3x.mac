@@ -1,0 +1,290 @@
+load("core/recovery.mac")$
+load("core/modal-basis.mac")$
+load(stringproc)$
+fpprec : 24$
+
+genDiffusionGenSurfz3x(bName,dim,polyOrder) := block(
+  [vars,ba,numBasis,subLst,lstQlll,lstQllc,lstQllu,lstQlcl,lstQlcc,lstQlcu,lstQlul,
+   lstQluc,lstQluu,lstQcll,lstQclc,lstQclu,lstQccl,lstQccc,lstQccu,lstQcul,lstQcuc,
+   lstQcuu,lstQull,lstQulc,lstQulu,lstQucl,lstQucc,lstQucu,lstQuul,lstQuuc,lstQuuu,
+   Dxxe,Dxye,Dxze,Dyye,Dyze,Dzze,fname,fh,qRec1,vol,kernel,i,qRec6u,qRec6l,
+   surfu,surfl],
+
+  [vars,ba] : loadBasis(bName,dim,polyOrder),
+  numBasis : length(ba),
+
+  subLst : append(
+    makelist(Dxx[i]=Dxx[i-1], i, 1, numBasis),
+    makelist(Dxy[i]=Dxy[i-1], i, 1, numBasis),
+    makelist(Dxz[i]=Dxz[i-1], i, 1, numBasis),
+    makelist(Dyy[i]=Dyy[i-1], i, 1, numBasis),
+    makelist(Dyz[i]=Dyz[i-1], i, 1, numBasis),
+    makelist(Dzz[i]=Dzz[i-1], i, 1, numBasis),
+    makelist(qlll[i]=qlll[i-1], i, 1, numBasis),
+    makelist(qllc[i]=qllc[i-1], i, 1, numBasis),
+    makelist(qllu[i]=qllu[i-1], i, 1, numBasis),
+    makelist(qlcl[i]=qlcl[i-1], i, 1, numBasis),
+    makelist(qlcc[i]=qlcc[i-1], i, 1, numBasis),
+    makelist(qlcu[i]=qlcu[i-1], i, 1, numBasis),
+    makelist(qlul[i]=qlul[i-1], i, 1, numBasis),
+    makelist(qluc[i]=qluc[i-1], i, 1, numBasis),
+    makelist(qluu[i]=qluu[i-1], i, 1, numBasis),
+    makelist(qcll[i]=qcll[i-1], i, 1, numBasis),
+    makelist(qclc[i]=qclc[i-1], i, 1, numBasis),
+    makelist(qclu[i]=qclu[i-1], i, 1, numBasis),
+    makelist(qccl[i]=qccl[i-1], i, 1, numBasis),
+    makelist(qccc[i]=qccc[i-1], i, 1, numBasis),
+    makelist(qccu[i]=qccu[i-1], i, 1, numBasis),
+    makelist(qcul[i]=qcul[i-1], i, 1, numBasis),
+    makelist(qcuc[i]=qcuc[i-1], i, 1, numBasis),
+    makelist(qcuu[i]=qcuu[i-1], i, 1, numBasis),
+    makelist(qull[i]=qull[i-1], i, 1, numBasis),
+    makelist(qulc[i]=qulc[i-1], i, 1, numBasis),
+    makelist(qulu[i]=qulu[i-1], i, 1, numBasis),
+    makelist(qucl[i]=qucl[i-1], i, 1, numBasis),
+    makelist(qucc[i]=qucc[i-1], i, 1, numBasis),
+    makelist(qucu[i]=qucu[i-1], i, 1, numBasis),
+    makelist(quul[i]=quul[i-1], i, 1, numBasis),
+    makelist(quuc[i]=quuc[i-1], i, 1, numBasis),
+    makelist(quuu[i]=quuu[i-1], i, 1, numBasis)
+    ),
+  
+  /* This is a not always necessary step and one could in most cases
+  use directly 'dg(qlll)' instead of dg(lstQlll) but this does prevent
+  potential super nasty aliasing!  */
+  lstQlll : makelist(qlll[i], i, 1, numBasis),
+  lstQllc : makelist(qllc[i], i, 1, numBasis),
+  lstQllu : makelist(qllu[i], i, 1, numBasis),
+  lstQlcl : makelist(qlcl[i], i, 1, numBasis),
+  lstQlcc : makelist(qlcc[i], i, 1, numBasis),
+  lstQlcu : makelist(qlcu[i], i, 1, numBasis),
+  lstQlul : makelist(qlul[i], i, 1, numBasis),
+  lstQluc : makelist(qluc[i], i, 1, numBasis),
+  lstQluu : makelist(qluu[i], i, 1, numBasis),
+  
+  lstQcll : makelist(qcll[i], i, 1, numBasis),
+  lstQclc : makelist(qclc[i], i, 1, numBasis),
+  lstQclu : makelist(qclu[i], i, 1, numBasis),
+  lstQccl : makelist(qccl[i], i, 1, numBasis),
+  lstQccc : makelist(qccc[i], i, 1, numBasis),
+  lstQccu : makelist(qccu[i], i, 1, numBasis),
+  lstQcul : makelist(qcul[i], i, 1, numBasis),
+  lstQcuc : makelist(qcuc[i], i, 1, numBasis),
+  lstQcuu : makelist(qcuu[i], i, 1, numBasis),
+  
+  lstQull : makelist(qull[i], i, 1, numBasis),
+  lstQulc : makelist(qulc[i], i, 1, numBasis),
+  lstQulu : makelist(qulu[i], i, 1, numBasis),
+  lstQucl : makelist(qucl[i], i, 1, numBasis),
+  lstQucc : makelist(qucc[i], i, 1, numBasis),
+  lstQucu : makelist(qucu[i], i, 1, numBasis),
+  lstQuul : makelist(quul[i], i, 1, numBasis),
+  lstQuuc : makelist(quuc[i], i, 1, numBasis),
+  lstQuuu : makelist(quuu[i], i, 1, numBasis),
+
+  Dxxe :  doExpand(Dxx, ba),
+  Dxye :  doExpand(Dxy, ba),
+  Dxze :  doExpand(Dxz, ba),
+  Dyye :  doExpand(Dyy, ba),
+  Dyze :  doExpand(Dyz, ba),
+  Dzze :  doExpand(Dzz, ba),
+
+
+  /* zx-update */
+  fname : sconcat("~/max-out/dg_diffusion_gen_surfzx_3x_",
+    bName, "_p", polyOrder, ".c"),
+  print("Generating:", fname),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_dg_diffusion_gen_kernels.h>~%~%"),
+  
+  qRec6u : calcRecovFaceGen(bName, [z, x], vars, 0, 0, polyOrder, 0,
+    dg(dg(lstQlcc), dg(lstQlcu)),
+    dg(dg(lstQccc), dg(lstQccu)),
+    dg(dg(lstQucc), dg(lstQucu))),
+  qRec6l : calcRecovFaceGen(bName, [z, x], vars, 0, 0, polyOrder, 0,
+    dg(dg(lstQlcl), dg(lstQlcc)),
+    dg(dg(lstQccl), dg(lstQccc)),
+    dg(dg(lstQucl), dg(lstQucc))),
+  qRec1 : calcRecov1CellGen(bName, x, vars, polyOrder, 0,
+    dg(lstQlcc), dg(lstQccc), dg(lstQucc)),
+  
+  surfu : integrate(integrate(subst(z=1, Dxze*ba) * diff(qRec6u, x),
+      x, -1, 1), y, -1, 1),
+  surfl : integrate(integrate(subst(z=-1, Dxze*ba) * diff(qRec6l, x),
+      x, -1, 1), y, -1, 1),
+  vol : calcInnerProdList(vars, 1, diff(ba, z), Dxze*diff(qRec1, x)),
+  kernel : surfu - surfl - vol,
+  
+  printf(fh, "GKYL_CU_DH double~%"),
+  printf(fh, sconcat("dg_diffusion_gen_surfzx_3x_", bName, "_p", polyOrder,
+      "(const double* w, const double* dx,~%")),
+  printf(fh, "  const double* Dij, const double* q[], double* GKYL_RESTRICT out) ~%"),
+  printf(fh, "{~%"),
+  printf(fh, "  // w[NDIM]: Cell-center coordinates~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing~%"),
+  printf(fh, "  // Dij: Diffusion coefficient in the center cell~%"),
+  printf(fh, "  // q: Input field in the left cell~%"),
+  printf(fh, "  // out: Incremented output~%~%"),
+  
+  printf(fh, "  const double Jxz = 4/dx[0]/dx[2];~%"),
+  printf(fh, "  const double* Dxz = &Dij[~a];~%~%", 2*numBasis),
+  
+  printf(fh, "  const double* qllc = q[1];~%"),
+  printf(fh, "  const double* qlcl = q[3];~%"),
+  printf(fh, "  const double* qlcc = q[4];~%"),
+  printf(fh, "  const double* qlcu = q[5];~%"),
+  printf(fh, "  const double* qluc = q[7];~%~%"),
+  
+  printf(fh, "  const double* qcll = q[9];~%"),
+  printf(fh, "  const double* qclc = q[10];~%"),
+  printf(fh, "  const double* qclu = q[11];~%"),
+  printf(fh, "  const double* qccl = q[12];~%"),
+  printf(fh, "  const double* qccc = q[13];~%"),
+  printf(fh, "  const double* qccu = q[14];~%"),
+  printf(fh, "  const double* qcul = q[15];~%"),
+  printf(fh, "  const double* qcuc = q[16];~%"),
+  printf(fh, "  const double* qcuu = q[17];~%"),
+
+  printf(fh, "  const double* qulc = q[19];~%"),
+  printf(fh, "  const double* qucl = q[21];~%"),
+  printf(fh, "  const double* qucc = q[22];~%"),
+  printf(fh, "  const double* qucu = q[23];~%"),
+  printf(fh, "  const double* quuc = q[25];~%~%"),
+  
+  for i : 1 thru numBasis do (
+    printf(fh, "  out[~a] += Jxz*(~a);~%", i-1,
+      float(expand(psubst(subLst, kernel[i]))))
+    ),
+  printf(fh, "  return 0.;~%"),  /* Leave CFL frequency to vol kernel. */
+  printf(fh, "}~%"),
+  close(fh),
+  kill(qRec6u, qRec6l, qRec1, surfu, surfl, vol, kernel),
+
+
+  /* zy-update */
+  fname : sconcat("~/max-out/dg_diffusion_gen_surfzy_3x_",
+    bName, "_p", polyOrder, ".c"),
+  print("Generating:", fname),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_dg_diffusion_gen_kernels.h>~%~%"),
+  
+  qRec6u : calcRecovFaceGen(bName, [z, y], vars, 0, 0, polyOrder, 0,
+    dg(dg(lstQclc), dg(lstQclu)),
+    dg(dg(lstQccc), dg(lstQccu)),
+    dg(dg(lstQcuc), dg(lstQcuu))),
+  qRec6l : calcRecovFaceGen(bName, [z, y], vars, 0, 0, polyOrder, 0,
+    dg(dg(lstQcll), dg(lstQclc)),
+    dg(dg(lstQccl), dg(lstQccc)),
+    dg(dg(lstQcul), dg(lstQcuc))),
+  qRec1 : calcRecov1CellGen(bName, y, vars, polyOrder, 0,
+    dg(lstQclc), dg(lstQccc), dg(lstQcuc)),
+  surfu : integrate(integrate(subst(z=1, Dyze*ba) * diff(qRec6u, y),
+      x, -1, 1), y, -1, 1),
+  surfl : integrate(integrate(subst(z=-1, Dyze*ba) * diff(qRec6l, y),
+      x, -1, 1), y, -1, 1),
+  vol : calcInnerProdList(vars, 1, diff(ba, z), Dyze*diff(qRec1, y)),
+  kernel : surfu - surfl - vol,
+  
+  printf(fh, "GKYL_CU_DH double~%"),
+  printf(fh, sconcat("dg_diffusion_gen_surfzy_3x_", bName, "_p", polyOrder,
+      "(const double* w, const double* dx,~%")),
+  printf(fh, "  const double* Dij, const double* q[], double* GKYL_RESTRICT out) ~%"),
+  printf(fh, "{~%"),
+  printf(fh, "  // w[NDIM]: Cell-center coordinates~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing~%"),
+  printf(fh, "  // Dij: Diffusion coefficient in the center cell~%"),
+  printf(fh, "  // q: Input field in the left cell~%"),
+  printf(fh, "  // out: Incremented output~%~%"),
+  
+  printf(fh, "  const double Jyz = 4/dx[1]/dx[2];~%"),
+  printf(fh, "  const double* Dyz = &Dij[~a];~%~%", 4*numBasis),
+  
+  printf(fh, "  const double* qllc = q[1];~%"),
+  printf(fh, "  const double* qlcl = q[3];~%"),
+  printf(fh, "  const double* qlcc = q[4];~%"),
+  printf(fh, "  const double* qlcu = q[5];~%"),
+  printf(fh, "  const double* qluc = q[7];~%~%"),
+  
+  printf(fh, "  const double* qcll = q[9];~%"),
+  printf(fh, "  const double* qclc = q[10];~%"),
+  printf(fh, "  const double* qclu = q[11];~%"),
+  printf(fh, "  const double* qccl = q[12];~%"),
+  printf(fh, "  const double* qccc = q[13];~%"),
+  printf(fh, "  const double* qccu = q[14];~%"),
+  printf(fh, "  const double* qcul = q[15];~%"),
+  printf(fh, "  const double* qcuc = q[16];~%"),
+  printf(fh, "  const double* qcuu = q[17];~%"),
+
+  printf(fh, "  const double* qulc = q[19];~%"),
+  printf(fh, "  const double* qucl = q[21];~%"),
+  printf(fh, "  const double* qucc = q[22];~%"),
+  printf(fh, "  const double* qucu = q[23];~%"),
+  printf(fh, "  const double* quuc = q[25];~%~%"),
+  
+  for i : 1 thru numBasis do (
+    printf(fh, "  out[~a] += Jyz*(~a);~%", i-1,
+      float(expand(psubst(subLst, kernel[i]))))
+    ),
+  printf(fh, "  return 0.;~%"),  /* Leave CFL frequency to vol kernel. */
+  printf(fh, "}~%"),
+  close(fh),
+  kill(qRec6u, qRec6l, qRec1, surfu, surfl, vol, kernel),
+
+
+
+  /* zz-update */
+  fname : sconcat("~/max-out/dg_diffusion_gen_surfzz_3x_",
+    bName, "_p", polyOrder, ".c"),
+  print("Generating:", fname),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_dg_diffusion_gen_kernels.h>~%~%"),
+  
+  qRec1 : calcRecov1CellGen(bName, z, vars, polyOrder, 1,
+    dg(lstQccl), dg(lstQccc), dg(lstQccu)),
+  vol : calcInnerProdList(vars, 1, ba, diff(Dzze*diff(qRec1, z), z)),
+  kernel : vol,
+  
+  printf(fh, "GKYL_CU_DH double~%"),
+  printf(fh, sconcat("dg_diffusion_gen_surfzz_3x_", bName, "_p", polyOrder,
+      "(const double* w, const double* dx,~%")),
+  printf(fh, "  const double* Dij, const double* q[], double* GKYL_RESTRICT out) ~%"),
+  printf(fh, "{~%"),
+  printf(fh, "  // w[NDIM]: Cell-center coordinates~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing~%"),
+  printf(fh, "  // Dij: Diffusion coefficient in the center cell~%"),
+  printf(fh, "  // q: Input field in the left cell~%"),
+  printf(fh, "  // out: Incremented output~%~%"),
+  
+  printf(fh, "  const double Jzz = 4/dx[2]/dx[2];~%"),
+  printf(fh, "  const double* Dzz = &Dij[~a];~%~%", 5*numBasis),
+  
+  printf(fh, "  const double* qllc = q[1];~%"),
+  printf(fh, "  const double* qlcl = q[3];~%"),
+  printf(fh, "  const double* qlcc = q[4];~%"),
+  printf(fh, "  const double* qlcu = q[5];~%"),
+  printf(fh, "  const double* qluc = q[7];~%~%"),
+  
+  printf(fh, "  const double* qcll = q[9];~%"),
+  printf(fh, "  const double* qclc = q[10];~%"),
+  printf(fh, "  const double* qclu = q[11];~%"),
+  printf(fh, "  const double* qccl = q[12];~%"),
+  printf(fh, "  const double* qccc = q[13];~%"),
+  printf(fh, "  const double* qccu = q[14];~%"),
+  printf(fh, "  const double* qcul = q[15];~%"),
+  printf(fh, "  const double* qcuc = q[16];~%"),
+  printf(fh, "  const double* qcuu = q[17];~%"),
+
+  printf(fh, "  const double* qulc = q[19];~%"),
+  printf(fh, "  const double* qucl = q[21];~%"),
+  printf(fh, "  const double* qucc = q[22];~%"),
+  printf(fh, "  const double* qucu = q[23];~%"),
+  printf(fh, "  const double* quuc = q[25];~%~%"),
+  
+  for i : 1 thru numBasis do (
+    printf(fh, "  out[~a] += Jzz*(~a);~%", i-1,
+      float(expand(psubst(subLst, kernel[i]))))
+    ),
+  printf(fh, "  return 0.;~%"),  /* Leave CFL frequency to vol kernel. */
+  printf(fh, "}~%"),
+  close(fh)
+)$

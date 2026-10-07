@@ -1,0 +1,60 @@
+/* This script generates the kernels for calculating the kinetic energy 
+   1/2 (rho ux^2 + rho uy^2 + rho uz^2) for use as a diagnostic and
+   in the implicit source solve to compute the energy at the new time step. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+load("scifac")$
+fpprec : 24$
+
+calcFluidKE(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *fluid, const double *u_i, 
+    double* GKYL_RESTRICT ke) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // fluid:  [rho, rho ux, rho uy, rho uz...], Fluid input state vector.~%"),
+  printf(fh, "  // u_i:    Input volume expansion of flow velocity: [ux, uy, uz]. ~%"),
+  printf(fh, "  // ke:     Output volume expansion of kinetic energy.~%"),
+  printf(fh, "~%"),
+
+  /* Fetch pointers needed to kinetic energy from other fluid variables
+     ke = 1/2 (rho ux^2 + rho uy^2 + rho uz^2) */
+  printf(fh, "  const double *rho = &fluid[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux = &fluid[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy = &fluid[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz = &fluid[~a]; ~%", 3*NC),
+  printf(fh, "~%"),
+  printf(fh, "  const double *ux = &u_i[~a]; ~%", 0*NC),
+  printf(fh, "  const double *uy = &u_i[~a]; ~%", 1*NC),
+  printf(fh, "  const double *uz = &u_i[~a]; ~%", 2*NC),
+  printf(fh, "~%"),
+
+  /* First construct volume expansion of rhou^2 */
+  printf(fh, "  double rhoux2[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rhoux, ux, rhoux2); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+  printf(fh, "  double rhouy2[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rhouy, uy, rhouy2); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+  printf(fh, "  double rhouz2[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rhouz, uz, rhouz2); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  /* Compute kinetic energy */
+  for i : 1 thru NC do (
+    printf(fh, "  ke[~a] = 0.5*(rhoux2[~a] + rhouy2[~a] + rhouz2[~a]); ~%", i-1, i-1, i-1, i-1)
+  ),
+
+  printf(fh, "} ~%")
+)$

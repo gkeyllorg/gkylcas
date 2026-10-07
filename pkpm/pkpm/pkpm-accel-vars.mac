@@ -1,0 +1,271 @@
+/* This script generates the kernels for calculating the acceleration
+   variables required to update the PKPM system. 
+
+   Acceleration variables are computed with either recovery (div(b)) or averaging (grad_i u_j) 
+   where averaging is chosen to ensure phase space incompressibility in the weak sense. 
+
+   Surface expansion of u_i for averaging produced by weak division *at the surface*
+   while volume expansion of u_i for volume term in gradient produced by weak division *in the volume*
+
+   Full acceleration variable list: 
+   1. div_b (divergence of magnetic field unit vector)
+   2. b_grad_u (bb : grad(u))
+   3. p_force (total pressure forces in kinetic equation 1/rho div(p_parallel b_hat) - T_perp/m*div(b)
+   4. p_perp_source (pressure source for higher Laguerre moments -> bb : grad(u) - div(u) - 2 nu)
+   5. p_perp_div_b (p_perp/rho*div(b) = T_perp/m*div(b)) */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+load("scifac")$
+load("core/recovery.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+fpprec : 24$
+cvars : [x, y, z]$
+
+PKPMPForce(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, 
+   T_perp_over_m_e, div_b_e, p_perp_div_b_c, 
+   pkpm_div_ppar_e, p_perp_div_b_e, p_force_c],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *prim_c, const double *div_b, 
+  double* GKYL_RESTRICT pkpm_accel) ~%{ ~%", funcNm),
+  printf(fh, "  // prim_c:     Input volume expansion of primitive variables [ux, uy, uz, 1/rho div(p_par b), T_perp/m, m/T_perp] in center cell. ~%"),
+  printf(fh, "  // div_b:      Input volume expansion of div(b) in center cell. ~%"),
+  printf(fh, "  // pkpm_accel: Output volume expansion of pkpm acceleration variables. ~%"),
+  printf(fh, "~%"),
+
+  /* For computing p_force = 1/rho div(p_par b) - T_perp/m*div(b) */
+  printf(fh, "  const double *pkpm_div_ppar = &prim_c[~a]; ~%", 3*NC),
+  printf(fh, "  const double *T_perp_over_m = &prim_c[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  double *p_perp_div_b = &pkpm_accel[~a]; ~%", 0*NC),
+  printf(fh, "  double *p_force = &pkpm_accel[~a]; ~%", 2*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  binop_mul_~ad_~a_p~a(T_perp_over_m, div_b, p_perp_div_b); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "~%"),
+
+  pkpm_div_ppar_e : doExpand1(pkpm_div_ppar, bC),
+  p_perp_div_b_e : doExpand1(p_perp_div_b, bC),
+
+  /* 1/rho div(p_par b) already included in p_force from linear solve */
+  p_force_c : calcInnerProdList(varsC, 1, bC, pkpm_div_ppar_e-p_perp_div_b_e),
+  writeCIncrExprsCollect1lhsc(p_force, p_force_c),   
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+)$
+
+PKPMAccelVars(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, cv, surfVars, bSurf, NSurf, 
+   ux_surf_lr_e, ux_surf_cl_e, ux_surf_cr_e, ux_surf_rl_e, 
+   uy_surf_lr_e, uy_surf_cl_e, uy_surf_cr_e, uy_surf_rl_e, 
+   uz_surf_lr_e, uz_surf_cl_e, uz_surf_cr_e, uz_surf_rl_e, 
+   surf_ux_l, surf_uy_l, surf_uz_l, 
+   surf_ux_r, surf_uy_r, surf_uz_r, 
+   uxc_e, uyc_e, uzc_e, vol_ux_c, vol_uy_c, vol_uz_c, 
+   bxbx_e, bxby_e, bxbz_e, byby_e, bybz_e, bzbz_e,  
+   grad_u_x_e, grad_u_y_e, grad_u_z_e,
+   bb_grad_u_comp_c, bb_grad_u_e, bb_grad_u_c, 
+   nu_e, p_perp_source_c],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  /* cv = variable to compute gradients in. */
+  cv : varsC[dir],
+  /* Surface variables to integrate over. */
+  surfVars : delete(cv,varsC),
+  if (cdim = 1) then (
+    NSurf : 1
+  )
+  else (
+    bSurf : basisFromVars(basisFun,surfVars,polyOrder),
+    NSurf : length(bSurf)
+  ), 
+
+  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a~a_~ax_~a_p~a(const double *dxv, 
+  const double *prim_surf_l, const double *prim_surf_c, const double *prim_surf_r, 
+  const double *prim_c, const double *bvar_c, const double *nu_c, 
+  double* GKYL_RESTRICT pkpm_accel) ~%{ ~%", funcNm, cvars[dir], cdim, basisFun, polyOrder),
+  printf(fh, "  // dxv[NDIM]:       Cell spacing.~%"),
+  printf(fh, "  // prim_surf_l/c/r: Input surface primitive variables [u_i, 3*T_ii/m] in left/center/right cells in each direction.~%"),
+  printf(fh, "  // prim_c:          Input volume expansion of primitive variables [ux, uy, uz, 1/rho div(p_par b), T_perp/m, m/T_perp] in center cell.~%"),
+  printf(fh, "  // bvar_c:          Input volume expansion of magnetic field unit vector and tensor in center cell.~%"),
+  printf(fh, "  // nu_c:            Input volume expansion of collisionality in center cell.~%"),
+  printf(fh, "  // pkpm_accel:      Volume expansion of pkpm acceleration variables.~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
+
+  /* prim, b, and bb in center cell for div(b) and bb : grad(u). */
+  printf(fh, "  const double *ux_c = &prim_c[~a]; ~%", 0*NC),
+  printf(fh, "  const double *uy_c = &prim_c[~a]; ~%", 1*NC),
+  printf(fh, "  const double *uz_c = &prim_c[~a]; ~%", 2*NC),
+  printf(fh, "~%"),
+  printf(fh, "  const double *bxbx = &bvar_c[~a]; ~%", 3*NC),
+  printf(fh, "  const double *bxby = &bvar_c[~a]; ~%", 4*NC),
+  printf(fh, "  const double *bxbz = &bvar_c[~a]; ~%", 5*NC),
+  printf(fh, "  const double *byby = &bvar_c[~a]; ~%", 6*NC),
+  printf(fh, "  const double *bybz = &bvar_c[~a]; ~%", 7*NC),
+  printf(fh, "  const double *bzbz = &bvar_c[~a]; ~%", 8*NC),
+  printf(fh, "~%"),
+
+  /* Surface primitive variables are organized as:
+     [ux_xl, ux_xr, uy_xl, uy_xr, uz_xl, uz_xr, Txx_xl, Txx_xr, 
+      ux_yl, ux_yr, uy_yl, uy_yr, uz_yl, uz_yr, Tyy_yl, Tyy_yr, 
+      ux_zl, ux_zr, uy_zl, uy_zr, uz_zl, uz_zr, Tzz_zl, Tzz_zr] */
+  printf(fh, "  const double *ux_surf_lr = &prim_surf_l[~a]; ~%", (1 + (dir-1)*8)*NSurf),
+  printf(fh, "  const double *uy_surf_lr = &prim_surf_l[~a]; ~%", (3 + (dir-1)*8)*NSurf),
+  printf(fh, "  const double *uz_surf_lr = &prim_surf_l[~a]; ~%", (5 + (dir-1)*8)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux_surf_cl = &prim_surf_c[~a]; ~%", (0 + (dir-1)*8)*NSurf),
+  printf(fh, "  const double *uy_surf_cl = &prim_surf_c[~a]; ~%", (2 + (dir-1)*8)*NSurf),
+  printf(fh, "  const double *uz_surf_cl = &prim_surf_c[~a]; ~%", (4 + (dir-1)*8)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux_surf_cr = &prim_surf_c[~a]; ~%", (1 + (dir-1)*8)*NSurf),
+  printf(fh, "  const double *uy_surf_cr = &prim_surf_c[~a]; ~%", (3 + (dir-1)*8)*NSurf),
+  printf(fh, "  const double *uz_surf_cr = &prim_surf_c[~a]; ~%", (5 + (dir-1)*8)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux_surf_rl = &prim_surf_r[~a]; ~%", (0 + (dir-1)*8)*NSurf),
+  printf(fh, "  const double *uy_surf_rl = &prim_surf_r[~a]; ~%", (2 + (dir-1)*8)*NSurf),
+  printf(fh, "  const double *uz_surf_rl = &prim_surf_r[~a]; ~%", (4 + (dir-1)*8)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  double *bb_grad_u = &pkpm_accel[~a]; ~%", 1*NC),
+  printf(fh, "  double *p_perp_source = &pkpm_accel[~a]; ~%", 3*NC),
+  printf(fh, "~%"),
+
+  /* if cdim = 1, then the surface evaluations are just numbers, not expansions */
+  if (cdim = 1) then (
+    /* Surface componet of gradient expansion of u */
+    /* Negative sign on left surface for unit normal pointing into cell */
+    surf_ux_l : calcInnerProdList(surfVars, -1, subst(cv=-1, bC), 0.5*(ux_surf_cl[0] + ux_surf_lr[0])),
+    surf_ux_r : calcInnerProdList(surfVars, 1, subst(cv=1, bC), 0.5*(ux_surf_rl[0] + ux_surf_cr[0])),
+
+    surf_uy_l : calcInnerProdList(surfVars, -1, subst(cv=-1, bC), 0.5*(uy_surf_cl[0] + uy_surf_lr[0])),
+    surf_uy_r : calcInnerProdList(surfVars, 1, subst(cv=1, bC), 0.5*(uy_surf_rl[0] + uy_surf_cr[0])),
+
+    surf_uz_l : calcInnerProdList(surfVars, -1, subst(cv=-1, bC), 0.5*(uz_surf_cl[0] + uz_surf_lr[0])),
+    surf_uz_r : calcInnerProdList(surfVars, 1, subst(cv=1, bC), 0.5*(uz_surf_rl[0] + uz_surf_cr[0]))
+  )
+  else (
+    ux_surf_lr_e : doExpand1(ux_surf_lr, bSurf),
+    ux_surf_cl_e : doExpand1(ux_surf_cl, bSurf),
+    ux_surf_cr_e : doExpand1(ux_surf_cr, bSurf),
+    ux_surf_rl_e : doExpand1(ux_surf_rl, bSurf),
+
+    uy_surf_lr_e : doExpand1(uy_surf_lr, bSurf),
+    uy_surf_cl_e : doExpand1(uy_surf_cl, bSurf),
+    uy_surf_cr_e : doExpand1(uy_surf_cr, bSurf),
+    uy_surf_rl_e : doExpand1(uy_surf_rl, bSurf),
+
+    uz_surf_lr_e : doExpand1(uz_surf_lr, bSurf),
+    uz_surf_cl_e : doExpand1(uz_surf_cl, bSurf),
+    uz_surf_cr_e : doExpand1(uz_surf_cr, bSurf),
+    uz_surf_rl_e : doExpand1(uz_surf_rl, bSurf),
+
+    /* Surface componet of gradient expansion of u */
+    /* Negative sign on left surface for unit normal pointing into cell */
+    surf_ux_l : calcInnerProdList(surfVars, -1, subst(cv=-1, bC), 0.5*(ux_surf_cl_e + ux_surf_lr_e)),
+    surf_ux_r : calcInnerProdList(surfVars, 1, subst(cv=1, bC), 0.5*(ux_surf_rl_e + ux_surf_cr_e)),
+
+    surf_uy_l : calcInnerProdList(surfVars, -1, subst(cv=-1, bC), 0.5*(uy_surf_cl_e + uy_surf_lr_e)),
+    surf_uy_r : calcInnerProdList(surfVars, 1, subst(cv=1, bC), 0.5*(uy_surf_rl_e + uy_surf_cr_e)),
+
+    surf_uz_l : calcInnerProdList(surfVars, -1, subst(cv=-1, bC), 0.5*(uz_surf_cl_e + uz_surf_lr_e)),
+    surf_uz_r : calcInnerProdList(surfVars, 1, subst(cv=1, bC), 0.5*(uz_surf_rl_e + uz_surf_cr_e))
+  ),
+  printf(fh, "~%"),
+
+  /* Volume component of gradient expansion of u */
+  uxc_e : doExpand1(ux_c, bC),
+  uyc_e : doExpand1(uy_c, bC),
+  uzc_e : doExpand1(uz_c, bC),
+  vol_ux_c : calcInnerProdList(varsC, 1, diff(bC, cv), uxc_e),
+  vol_uy_c : calcInnerProdList(varsC, 1, diff(bC, cv), uyc_e),
+  vol_uz_c : calcInnerProdList(varsC, 1, diff(bC, cv), uzc_e),
+
+  /* Need bb : grad(u), write out grad(u) for each component of u */
+  printf(fh, "  double grad_u_x[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double grad_u_y[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double grad_u_z[~a] = {0.0}; ~%", NC),
+
+  /* Volume term has overall minus sign from integration by parts 
+     Use collect write expression to factor the dx and reduce number of multiplications */
+  writeCExprsCollect1lhsc(grad_u_x, dx1*(-vol_ux_c + surf_ux_l + surf_ux_r)),
+  printf(fh, "~%"),
+
+  writeCExprsCollect1lhsc(grad_u_y, dx1*(-vol_uy_c + surf_uy_l + surf_uy_r)),
+  printf(fh, "~%"),
+
+  writeCExprsCollect1lhsc(grad_u_z, dx1*(-vol_uz_c + surf_uz_l + surf_uz_r)),
+  printf(fh, "~%"),
+
+  /* Expand bb and grad(u) for each component of u */
+  bxbx_e : doExpand1(bxbx, bC),
+  bxby_e : doExpand1(bxby, bC),
+  bxbz_e : doExpand1(bxbz, bC),
+  byby_e : doExpand1(byby, bC),
+  bybz_e : doExpand1(bybz, bC),
+  bzbz_e : doExpand1(bzbz, bC),
+
+  grad_u_x_e : doExpand1(grad_u_x, bC),
+  grad_u_y_e : doExpand1(grad_u_y, bC),
+  grad_u_z_e : doExpand1(grad_u_z, bC),
+
+  printf(fh, "  double bb_grad_u_comp[~a] = {0.0}; ~%", NC),
+  if (dir = 1) then (  
+    bb_grad_u_comp_c : calcInnerProdList(varsC, 1, bC, bxbx_e*grad_u_x_e + bxby_e*grad_u_y_e + bxbz_e*grad_u_z_e)
+  )
+  elseif (dir = 2) then (
+    bb_grad_u_comp_c : calcInnerProdList(varsC, 1, bC, bxby_e*grad_u_x_e + byby_e*grad_u_y_e + bybz_e*grad_u_z_e)
+  )
+  elseif (dir = 3) then (
+    bb_grad_u_comp_c : calcInnerProdList(varsC, 1, bC, bxbz_e*grad_u_x_e + bybz_e*grad_u_y_e + bzbz_e*grad_u_z_e)
+  ),
+  writeCExprs1(bb_grad_u_comp, bb_grad_u_comp_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+  bb_grad_u_e : doExpand1(bb_grad_u_comp, bC),
+  bb_grad_u_c : calcInnerProdList(varsC, 1, bC, bb_grad_u_e),
+  writeCIncrExprsCollect1lhsc(bb_grad_u, bb_grad_u_c),  
+  printf(fh, "~%"),
+
+  nu_e : doExpand1(nu_c, bC),
+  /* Configuration space components of vperp characteristics source: bb : grad(u) - div(u) - 2 nu */
+  if (dir = 1) then (  
+    p_perp_source_c : calcInnerProdList(varsC, 1, bC, bb_grad_u_e - grad_u_x_e - 2.0/cdim*nu_e)
+  )
+  elseif (dir = 2) then (
+    p_perp_source_c : calcInnerProdList(varsC, 1, bC, bb_grad_u_e - grad_u_y_e - 2.0/cdim*nu_e)
+  )
+  elseif (dir = 3) then (
+    p_perp_source_c : calcInnerProdList(varsC, 1, bC, bb_grad_u_e - grad_u_z_e - 2.0/cdim*nu_e)
+  ),  
+  writeCIncrExprsCollect1lhsc(p_perp_source, p_perp_source_c), 
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+)$

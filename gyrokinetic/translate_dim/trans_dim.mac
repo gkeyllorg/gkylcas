@@ -1,0 +1,118 @@
+/**
+ * Create kernels which translate DG coefficients of a field into the DG
+ * coefficients of a nother field of a different dimensionality. Currently
+ * it is meant for:
+ *   - x     -> x,y
+ *   - x,y   -> x,y,z
+ * 
+ *   - x,y   -> y
+ *   - x,y   -> x
+ *   - x,y,z -> y,z
+ *   - x,y,z -> x,z
+ *   - x,y,z -> x,y
+ *
+ *   - 1x2v z,vpar,mu -> 2x2v x,z,vpar,mu
+ *   - 1x2v z,vpar,mu -> 3x2v x,y,z,vpar,mu
+ *   - 2x2v x,z,vpar,mu -> 3x2v x,y,z,vpar,mu
+ *
+ * When down projecting, we create kernels for evaluating
+ * the removed direction at -1,0 or 1).
+*/
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+fpprec : 24$
+
+gen_trans_dim_kernel(fh, funcNm, cdim_do, basisFun, polyOrder_do) := block(
+  [polyOrder_tar,varsC_do,bC_do,fdo_e,cdim_tar,nevals,ev_lst,ndirs,dirStrs,
+   varsub_lst,edgeStrs,sub_vars,dir,evI,varsC_tar,bC_tar,ftar_c],
+
+  /* Assume polyOrder remain the same. */
+  polyOrder_tar : polyOrder_do,
+
+  /* Get desired basis. */
+  [varsC_do,bC_do] : loadBasis(basisFun, cdim_do, polyOrder_do),
+
+  fdo_e : doExpand1(fdo,bC_do),
+  
+  for cdim_tar : cdim_do-1 thru cdim_do+1 do (
+    if ((cdim_tar > 0 and (cdim_tar < 4)) and (cdim_tar # cdim_do)) then (
+
+      /* Load donor basis. */
+      [varsC_tar,bC_tar] : loadBasis(basisFun, cdim_tar, polyOrder_tar),
+    
+      nevals : 1,
+      ev_lst : [[[]]],
+      ndirs : 1,
+      dirStrs : [[""]],
+      varsub_lst : [[]],
+      if (cdim_tar < cdim_do) then (
+        ndirs : cdim_do,
+        nevals : 3,
+        edgeStrs : ["lo","mid","up"],
+        ev_lst : makelist(makelist([varsC_do[i]=-1+j-1],j,1,nevals),i,1,ndirs),
+        dirStrs : makelist(makelist(sconcat("_dir",varsC_do[i],"_",edgeStrs[j]),j,1,nevals),i,1,ndirs),
+        sub_vars : makelist(delete(varsC_do[i],varsC_do),i,1,ndirs),
+        varsub_lst : makelist(makelist(varsC_tar[i]=sub_vars[d][i],i,1,cdim_tar),d,1,ndirs)
+      ),
+
+      for dir : 1 thru ndirs do (
+        for evI : 1 thru nevals do (
+
+          printf(fh, "GKYL_CU_DH void ~a_to_~ax_p~a~a(const double *fdo, double *ftar) ~%{ ~%", funcNm, cdim_tar, polyOrder_tar,dirStrs[dir][evI]),
+          printf(fh, "  // fdo: donor field to get DG coefficients from.~%"),
+          printf(fh, "  // ftar: target field whose DG coefficients to populate.~%"),
+          printf(fh, "~%"),
+  
+          vars : psubst(varsub_lst[dir],copylist(varsC_tar)),
+          basis : psubst(varsub_lst[dir],copylist(bC_tar)),
+      
+          ftar_c : calcInnerProdList(vars,1,basis,subst(ev_lst[dir][evI],fdo_e)),
+          writeCExprsWithZeros1(ftar, ftar_c),
+      
+          printf(fh, "}~%"),
+          printf(fh, "~%")
+        )
+      )
+    )
+  )
+
+)$
+
+gen_trans_dim_gk_kernel(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [vdim_low,polyOrder_low,varsC,bC,varsP,bP,vSub,cdim_low,varsC_low,
+   bC_low,varsP_low,bP_low,vSub_low,flow_e,fout_c],
+
+  /* Assume vdim and polyOrder remain the same. */
+  vdim_low : vdim,
+  polyOrder_low : polyOrder,
+
+  /* Get desired basis. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+
+  for cdim_low : 1 thru cdim-1 do (
+
+    printf(fh, "GKYL_CU_DH void ~a_from_~ax~av_p~a(const double *flow, double *fout) ~%{ ~%", funcNm, cdim_low, vdim_low, polyOrder_low),
+    printf(fh, "  // flow: lower dimensional field to get DG coefficients from.~%"),
+    printf(fh, "  // fout: field whose DG coefficients to populate.~%"),
+    printf(fh, "~%"),
+
+    /* Load low-dimensional basis. */
+    [varsC_low,bC_low,varsP_low,bP_low,vSub_low] : loadGkBasis(basisFun, cdim_low, vdim_low, polyOrder_low),
+    /* In 1x2v x is actually z */
+    if (cdim_low = 1) then (
+      varsC_low  : subst(x=z,varsC_low),
+      bC_low     : subst(x=z,bC_low   ),
+      varsP_low  : subst(x=z,varsP_low),
+      bP_low     : subst(x=z,bP_low   )
+    ),
+
+    flow_e : doExpand1(flow,bP_low),
+
+    fout_c : calcInnerProdList(varsP,1,bP,flow_e),
+    writeCExprsWithZeros1(fout, fout_c),
+
+    printf(fh, "}~%"),
+    printf(fh, "~%")
+  )
+
+)$

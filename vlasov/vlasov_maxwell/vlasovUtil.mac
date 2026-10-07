@@ -1,0 +1,141 @@
+/*
+  Utility functions for computing surface DG updates
+  for the generic case applicable to all our kinetic equations:
+  For a *continuous* phase space flux alpha, if sign(alpha) is a constant
+  we can use simple upwind fluxes.
+    F = alpha_surf*f^- (if sign(alpha_surf) = 1), 
+    F = alpha_surf*f^+ (if sign(alpha_surf) = -1) 
+  Otherwise, we project sign(alpha_surf) first evaluating sign(alpha_surf) 
+  at quadrature points and then using a nodal-to-modal transformation do
+    F = alpha_surf ( 1/2*(f^+ + f^-) - 1/2*sgn_alpha_surf*(f^+ - f^-) 
+
+  In this notation alpha_surf is the expansion of the *continuous* phase space flux
+  on the given surface, f^+ is the distribution function evaluated just outside the surface
+  and f^- is the distribution function evaluated just inside the surface
+        +------+------+
+        |      |      |
+        |   f^-|f^+   |
+        |      |      |
+        +------+------+
+           alpha_surf
+*/
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("util_maxima/utilities.mac")$
+
+/* Determine the upwinded distribution function in Vlasov */
+calcAndWrite_VlasovfUpwind(file_handle,surfDir,surfVar,surfIntVars,bSurf,NSurf,fl_e,fr_e,basisStr,sideStr,gen_geo) := block(
+  [fstrL, fstrR, fLNm, fRNm, fUpNm, sgn_alpha_surfNm, sgn_alphaUpNm, 
+   fSurfl_c, fSurfr_c, fSurfl_e, fSurfr_e,
+   surfNodes,nodeVars,basisNodal,sgn_alphaNodal_e,bSurf_no_by,sgn_alphaHatModProj_e,sgn_alphaUp_e,fUp_c],
+   
+    /* Naming convention for subsequent distribution function evaluations 
+       for a cell-based update. If performing the left surface update 
+       we need fl(surfVar=+1) and fc(surfVar=-1) (f_lr and f_cl) and if we are performing
+       the right surface update we need fc(surfVar=+1) and fr(surfVar=-1) (f_cr and f_rl) */
+    if (sideStr = "L") then (
+      fstrL : "lr",
+      fstrR : "cl"
+    )
+    else (
+      fstrL : "cr",
+      fstrR : "rl"
+    ),
+    fLNm : eval_string(sconcat("f_",fstrL)),
+    fRNm : eval_string(sconcat("f_",fstrR)),
+    fUpNm : eval_string(sconcat("fUp",sideStr)),
+    sgn_alpha_surfNm : eval_string(sconcat("sgn_alpha_surf",sideStr)),
+    sgn_alphaUpNm : eval_string(sconcat("sgn_alphaUp",sideStr)),
+
+    printf(file_handle, "  double fUp~a[~a] = {0.};~%", sideStr, NSurf),
+    fSurfl_c : calcInnerProdList(surfIntVars, 1, bSurf, subst(surfVar=1, fl_e)),
+    fSurfr_c : calcInnerProdList(surfIntVars, 1, bSurf, subst(surfVar=-1, fr_e)),
+    fSurfl_e : doExpand1(fLNm, bSurf), 
+    fSurfr_e : doExpand1(fRNm, bSurf), 
+
+    /* If sign(alpha_surf) is single signed
+       1. f^- (if sign(alpha_surf) = 1), 
+       2. f^+ (if sign(alpha_surf) = -1) */
+    printf(file_handle, "  if (const_sgn_alpha~a[0] == 1) {  ~%", sideStr),
+    printf(file_handle, "    if (sgn_alpha_surf~a[0] == 1.0) {  ~%", sideStr),
+    writeCExprs1(fUpNm, fSurfl_c),
+    printf(file_handle, "    } else { ~%"),
+    writeCExprs1(fUpNm, fSurfr_c),
+    printf(file_handle, "    } ~%"),
+
+    /* Else sign(alpha_surf) is changing quadrature point to quadrature point
+       1/2*(f^+ + f^-) - 1/2*sgn_alpha_surf*(f^+ - f^-) */
+    printf(file_handle, "  } else { ~%"),
+    printf(file_handle, "  double f_~a[~a] = {0.};~%", fstrL, NSurf),
+    printf(file_handle, "  double f_~a[~a] = {0.};~%", fstrR, NSurf),
+    if (polyOrder = 1) then (  /* Force p=1 to use hybrid basis. */
+      /* if general geometry and p=1, then compute and expand sgn_alpha in a pure p=1 basis */
+      if (gen_geo) then (
+        surfNodes : gaussOrd(polyOrder+1, length(surfIntVars)), 
+        basisNodal : getVarsNodalBasisWithNodes("ser", length(surfIntVars), 1, surfIntVars, surfNodes),
+        sgn_alphaNodal_e : doExpand1(sgn_alpha_surfNm,basisNodal),
+        bSurf_p1 : basisFromVars("ser",surfIntVars,1),
+        sgn_alphaHatModProj_e : fullratsimp(calcInnerProdList(surfIntVars, 1, bSurf_p1, sgn_alphaNodal_e)),
+        printf(file_handle, "  double sgn_alphaUp~a[~a] = {0.};~%", sideStr, length(bSurf_p1)),
+        writeCExprsNoExpand1(sgn_alphaUpNm, gcfac(float(expand(sgn_alphaHatModProj_e)))),
+        sgn_alphaUp_e : doExpand1(sgn_alphaUpNm, bSurf_p1)
+      )
+      else (
+        dirStr : "x",
+        if (surfDir > cdim) then (dirStr : "v"),
+        printf(file_handle, "  double sgn_alphaUp~a[~a] = {0.};~%", sideStr, NSurf),
+        printf(file_handle, "  ~a_~adir_upwind_quad_to_modal(~a, ~a); ~%", basisStr, dirStr, sgn_alpha_surfNm, sgn_alphaUpNm),
+        sgn_alphaUp_e : doExpand1(sgn_alphaUpNm, bSurf)
+      )
+    ) else (
+      printf(file_handle, "  double sgn_alphaUp~a[~a] = {0.};~%", sideStr, NSurf),
+      printf(file_handle, "  ~a_upwind_quad_to_modal(~a, ~a); ~%", basisStr, sgn_alpha_surfNm, sgn_alphaUpNm),
+      sgn_alphaUp_e : doExpand1(sgn_alphaUpNm, bSurf)
+    ),
+    printf(file_handle, "~%"),
+    writeCExprs1(fLNm, fSurfl_c),
+    printf(file_handle, "~%"),
+    flush_output(file_handle),
+    writeCExprs1(fRNm, fSurfr_c),
+    printf(file_handle, "~%"),
+    flush_output(file_handle),
+    fUp_c : calcInnerProdList(surfIntVars, 1, bSurf, 0.5*(fSurfl_e + fSurfr_e) - 0.5*sgn_alphaUp_e*(fSurfr_e - fSurfl_e)),
+    writeCExprsNoExpand1(fUpNm, gcfac(float(expand(fUp_c)))),
+    printf(file_handle, "~%"),
+    flush_output(file_handle),
+
+    printf(file_handle, "  } ~%")
+)$
+
+/* Determine the upwinded distribution function in gyrokinetics */
+calcAndWrite_sgn_alpha(file_handle,surfIntVars,surfNodes,numNodes,alphaSurf_e,sideStr) := block(
+  [alphaOrd_n],
+  /* Determine sign(alpha_surf) for upwinding at each surface quadrature node. */
+
+  /* Evaluate alpha at ordinates.
+     Note: alphaSurf_e is already a surface expansion. */
+  alphaOrd_n : gcfac(float(evAtNodes(alphaSurf_e,surfNodes,surfIntVars))),
+  
+  printf(file_handle, "  int const_sgn_alpha_surf = 1;  ~%"),
+  printf(file_handle, "  ~%"),
+  /* Write out first quadrature point 
+     We are going to compare the signs of the quadrature points to see if the sign is constant */
+  printf(file_handle, "  if (~a > 0.) ~%", gcfac(float(expand(fullratsimp(alphaOrd_n[1]))))),
+  printf(file_handle, "    sgn_alpha_surf~a[0] = 1.0; ~%", sideStr),
+  printf(file_handle, "  else  ~%"),
+  printf(file_handle, "    sgn_alpha_surf~a[0] = -1.0; ~%", sideStr),
+  printf(file_handle, "  ~%"),
+  /* Write out the other quadrature point evaluations and compare the signs point by point */
+  for i : 2 thru numNodes do (
+    printf(file_handle, "  if (~a > 0.) ~%", gcfac(float(expand(fullratsimp(alphaOrd_n[i]))))),
+    printf(file_handle, "    sgn_alpha_surf~a[~a] = 1.0; ~%", sideStr, i-1),
+    printf(file_handle, "  else  ~%"),
+    printf(file_handle, "    sgn_alpha_surf~a[~a] = -1.0; ~%", sideStr, i-1),
+    printf(file_handle, "  ~%"),
+    printf(file_handle, "  if (sgn_alpha_surf~a[~a] == sgn_alpha_surf~a[~a]) ~%", sideStr, i-1, sideStr, i-2),
+    printf(file_handle, "    const_sgn_alpha_surf = const_sgn_alpha_surf ? 1 : 0; ~%"),
+    printf(file_handle, "  else  ~%"),
+    printf(file_handle, "    const_sgn_alpha_surf = 0; ~%"),
+    printf(file_handle, "  ~%")
+  )
+)$

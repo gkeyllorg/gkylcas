@@ -1,0 +1,91 @@
+/* Compute the number of nodes, based on number of cells, polyOrder,
+   dimensionality and boundary conditions. */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac");
+load("moments/bvp_utilities/bvp-util.mac");
+load("moments/fem/fem-util.mac");
+fpprec : 24$
+
+generate_fem_poisson_num_nodes(fh, funcNm, dim, basisFun, pMax) := block(
+  [stencilLoc,bcTypes,bcStrs,bcKey,bcCombos,d,i,bcI,currBC,stencilStr,polyOrder,
+   bN,numB,numNodes,storedNodes,numNodesOut,sI,numStoredNodes,numBoundCells],
+
+  kill(varsC, varsP, basisC, basisP),
+
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x", ".lisp")),
+
+  /* List of stencil locations. Each entry is a dim-dimensional list
+     with -1 meaning it is at a lower boundary, 1 upper boundary, or
+     0 away from boundaries in that direction. */
+  stencilLoc : getStencilCoords(dim),
+
+  /* Types of boundary conditions for which to generate kernels.
+       =0 periodic
+       =1 non-periodic
+  */
+  bcTypes : [0, 1],
+  bcStrs  : ["periodic", "nonperiodic"],
+  bcKey   : makelist([bcTypes[i],bcStrs[i]],i,1,length(bcTypes)),
+
+  bcCombos : makelist([bcTypes[i]],i,1,length(bcTypes)),
+  for d : 2 thru dim do (
+    bcCombos : listify(cartesian_product(setify(bcCombos),setify(bcTypes))),
+    for i : 1 thru length(bcCombos) do ( bcCombos[i] : flatten(bcCombos[i]) )
+  ),
+
+  /* Loop over BC combinations. Will create a separate kernel for each. */
+  for bcI : 1 thru length(bcCombos) do (
+
+    currBC : copylist(bcCombos[bcI]),
+
+    /* String used in kernel name, identifying stencil location and BC. */
+    stencilStr : "",
+    for d : 1 thru dim do (
+      stencilStr : sconcat(stencilStr,"_",assoc(currBC[d],bcKey),string(varsC[d]))
+    ),
+
+    for polyOrder : 1 thru pMax do (
+
+      printf(fh, "long ~a_p~a~a(const int *numCells) ~%{ ~%", funcNm, polyOrder, stencilStr),
+      printf(fh, "  // numCells: number of cells in each direction.~%"),
+      printf(fh, "~%"),
+
+      bN   : getNodalBasis(basisFun, dim, polyOrder),
+      numB : length(bN),
+
+      nodes    : args(getNodes(basisFun, dim, polyOrder)),
+      numNodes : length(nodes),
+
+      storedNodes    : getStoredNodes(nodes,stencilLoc[1]),
+      numStoredNodes : length(storedNodes),
+
+      numNodesOut : product(numCells[d-1]-1,d,1,dim)*numStoredNodes, /* Interior nodes. */
+
+      for sI : 2 thru length(stencilLoc) do (
+        /* This if-statement excludes lower boundary kernels (without an upper boundary). */
+        if (length(sublist(stencilLoc[sI],lambda([x],x < 0)))=0) then (
+          storedNodes : getStoredNodes(nodes,stencilLoc[sI]),
+          for d : 1 thru dim do ( if currBC[d]=0 then (
+            storedNodes : deleteNodes(storedNodes,[[d,1]],false)
+          ) ),
+          numStoredNodes : length(storedNodes),
+  
+          numBoundCells : makelist(numCells[d-1]-1,d,1,dim),
+          for d : 1 thru dim do ( if stencilLoc[sI][d]=1 then (
+            numBoundCells[d] : 1
+          ) ),
+
+          numNodesOut : numNodesOut + product(numBoundCells[d],d,1,dim)*numStoredNodes
+        )
+      ),
+
+      printf(fh, "  return ~a;~%", numNodesOut),
+
+      printf(fh, "}~%"),
+      printf(fh, "~%")
+
+    )
+  )
+)$

@@ -1,0 +1,93 @@
+/* This script generates the kernels for the volume drag term
+   contribution from Lenard Bernstein operator. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac");
+load(stringproc)$
+fpprec : 24$
+
+calcVlasovPKPMLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,zr,cid,vid1,dir,f_e,nu_e,
+   incrDrag,alphaDrag_mid,alphaDrag_e,expr,i,alphaDrag_NoZero,
+   alphaDrag_NoZero_e],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+  /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+     mean hybrid basis. */
+  pOrderV : polyOrder,
+  if polyOrder=1 then ( pOrderV : 2 ),
+
+  /* Number of basis monomials. */
+  NP : length(bP),  NC : length(bC),
+
+  /* Specify a point to evaluate alpha at for use in computing CFL */
+  /* Here we choose to evaluate things in the middle of the cell, where
+     coordinates = 0. */
+  zr : makelist(varsP[d]=0, d, 1, cdim+1),
+
+  printf(fh, "#include <gkyl_lbo_pkpm_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *nuSum, const double *nuPrimMomsSum, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]:       Cell-center coordinates. ~%"),
+  printf(fh, "  // dxv[NDIM]:     Cell spacing. ~%"),
+  printf(fh, "  // nuSum:         Collisionalities added (self and cross species collisionalities). ~%"),
+  printf(fh, "  // nuPrimMomsSum: Sum of bulk velocities and thermal speeds (squared) times their respective collisionalities. ~%"),
+  printf(fh, "  // f:             Input distribution functions [F_0, T_perp/m G_1 = T_perp/m (F_0 - F_1)].~%"),
+  printf(fh, "  // out:           Incremented output distribution functions. ~%"),
+
+  /* grid spacing in v_parallel and v_parallel coordinate */
+  printf(fh, "  const double rdvpar = 2.0/dxv[~a]; ~%", cdim),
+  printf(fh, "  const double dvpar = dxv[~a], wvpar = w[~a]; ~%", cdim, cdim),
+
+  /* Access F_0 and T_perp G, first two Laguerre moments */
+  printf(fh, "  const double *F_0 = &f[~a]; ~%", 0),
+  printf(fh, "  const double *G_1 = &f[~a]; ~%", NP),  
+
+  /* Access the components of out for the first two Laguerre moments */
+  printf(fh, "  double *out_F_0 = &out[~a]; ~%", 0),
+  printf(fh, "  double *out_G_1 = &out[~a]; ~%", NP),   
+  printf(fh, "~%"),
+
+  /* Expand distribution functions F_0 and T_perp G in phase basis. */
+  F_0_e : doExpand1(F_0, bP),
+  G_1_e : doExpand1(G_1, bP),
+
+  /* Create expansion of drag term, which includes a correction to M1 to avoid spurious flow generation */
+  nuSum_e : doExpand1(nuSum,bC),
+  /* Expand the mean flow speed in the configuration basis. */
+  nuUSum_e : doExpand1(sumNuUPar,bC),
+  /* Create pointer to M1_correction to upar. */
+  printf(fh, "  const double *sumNuUPar = &nuPrimMomsSum[~a]; ~%", 0),
+  printf(fh, "~%"),
+  /* Calculate the alpha-velocity due to drag. */
+  alphaDr : nuSum_e*((1.0/2.0)*dvpar*vx+wvpar)-nuUSum_e,
+
+  /* alphaDrag = rdvpar*< psi, -(nu*(v - M1_corr)) >. */
+  printf(fh, "  double alphaDrag[~a]; ~%", NP),
+  alphaDrag_c : calcInnerProdList(varsP, 1, bP, -alphaDr),
+  writeCExprsCollect1lhsc(alphaDrag, rdvpar*alphaDrag_c),
+  printf(fh, "~%"),
+
+  /* Zero out components of drag which are empty. */
+  alphaDrag_NoZero : makelistNoZeros1(alphaDrag_c, alphaDrag),
+  alphaDrag_NoZero_e : doExpand(alphaDrag_NoZero, bP),
+
+  /* Evaluate alpha_vdim at zr to approximate
+  max(abs(alpha_vdim))/(dv_i/(2p+1)). */
+  cflFreq_mid : gcfac(float(expand(subst(zr,(2*pOrderV+1)*0.5*alphaDrag_NoZero_e)))),
+
+  /* Volume increment from configuration space. */
+  incrDrag_F_0 : calcInnerProdList(varsP, 1, diff(bP,vx), alphaDrag_NoZero_e*F_0_e),
+  incrDrag_G_1 : calcInnerProdList(varsP, 1, diff(bP,vx), alphaDrag_NoZero_e*G_1_e),
+
+  writeCIncrExprs1(out_F_0, incrDrag_F_0),
+  writeCIncrExprs1(out_G_1, incrDrag_G_1),
+  printf(fh, "~%"),
+
+  printf(fh, "  return fabs(~a); ~%", cflFreq_mid),
+
+  printf(fh, "~%"),
+  printf(fh, "} ~%")
+);

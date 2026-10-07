@@ -1,0 +1,951 @@
+/*  Generate kernels for: 
+    1. bvar = [b_i (3 components), b_i b_j (6 components)],
+    the magnetic field unit vector and unit tensor, b_i = B_i/|B|
+    2. ExB = E x B/|B|^2, the E x B velocity 
+
+    Separate the operations into three functions:
+    1. Compute the weak multiplications required: B_i B_j and E x B
+    2. Either compute 1/|B|^2 using the basis_inv operator (only p=1) or
+    set the matrices to be inverted by the weak division process to compute
+    B_i B_j/|B|^2 and E x B/|B|^2 (p > 1). 
+    3. Copy the solution and perform remaining operations. Note for computing b from bb, we use: 
+    basis_sqrt_with_sign (obtain expansion of sqrt(A^2) for a DG field A, keeping the sign of A) */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcBB(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH void ~a(const double *em, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // em:  Input electromagnetic fields. ~%"),
+  printf(fh, "  // out: Output B_i B_j tensor. ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double *B_x_sq  = &out[~a]; ~%", 0),
+  printf(fh, "  double *B_x_B_y = &out[~a]; ~%", NC),
+  printf(fh, "  double *B_x_B_z = &out[~a]; ~%", NC*2),
+  printf(fh, "  double *B_y_sq  = &out[~a]; ~%", NC*3),
+  printf(fh, "  double *B_y_B_z = &out[~a]; ~%", NC*4),
+  printf(fh, "  double *B_z_sq  = &out[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+
+  printf(fh, "  const double *B_x = &em[~a]; ~%", NC*3),
+  printf(fh, "  const double *B_y = &em[~a]; ~%", NC*4),
+  printf(fh, "  const double *B_z = &em[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+
+  printf(fh, "  // Calculate B_i B_j. ~%"),
+  printf(fh, "  binop_mul_~ad_~a_p~a(B_x, B_x, B_x_sq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(B_x, B_y, B_x_B_y); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(B_x, B_z, B_x_B_z); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(B_y, B_y, B_y_sq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(B_y, B_z, B_y_B_z); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(B_z, B_z, B_z_sq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$
+
+/* Special set of kernels which analytically invert the matrix for 1/|B|^2 for p=1
+   using the basis_inv operator. Significantly faster than the bin_op operator,
+   but only works for p=1 */
+setbvar_p1(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, BxSq_e, BySq_e, BzSq_e, 
+   magB2_e, magB2_c, nodes, magB2Corners, 
+   expr_bxbx, expr_bxby, expr_bxbz, expr_byby, expr_bybz, expr_bzbz, 
+   unit, ue, un, eq, E],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+  printf(fh, "#include <gkyl_basis_~a_~ax_p~a_inv.h> ~%", basisFun, cdim, polyOrder),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH int ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *BB) ~%{ ~%", funcNm),
+  printf(fh, "  // count: integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // A:     preallocated LHS matrix. ~%"),
+  printf(fh, "  // rhs:   preallocated RHS vector. ~%"),
+  printf(fh, "  // BB:    Input magnetic field tensor B_i B_j. ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  // For poly_order = 1, we can analytically invert the matrix and just store the solution ~%"),
+  printf(fh, "  struct gkyl_mat rhs_bxbx = gkyl_nmat_get(rhs, count); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_bxby = gkyl_nmat_get(rhs, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_bxbz = gkyl_nmat_get(rhs, count+2); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_byby = gkyl_nmat_get(rhs, count+3); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_bybz = gkyl_nmat_get(rhs, count+4); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_bzbz = gkyl_nmat_get(rhs, count+5); ~%"),
+
+  printf(fh, "  // Clear rhs for each component of b_i b_j ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_bxbx, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_bxby, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_bxbz, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_byby, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_bybz, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_bzbz, 0.0); ~%"),
+
+  printf(fh, "  const double *B_x_sq  = &BB[~a]; ~%", 0),
+  printf(fh, "  const double *B_x_B_y = &BB[~a]; ~%", NC),
+  printf(fh, "  const double *B_x_B_z = &BB[~a]; ~%", NC*2),
+  printf(fh, "  const double *B_y_sq  = &BB[~a]; ~%", NC*3),
+  printf(fh, "  const double *B_y_B_z = &BB[~a]; ~%", NC*4),
+  printf(fh, "  const double *B_z_sq  = &BB[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+
+  BxSq_e : doExpand1(B_x_sq, bC),
+  BySq_e : doExpand1(B_y_sq, bC),
+  BzSq_e : doExpand1(B_z_sq, bC),
+  magB2_e : doExpand1(magB2, bC),
+
+  printf(fh, "  double magB2[~a] = {0.0}; ~%~%", NC),
+  magB2_c : calcInnerProdList(varsC, 1, bC, BxSq_e + BySq_e + BzSq_e),
+  writeCExprs1(magB2, magB2_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "  int cell_avg = 0;~%"),
+  /* For p = 1 |B|^2 guaranteed to be positive if it's positive at the
+     corners. For p = 2, we use the positivity control points (-1, 0, 1) */
+  nodesCorners : getNodes(basisFun, cdim, polyOrder),
+  printf(fh, "  // Check if |B|^2 < 0 at control points. ~%"),
+  magB2Corners : expand(float(evAtNodes(magB2_e,nodesCorners,varsC))),
+  for i : 1 thru length(nodesCorners) do (
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", magB2Corners[i])
+  ),  
+  printf(fh, "  double magB2_inv[~a] = {0.0}; ~%~%", NC),
+  printf(fh, "  if (cell_avg) { ~%"),
+  printf(fh, "  // If |B|^2 < 0 at control points, only use cell average to get 1/|B|^2. ~%"),
+  unit : calcInnerProdList(varsC, 1, bC, 1.0),
+  printf(fh, "  magB2_inv[0] = ~a/magB2[0]; ~%", float(expand(unit[1]*unit[1]))),
+  printf(fh, "  } else { ~%"),
+  printf(fh, "  ~a_~ax_p~a_inv(magB2, magB2_inv); ~%", basisFun, cdim, polyOrder),
+  printf(fh, "  } ~%"),
+
+  printf(fh, "  // Calculate expansions of B_i B_j/|B|^2, which can be calculated free of aliasing errors. ~%"),
+  printf(fh, "  double bxbx[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double bxby[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double bxbz[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double byby[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double bybz[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double bzbz[~a] = {0.0}; ~%", NC),
+  printf(fh, " ~%"),
+
+  printf(fh, "  binop_mul_~ad_~a_p~a(magB2_inv, B_x_sq, bxbx); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(magB2_inv, B_y_sq, byby); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(magB2_inv, B_z_sq, bzbz); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(magB2_inv, B_x_B_y, bxby); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(magB2_inv, B_x_B_z, bxbz); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(magB2_inv, B_y_B_z, bybz); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  if (cell_avg) { ~%"),
+  expr_bxbx : float(expand(append([bxbx[0]],makelist(0.0,i,1,NC-1)))),
+  expr_bxby : float(expand(append([bxby[0]],makelist(0.0,i,1,NC-1)))),
+  expr_bxbz : float(expand(append([bxbz[0]],makelist(0.0,i,1,NC-1)))),
+  expr_byby : float(expand(append([byby[0]],makelist(0.0,i,1,NC-1)))),
+  expr_bybz : float(expand(append([bybz[0]],makelist(0.0,i,1,NC-1)))),
+  expr_bzbz : float(expand(append([bzbz[0]],makelist(0.0,i,1,NC-1)))),
+
+  for i : 1 thru length(expr_bxbx) do (
+    printf(fh,"    gkyl_mat_set(&rhs_bxbx,~a,0,~a); ~%", i-1, expr_bxbx[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bxby,~a,0,~a); ~%", i-1, expr_bxby[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bxbz,~a,0,~a); ~%", i-1, expr_bxbz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_byby,~a,0,~a); ~%", i-1, expr_byby[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bybz,~a,0,~a); ~%", i-1, expr_bybz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bzbz,~a,0,~a); ~%", i-1, expr_bzbz[i])
+  ),
+  printf(fh, "  } else { ~%"),
+  expr_bxbx : float(expand(makelist(bxbx[i],i,0,NC-1))),
+  expr_bxby : float(expand(makelist(bxby[i],i,0,NC-1))),
+  expr_bxbz : float(expand(makelist(bxbz[i],i,0,NC-1))),
+  expr_byby : float(expand(makelist(byby[i],i,0,NC-1))),
+  expr_bybz : float(expand(makelist(bybz[i],i,0,NC-1))),
+  expr_bzbz : float(expand(makelist(bzbz[i],i,0,NC-1))),
+
+  for i : 1 thru length(expr_bxbx) do (
+    printf(fh,"    gkyl_mat_set(&rhs_bxbx,~a,0,~a); ~%", i-1, expr_bxbx[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bxby,~a,0,~a); ~%", i-1, expr_bxby[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bxbz,~a,0,~a); ~%", i-1, expr_bxbz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_byby,~a,0,~a); ~%", i-1, expr_byby[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bybz,~a,0,~a); ~%", i-1, expr_bybz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bzbz,~a,0,~a); ~%", i-1, expr_bzbz[i])
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  return cell_avg;~%"),
+  printf(fh, "} ~%")
+)$
+
+setbvar(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, BxSq_e, BySq_e, BzSq_e, 
+   magB2_e, magB2_c, nodes, magB2Corners, 
+   expr_bxbx, expr_bxby, expr_bxbz, expr_byby, expr_bybz, expr_bzbz, 
+   ue, un, eq, E],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH int ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *BB) ~%{ ~%", funcNm),
+  printf(fh, "  // count: integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // A:     preallocated LHS matrix. ~%"),
+  printf(fh, "  // rhs:   preallocated RHS vector. ~%"),
+  printf(fh, "  // BB:    Input magnetic field tensor B_i B_j. ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  struct gkyl_mat A_bxbx = gkyl_nmat_get(A, count); ~%"),
+  printf(fh, "  struct gkyl_mat A_bxby = gkyl_nmat_get(A, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat A_bxbz = gkyl_nmat_get(A, count+2); ~%"),
+  printf(fh, "  struct gkyl_mat A_byby = gkyl_nmat_get(A, count+3); ~%"),
+  printf(fh, "  struct gkyl_mat A_bybz = gkyl_nmat_get(A, count+4); ~%"),
+  printf(fh, "  struct gkyl_mat A_bzbz = gkyl_nmat_get(A, count+5); ~%"),
+
+  printf(fh, "  struct gkyl_mat rhs_bxbx = gkyl_nmat_get(rhs, count); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_bxby = gkyl_nmat_get(rhs, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_bxbz = gkyl_nmat_get(rhs, count+2); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_byby = gkyl_nmat_get(rhs, count+3); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_bybz = gkyl_nmat_get(rhs, count+4); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_bzbz = gkyl_nmat_get(rhs, count+5); ~%"),
+
+  printf(fh, "  // Clear matrix and rhs for each component of b_i b_j ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_bxbx, 0.0); gkyl_mat_clear(&rhs_bxbx, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_bxby, 0.0); gkyl_mat_clear(&rhs_bxby, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_bxbz, 0.0); gkyl_mat_clear(&rhs_bxbz, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_byby, 0.0); gkyl_mat_clear(&rhs_byby, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_bybz, 0.0); gkyl_mat_clear(&rhs_bybz, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_bzbz, 0.0); gkyl_mat_clear(&rhs_bzbz, 0.0); ~%"),
+
+  printf(fh, "  const double *B_x_sq  = &BB[~a]; ~%", 0),
+  printf(fh, "  const double *B_x_B_y = &BB[~a]; ~%", NC),
+  printf(fh, "  const double *B_x_B_z = &BB[~a]; ~%", NC*2),
+  printf(fh, "  const double *B_y_sq  = &BB[~a]; ~%", NC*3),
+  printf(fh, "  const double *B_y_B_z = &BB[~a]; ~%", NC*4),
+  printf(fh, "  const double *B_z_sq  = &BB[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+
+  BxSq_e : doExpand1(B_x_sq, bC),
+  BySq_e : doExpand1(B_y_sq, bC),
+  BzSq_e : doExpand1(B_z_sq, bC),
+  magB2_e : doExpand1(magB2, bC),
+
+  printf(fh, "  double magB2[~a] = {0.0}; ~%~%", NC),
+  magB2_c : calcInnerProdList(varsC, 1, bC, BxSq_e + BySq_e + BzSq_e),
+  writeCExprs1(magB2, magB2_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "  int cell_avg = 0;~%"),
+  /* For p = 1 |B|^2 guaranteed to be positive if it's positive at the
+     corners. For p = 2, we use the positivity control points (-1, 0, 1) */
+  nodes : getNodes(basisFun, cdim, polyOrder),
+  magB2Corners : expand(float(evAtNodes(magB2_e,nodes,varsC))),
+  printf(fh, "  // Check if |B|^2 < 0 at control points. ~%"),
+  for i : 1 thru length(nodes) do (
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", magB2Corners[i])
+  ),  
+  printf(fh, "  if (cell_avg) { ~%"),
+  /* Use only the cell average of |B|^2. */
+  for i : 2 thru NC do (
+    printf(fh, "    magB2[~a] = 0.0; ~%", i-1)
+  ),
+  expr_bxbx : float(expand(append([B_x_sq[0]],makelist(0.0,i,1,NC-1)))),
+  expr_bxby : float(expand(append([B_x_B_y[0]],makelist(0.0,i,1,NC-1)))),
+  expr_bxbz : float(expand(append([B_x_B_z[0]],makelist(0.0,i,1,NC-1)))),
+  expr_byby : float(expand(append([B_y_sq[0]],makelist(0.0,i,1,NC-1)))),
+  expr_bybz : float(expand(append([B_y_B_z[0]],makelist(0.0,i,1,NC-1)))),
+  expr_bzbz : float(expand(append([B_z_sq[0]],makelist(0.0,i,1,NC-1)))),
+
+  for i : 1 thru length(expr_bxbx) do (
+    printf(fh,"    gkyl_mat_set(&rhs_bxbx,~a,0,~a); ~%", i-1, expr_bxbx[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bxby,~a,0,~a); ~%", i-1, expr_bxby[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bxbz,~a,0,~a); ~%", i-1, expr_bxbz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_byby,~a,0,~a); ~%", i-1, expr_byby[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bybz,~a,0,~a); ~%", i-1, expr_bybz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bzbz,~a,0,~a); ~%", i-1, expr_bzbz[i])
+  ),
+  printf(fh, "  } else { ~%"),
+  expr_bxbx : float(expand(makelist(B_x_sq[i],i,0,NC-1))),
+  expr_bxby : float(expand(makelist(B_x_B_y[i],i,0,NC-1))),
+  expr_bxbz : float(expand(makelist(B_x_B_z[i],i,0,NC-1))),
+  expr_byby : float(expand(makelist(B_y_sq[i],i,0,NC-1))),
+  expr_bybz : float(expand(makelist(B_y_B_z[i],i,0,NC-1))),
+  expr_bzbz : float(expand(makelist(B_z_sq[i],i,0,NC-1))),
+
+  for i : 1 thru length(expr_bxbx) do (
+    printf(fh,"    gkyl_mat_set(&rhs_bxbx,~a,0,~a); ~%", i-1, expr_bxbx[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bxby,~a,0,~a); ~%", i-1, expr_bxby[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bxbz,~a,0,~a); ~%", i-1, expr_bxbz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_byby,~a,0,~a); ~%", i-1, expr_byby[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bybz,~a,0,~a); ~%", i-1, expr_bybz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_bzbz,~a,0,~a); ~%", i-1, expr_bzbz[i])
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+
+  /* Generate matrix of unknown coefficients */
+  ue : doExpand1(u,bC),
+  un : makelist(u[i],i,0,NC-1),
+  eq : calcInnerProdList(varsC,ue,bC,magB2_e),
+  E  : fullratsimp(coefmatrix(eq,un)),
+  /* declare temp since matrix entries in A are the same for all operations
+     B_i B_j are all being divided by |B|^2 to create b_i b_j */
+  printf(fh, "  double temp = 0.0; ~%"),
+  /* Matrix is dense so just do a simple write routine */
+  for i : 1 thru NC do (
+    for j : 1 thru NC do (
+      printf(fh,"  temp = ~a; ~%", float(expand(E[i,j]))),
+      printf(fh,"  gkyl_mat_set(&A_bxbx,~a,~a,~a); ~%", i-1, j-1, temp),
+      printf(fh,"  gkyl_mat_set(&A_bxby,~a,~a,~a); ~%", i-1, j-1, temp),
+      printf(fh,"  gkyl_mat_set(&A_bxbz,~a,~a,~a); ~%", i-1, j-1, temp),
+      printf(fh,"  gkyl_mat_set(&A_byby,~a,~a,~a); ~%", i-1, j-1, temp),
+      printf(fh,"  gkyl_mat_set(&A_bybz,~a,~a,~a); ~%", i-1, j-1, temp),
+      printf(fh,"  gkyl_mat_set(&A_bzbz,~a,~a,~a); ~%", i-1, j-1, temp)
+    )
+  ),
+  printf(fh, "  return cell_avg;~%"),
+  printf(fh, "} ~%")
+)$
+
+copybvar(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, 
+   bxbx_e, byby_e, bzbz_e, 
+   nodes, bxbxQuad, bybyQuad, bzbzQuad],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_basis_~a_~ax_p~a_sqrt_with_sign.h> ~%", basisFun, cdim, polyOrder),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH void ~a(int count, struct gkyl_nmat *x, const double *em, int* cell_avg_magB2, double* GKYL_RESTRICT bvar) ~%{ ~%", funcNm),
+  printf(fh, "  // count:          Integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // x:              Input solution vector. ~%"),
+  printf(fh, "  // em:             Input electromagnetic fields. ~%"),
+  printf(fh, "  // cell_avg_magB2: Input flag for cell average if 1/|B|^2 only used cell averages. ~%"),
+  printf(fh, "  // bvar:           Output b_i = B_i/|B| (first 3 components), b_i b_j = B_i B_j/|B|^2 (last 6 components). ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  struct gkyl_mat x_bxbx = gkyl_nmat_get(x, count); ~%"),
+  printf(fh, "  struct gkyl_mat x_bxby = gkyl_nmat_get(x, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat x_bxbz = gkyl_nmat_get(x, count+2); ~%"),
+  printf(fh, "  struct gkyl_mat x_byby = gkyl_nmat_get(x, count+3); ~%"),
+  printf(fh, "  struct gkyl_mat x_bybz = gkyl_nmat_get(x, count+4); ~%"),
+  printf(fh, "  struct gkyl_mat x_bzbz = gkyl_nmat_get(x, count+5); ~%"),
+
+  printf(fh, "  double *bx = &bvar[~a]; ~%", 0),
+  printf(fh, "  double *by = &bvar[~a]; ~%", NC),
+  printf(fh, "  double *bz = &bvar[~a]; ~%", NC*2),
+  printf(fh, "  double *bxbx = &bvar[~a]; ~%", NC*3),
+  printf(fh, "  double *bxby = &bvar[~a]; ~%", NC*4),
+  printf(fh, "  double *bxbz = &bvar[~a]; ~%", NC*5),
+  printf(fh, "  double *byby = &bvar[~a]; ~%", NC*6),
+  printf(fh, "  double *bybz = &bvar[~a]; ~%", NC*7),
+  printf(fh, "  double *bzbz = &bvar[~a]; ~%", NC*8),
+  printf(fh, " ~%"),
+
+  for i : 1 thru NC do (
+    printf(fh,"  bxbx[~a] = gkyl_mat_get(&x_bxbx,~a,0); ~%", i-1, i-1),
+    printf(fh,"  bxby[~a] = gkyl_mat_get(&x_bxby,~a,0); ~%", i-1, i-1),
+    printf(fh,"  bxbz[~a] = gkyl_mat_get(&x_bxbz,~a,0); ~%", i-1, i-1),
+    printf(fh,"  byby[~a] = gkyl_mat_get(&x_byby,~a,0); ~%", i-1, i-1),
+    printf(fh,"  bybz[~a] = gkyl_mat_get(&x_bybz,~a,0); ~%", i-1, i-1),
+    printf(fh,"  bzbz[~a] = gkyl_mat_get(&x_bzbz,~a,0); ~%", i-1, i-1)
+  ),
+
+  printf(fh, "  const double *B_x = &em[~a]; ~%", NC*3),
+  printf(fh, "  const double *B_y = &em[~a]; ~%", NC*4),
+  printf(fh, "  const double *B_z = &em[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+
+  /* To insure b . b = 1, we need to check if bxbx, byby, or bzbz < 0.0
+     at the quadrature points we use to evaluate the sqrt. If any of these
+     points are negative, we switch to just the cell average of b_i b_j */
+  bxbx_e : doExpand1(bxbx, bC),
+  byby_e : doExpand1(byby, bC),
+  bzbz_e : doExpand1(bzbz, bC),
+
+  nodes : gaussOrd(polyOrder+1, cdim),
+  bxbxQuad : expand(float(evAtNodes(bxbx_e,nodes,varsC))),
+  bybyQuad : expand(float(evAtNodes(byby_e,nodes,varsC))),
+  bzbzQuad : expand(float(evAtNodes(bzbz_e,nodes,varsC))),
+
+  printf(fh, "  int cell_avg = 0;~%"),
+  for i : 1 thru length(nodes) do (
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", bxbxQuad[i]),
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", bybyQuad[i]),
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", bzbzQuad[i])
+  ),
+
+  printf(fh, "  if (cell_avg || cell_avg_magB2[0]) { ~%"),
+  /* Use only the cell average bb. */
+  for i : 2 thru NC do (
+    printf(fh, "    bxbx[~a] = 0.0; ~%", i-1),
+    printf(fh, "    bxby[~a] = 0.0; ~%", i-1),
+    printf(fh, "    bxbz[~a] = 0.0; ~%", i-1),
+    printf(fh, "    byby[~a] = 0.0; ~%", i-1),
+    printf(fh, "    bybz[~a] = 0.0; ~%", i-1),
+    printf(fh, "    bzbz[~a] = 0.0; ~%", i-1)
+  ),
+  printf(fh, "  // If bxbx, byby, or bzbz < 0.0 at the quadrature points, ~%"),
+  printf(fh, "  // set cell_avg_magB2 to be true in case it was not true before. ~%"),
+  printf(fh, "  cell_avg_magB2[0] = 1; ~%"),
+  printf(fh, "  } ~%"),
+
+  printf(fh, "  // Calculate b_i = B_i/|B| by taking square root of B_i^2/|B|^2 at quadrature points. ~%"),
+  printf(fh, "  // Uses the sign of B_i at quadrature points to get the correct sign of b_i. ~%"),
+  printf(fh, "  // Also checks if B_i^2/|B|^2 < 0.0 at quadrature points and zeros out the value there. ~%"),
+  printf(fh, "  ~a_~ax_p~a_sqrt_with_sign(B_x, bxbx, bx); ~%", basisFun, cdim, polyOrder),
+  printf(fh, "  ~a_~ax_p~a_sqrt_with_sign(B_y, byby, by); ~%", basisFun, cdim, polyOrder),
+  printf(fh, "  ~a_~ax_p~a_sqrt_with_sign(B_z, bzbz, bz); ~%", basisFun, cdim, polyOrder),
+
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$
+
+setbvar_surf(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, 
+   bx_e, by_e, bz_e, bxbx_e, bxby_e, bxbz_e, byby_e, bybz_e, bzbz_e, 
+   bx_xl_c, bx_xr_c, bxbx_xl_c, bxbx_xr_c, bxby_xl_c, bxby_xr_c, bxbz_xl_c, bxbz_xr_c, 
+   by_yl_c, by_yr_c, bxby_yl_c, bxby_yr_c, byby_yl_c, byby_yr_c, bybz_yl_c, bybz_yr_c, 
+   bz_zl_c, bz_zr_c, bxbz_zl_c, bxbz_zr_c, bybz_zl_c, bybz_zr_c, bzbz_zl_c, bzbz_zr_c],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+  surfVarsx : delete(x,varsC),
+  bSurfx : basisFromVars(basisFun,surfVarsx,polyOrder),
+  if (cdim > 1) then (
+    surfVarsy : delete(y,varsC),
+    bSurfy : basisFromVars(basisFun,surfVarsy,polyOrder)
+  ),
+  if (cdim = 3) then (
+    surfVarsz : delete(z,varsC),
+    bSurfz : basisFromVars(basisFun,surfVarsz,polyOrder)
+  ),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+  if (cdim = 1) then (
+    NSurf : 1
+  )
+  else (
+    NSurf : length(bSurfx)
+  ),
+
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH void ~a(const double* bvar, double* GKYL_RESTRICT bvar_surf) ~%{ ~%", funcNm),
+  printf(fh, "  // bvar:      Input volume expansion of b_i = B_i/|B| (first 3 components), b_i b_j = B_i B_j/|B|^2 (last 6 components). ~%"),
+  printf(fh, "  // bvar_surf: Output surface expansion of magnetic field unit vector and tensor in each direction. ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  const double *bx = &bvar[~a]; ~%", 0),
+  printf(fh, "  const double *by = &bvar[~a]; ~%", NC),
+  printf(fh, "  const double *bz = &bvar[~a]; ~%", NC*2),
+  printf(fh, "  const double *bxbx = &bvar[~a]; ~%", NC*3),
+  printf(fh, "  const double *bxby = &bvar[~a]; ~%", NC*4),
+  printf(fh, "  const double *bxbz = &bvar[~a]; ~%", NC*5),
+  printf(fh, "  const double *byby = &bvar[~a]; ~%", NC*6),
+  printf(fh, "  const double *bybz = &bvar[~a]; ~%", NC*7),
+  printf(fh, "  const double *bzbz = &bvar[~a]; ~%", NC*8),
+  printf(fh, " ~%"),
+
+  /* Expand b and bb */
+  bx_e : doExpand1(bx, bC),
+  by_e : doExpand1(by, bC),
+  bz_e : doExpand1(bz, bC),
+  bxbx_e : doExpand1(bxbx, bC),
+  bxby_e : doExpand1(bxby, bC),
+  bxbz_e : doExpand1(bxbz, bC),
+  byby_e : doExpand1(byby, bC),
+  bybz_e : doExpand1(bybz, bC),
+  bzbz_e : doExpand1(bzbz, bC),
+
+  printf(fh, "  double *bx_xl = &bvar_surf[~a]; ~%", 0*NSurf),
+  printf(fh, "  double *bx_xr = &bvar_surf[~a]; ~%", 1*NSurf),
+  printf(fh, "  double *bxbx_xl = &bvar_surf[~a]; ~%", 2*NSurf),
+  printf(fh, "  double *bxbx_xr = &bvar_surf[~a]; ~%", 3*NSurf),
+  printf(fh, "  double *bxby_xl = &bvar_surf[~a]; ~%", 4*NSurf),
+  printf(fh, "  double *bxby_xr = &bvar_surf[~a]; ~%", 5*NSurf),
+  printf(fh, "  double *bxbz_xl = &bvar_surf[~a]; ~%", 6*NSurf),
+  printf(fh, "  double *bxbz_xr = &bvar_surf[~a]; ~%", 7*NSurf),
+  printf(fh, " ~%"), 
+  if (cdim = 1) then (
+    printf(fh, "  bx_xl[0] = ~a; ~%", float(expand(subst(x=-1, bx_e)))),
+    printf(fh, "  bx_xr[0] = ~a; ~%", float(expand(subst(x=1, bx_e)))),
+    printf(fh, "  bxbx_xl[0] = ~a; ~%", float(expand(subst(x=-1, bxbx_e)))),
+    printf(fh, "  bxbx_xr[0] = ~a; ~%", float(expand(subst(x=1, bxbx_e)))),
+    printf(fh, "  bxby_xl[0] = ~a; ~%", float(expand(subst(x=-1, bxby_e)))),
+    printf(fh, "  bxby_xr[0] = ~a; ~%", float(expand(subst(x=1, bxby_e)))),
+    printf(fh, "  bxbz_xl[0] = ~a; ~%", float(expand(subst(x=-1, bxbz_e)))),
+    printf(fh, "  bxbz_xr[0] = ~a; ~%", float(expand(subst(x=1, bxbz_e)))),
+    printf(fh, " ~%")
+  )
+  else (
+    bx_xl_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=-1, bx_e)),
+    bxbx_xl_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=-1, bxbx_e)),
+    bxby_xl_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=-1, bxby_e)),
+    bxbz_xl_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=-1, bxbz_e)),
+
+    writeCExprs1(bx_xl, bx_xl_c), 
+    writeCExprs1(bxbx_xl, bxbx_xl_c), 
+    writeCExprs1(bxby_xl, bxby_xl_c), 
+    writeCExprs1(bxbz_xl, bxbz_xl_c), 
+    printf(fh, " ~%"), 
+
+    bx_xr_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=1, bx_e)),
+    bxbx_xr_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=1, bxbx_e)),
+    bxby_xr_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=1, bxby_e)),
+    bxbz_xr_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=1, bxbz_e)),
+
+    writeCExprs1(bx_xr, bx_xr_c), 
+    writeCExprs1(bxbx_xr, bxbx_xr_c), 
+    writeCExprs1(bxby_xr, bxby_xr_c), 
+    writeCExprs1(bxbz_xr, bxbz_xr_c),  
+    printf(fh, " ~%")
+  ),
+  if (cdim > 1) then (
+    printf(fh, "  double *by_yl = &bvar_surf[~a]; ~%", 8*NSurf),
+    printf(fh, "  double *by_yr = &bvar_surf[~a]; ~%", 9*NSurf),
+    printf(fh, "  double *bxby_yl = &bvar_surf[~a]; ~%", 10*NSurf),
+    printf(fh, "  double *bxby_yr = &bvar_surf[~a]; ~%", 11*NSurf),
+    printf(fh, "  double *byby_yl = &bvar_surf[~a]; ~%", 12*NSurf),
+    printf(fh, "  double *byby_yr = &bvar_surf[~a]; ~%", 13*NSurf),
+    printf(fh, "  double *bybz_yl = &bvar_surf[~a]; ~%", 14*NSurf),
+    printf(fh, "  double *bybz_yr = &bvar_surf[~a]; ~%", 15*NSurf),
+    printf(fh, " ~%"), 
+
+    by_yl_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=-1, by_e)),
+    bxby_yl_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=-1, bxby_e)),
+    byby_yl_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=-1, byby_e)),
+    bybz_yl_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=-1, bybz_e)),
+
+    writeCExprs1(by_yl, by_yl_c), 
+    writeCExprs1(bxby_yl, bxby_yl_c), 
+    writeCExprs1(byby_yl, byby_yl_c), 
+    writeCExprs1(bybz_yl, bybz_yl_c), 
+    printf(fh, " ~%"), 
+
+    by_yr_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=1, by_e)),
+    bxby_yr_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=1, bxby_e)),
+    byby_yr_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=1, byby_e)),
+    bybz_yr_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=1, bybz_e)),
+
+    writeCExprs1(by_yr, by_yr_c), 
+    writeCExprs1(bxby_yr, bxby_yr_c), 
+    writeCExprs1(byby_yr, byby_yr_c), 
+    writeCExprs1(bybz_yr, bybz_yr_c),  
+    printf(fh, " ~%")
+  ),
+  if (cdim = 3) then (
+    printf(fh, "  double *bz_zl = &bvar_surf[~a]; ~%", 16*NSurf),
+    printf(fh, "  double *bz_zr = &bvar_surf[~a]; ~%", 17*NSurf),
+    printf(fh, "  double *bxbz_zl = &bvar_surf[~a]; ~%", 18*NSurf),
+    printf(fh, "  double *bxbz_zr = &bvar_surf[~a]; ~%", 19*NSurf),
+    printf(fh, "  double *bybz_zl = &bvar_surf[~a]; ~%", 20*NSurf),
+    printf(fh, "  double *bybz_zr = &bvar_surf[~a]; ~%", 21*NSurf),
+    printf(fh, "  double *bzbz_zl = &bvar_surf[~a]; ~%", 22*NSurf),
+    printf(fh, "  double *bzbz_zr = &bvar_surf[~a]; ~%", 23*NSurf),
+    printf(fh, " ~%"), 
+
+    bz_zl_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=-1, bz_e)),
+    bxbz_zl_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=-1, bxbz_e)),
+    bybz_zl_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=-1, bybz_e)),
+    bzbz_zl_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=-1, bzbz_e)),
+
+    writeCExprs1(bz_zl, bz_zl_c), 
+    writeCExprs1(bxbz_zl, bxbz_zl_c), 
+    writeCExprs1(bybz_zl, bybz_zl_c), 
+    writeCExprs1(bzbz_zl, bzbz_zl_c), 
+    printf(fh, " ~%"), 
+
+    bz_zr_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=1, bz_e)),
+    bxbz_zr_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=1, bxbz_e)),
+    bybz_zr_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=1, bybz_e)),
+    bzbz_zr_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=1, bzbz_e)),
+
+    writeCExprs1(bz_zr, bz_zr_c), 
+    writeCExprs1(bxbz_zr, bxbz_zr_c), 
+    writeCExprs1(bybz_zr, bybz_zr_c), 
+    writeCExprs1(bzbz_zr, bzbz_zr_c),  
+    printf(fh, " ~%")
+  ),  
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$
+
+calcNumExB(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH void ~a(const double *em, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // em:  Input electromagnetic fields. ~%"),
+  printf(fh, "  // out: Output (E x B)_i (E x B velocity numerator) and B_i^2 (for denominator). ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double *num_ExB_x = &out[~a]; ~%", 0),
+  printf(fh, "  double *num_ExB_y = &out[~a]; ~%", NC),
+  printf(fh, "  double *num_ExB_z = &out[~a]; ~%", NC*2),
+  printf(fh, "  double *B_x_sq  = &out[~a]; ~%", NC*3),
+  printf(fh, "  double *B_y_sq  = &out[~a]; ~%", NC*4),
+  printf(fh, "  double *B_z_sq  = &out[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+
+  printf(fh, "  const double *E_x = &em[~a]; ~%", NC*0),
+  printf(fh, "  const double *E_y = &em[~a]; ~%", NC*1),
+  printf(fh, "  const double *E_z = &em[~a]; ~%", NC*2),
+  printf(fh, "  const double *B_x = &em[~a]; ~%", NC*3),
+  printf(fh, "  const double *B_y = &em[~a]; ~%", NC*4),
+  printf(fh, "  const double *B_z = &em[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+
+  printf(fh, "  // Calculate E_i B_j. ~%"),
+  printf(fh, "  double E_x_B_y[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(E_x, B_y, E_x_B_y); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double E_x_B_z[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(E_x, B_z, E_x_B_z); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double E_y_B_x[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(E_y, B_x, E_y_B_x); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double E_y_B_z[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(E_y, B_z, E_y_B_z); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double E_z_B_x[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(E_z, B_x, E_z_B_x); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double E_z_B_y[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(E_z, B_y, E_z_B_y); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  for i : 1 thru NC do (
+    printf(fh, "  num_ExB_x[~a] = E_y_B_z[~a] - E_z_B_y[~a]; ~%", i-1, i-1, i-1),
+    printf(fh, "  num_ExB_y[~a] = E_z_B_x[~a] - E_x_B_z[~a]; ~%", i-1, i-1, i-1),
+    printf(fh, "  num_ExB_z[~a] = E_x_B_y[~a] - E_y_B_x[~a]; ~%", i-1, i-1, i-1)
+  ),
+  printf(fh, " ~%"),
+
+  printf(fh, "  // Calculate B_i^2. ~%"),
+  printf(fh, "  binop_mul_~ad_~a_p~a(B_x, B_x, B_x_sq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(B_y, B_y, B_y_sq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(B_z, B_z, B_z_sq); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$
+
+/* Special set of kernels which analytically invert the matrix for 1/|B|^2 for p=1
+   using the basis_inv operator. Significantly faster than the bin_op operator,
+   but only works for p=1 */
+setExB_p1(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, BxSq_e, BySq_e, BzSq_e, 
+   magB2_e, magB2_c, nodes, magB2Corners, 
+   expr_ExB_x, expr_ExB_y, expr_ExB_z],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+  printf(fh, "#include <gkyl_basis_~a_~ax_p~a_inv.h> ~%", basisFun, cdim, polyOrder),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH int ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *num_ExB) ~%{ ~%", funcNm),
+  printf(fh, "  // count:   integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // A:       preallocated LHS matrix. ~%"),
+  printf(fh, "  // rhs:     preallocated RHS vector. ~%"),
+  printf(fh, "  // num_ExB: Input (E x B)_i (numerator of E x B velocity) and B_i^2 (|B|^2 is E x B velocity denominator). ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  // For poly_order = 1, we can analytically invert the matrix and just store the solution ~%"),
+  printf(fh, "  struct gkyl_mat rhs_ExB_x = gkyl_nmat_get(rhs, count); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_ExB_y = gkyl_nmat_get(rhs, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_ExB_z = gkyl_nmat_get(rhs, count+2); ~%"),
+
+  printf(fh, "  // Clear rhs for each component of E x B ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_ExB_x, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_ExB_y, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_ExB_z, 0.0); ~%"),
+
+  printf(fh, "  const double *num_ExB_x = &num_ExB[~a]; ~%", 0),
+  printf(fh, "  const double *num_ExB_y = &num_ExB[~a]; ~%", NC),
+  printf(fh, "  const double *num_ExB_z = &num_ExB[~a]; ~%", NC*2),
+  printf(fh, "  const double *B_x_sq  = &num_ExB[~a]; ~%", NC*3),
+  printf(fh, "  const double *B_y_sq  = &num_ExB[~a]; ~%", NC*4),
+  printf(fh, "  const double *B_z_sq  = &num_ExB[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+
+  BxSq_e : doExpand1(B_x_sq, bC),
+  BySq_e : doExpand1(B_y_sq, bC),
+  BzSq_e : doExpand1(B_z_sq, bC),
+  magB2_e : doExpand1(magB2, bC),
+
+  printf(fh, "  double magB2[~a] = {0.0}; ~%~%", NC),
+  magB2_c : calcInnerProdList(varsC, 1, bC, BxSq_e + BySq_e + BzSq_e),
+  writeCExprs1(magB2, magB2_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "  int cell_avg = 0;~%"),
+  /* For p = 1 |B|^2 guaranteed to be positive if it's positive at the
+     corners. For p = 2, we use the positivity control points (-1, 0, 1) */
+  nodesCorners : getNodes(basisFun, cdim, polyOrder),
+  printf(fh, "  // Check if |B|^2 < 0 at control points. ~%"),
+  magB2Corners : expand(float(evAtNodes(magB2_e,nodesCorners,varsC))),
+  for i : 1 thru length(nodesCorners) do (
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", magB2Corners[i])
+  ),  
+  printf(fh, "  double magB2_inv[~a] = {0.0}; ~%~%", NC),
+  printf(fh, "  if (cell_avg) { ~%"),
+  printf(fh, "  // If |B|^2 < 0 at control points, only use cell average to get 1/|B|^2. ~%"),
+  unit : calcInnerProdList(varsC, 1, bC, 1.0),
+  printf(fh, "  magB2_inv[0] = ~a/magB2[0]; ~%", float(expand(unit[1]*unit[1]))),
+  printf(fh, "  } else { ~%"),
+  printf(fh, "  ~a_~ax_p~a_inv(magB2, magB2_inv); ~%", basisFun, cdim, polyOrder),
+  printf(fh, "  } ~%"),
+
+  printf(fh, "  // Calculate expansions of E x B/|B|^2, which can be calculated free of aliasing errors. ~%"),
+  printf(fh, "  double ExB_x[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double ExB_y[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double ExB_z[~a] = {0.0}; ~%", NC),
+  printf(fh, " ~%"),
+
+  printf(fh, "  binop_mul_~ad_~a_p~a(magB2_inv, num_ExB_x, ExB_x); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(magB2_inv, num_ExB_y, ExB_y); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(magB2_inv, num_ExB_z, ExB_z); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  if (cell_avg) { ~%"),
+  expr_ExB_x : float(expand(append([ExB_x[0]],makelist(0.0,i,1,NC-1)))),
+  expr_ExB_y : float(expand(append([ExB_y[0]],makelist(0.0,i,1,NC-1)))),
+  expr_ExB_z : float(expand(append([ExB_z[0]],makelist(0.0,i,1,NC-1)))),
+
+  for i : 1 thru length(expr_ExB_x) do (
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_x,~a,0,~a); ~%", i-1, expr_ExB_x[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_y,~a,0,~a); ~%", i-1, expr_ExB_y[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_z,~a,0,~a); ~%", i-1, expr_ExB_z[i])
+  ),
+  printf(fh, "  } else { ~%"),
+
+  expr_ExB_x : float(expand(makelist(ExB_x[i],i,0,NC-1))),
+  expr_ExB_y : float(expand(makelist(ExB_y[i],i,0,NC-1))),
+  expr_ExB_z : float(expand(makelist(ExB_z[i],i,0,NC-1))),
+
+  for i : 1 thru length(expr_ExB_x) do (
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_x,~a,0,~a); ~%", i-1, expr_ExB_x[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_y,~a,0,~a); ~%", i-1, expr_ExB_y[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_z,~a,0,~a); ~%", i-1, expr_ExB_z[i])
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  return cell_avg;~%"),
+  printf(fh, "} ~%")
+)$
+
+setExB(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, BxSq_e, BySq_e, BzSq_e, 
+   magB2_e, magB2_c, nodes, magB2Corners, 
+   expr_ExB_x, expr_ExB_y, expr_ExB_z, 
+   ue, un, eq, E],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH int ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *num_ExB) ~%{ ~%", funcNm),
+  printf(fh, "  // count:   integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // A:       preallocated LHS matrix. ~%"),
+  printf(fh, "  // rhs:     preallocated RHS vector. ~%"),
+  printf(fh, "  // num_ExB: Input (E x B)_i (numerator of E x B velocity) and B_i^2 (|B|^2 is E x B velocity denominator). ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  struct gkyl_mat A_ExB_x = gkyl_nmat_get(A, count); ~%"),
+  printf(fh, "  struct gkyl_mat A_ExB_y = gkyl_nmat_get(A, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat A_ExB_z = gkyl_nmat_get(A, count+2); ~%"),
+
+  printf(fh, "  struct gkyl_mat rhs_ExB_x = gkyl_nmat_get(rhs, count); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_ExB_y = gkyl_nmat_get(rhs, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_ExB_z = gkyl_nmat_get(rhs, count+2); ~%"),
+
+  printf(fh, "  // Clear matrix and rhs for each component of E x B ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_ExB_x, 0.0); gkyl_mat_clear(&rhs_ExB_x, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_ExB_y, 0.0); gkyl_mat_clear(&rhs_ExB_y, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_ExB_z, 0.0); gkyl_mat_clear(&rhs_ExB_z, 0.0); ~%"),
+
+  printf(fh, "  const double *num_ExB_x = &num_ExB[~a]; ~%", 0),
+  printf(fh, "  const double *num_ExB_y = &num_ExB[~a]; ~%", NC),
+  printf(fh, "  const double *num_ExB_z = &num_ExB[~a]; ~%", NC*2),
+  printf(fh, "  const double *B_x_sq  = &num_ExB[~a]; ~%", NC*3),
+  printf(fh, "  const double *B_y_sq  = &num_ExB[~a]; ~%", NC*4),
+  printf(fh, "  const double *B_z_sq  = &num_ExB[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+
+  BxSq_e : doExpand1(B_x_sq, bC),
+  BySq_e : doExpand1(B_y_sq, bC),
+  BzSq_e : doExpand1(B_z_sq, bC),
+  magB2_e : doExpand1(magB2, bC),
+
+  printf(fh, "  double magB2[~a] = {0.0}; ~%~%", NC),
+  magB2_c : calcInnerProdList(varsC, 1, bC, BxSq_e + BySq_e + BzSq_e),
+  writeCExprs1(magB2, magB2_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "  int cell_avg = 0;~%"),
+  /* For p = 1 |B|^2 guaranteed to be positive if it's positive at the
+     corners. For p = 2, we use the positivity control points (-1, 0, 1) */
+  nodes : getNodes(basisFun, cdim, polyOrder),
+  magB2Corners : expand(float(evAtNodes(magB2_e,nodes,varsC))),
+  printf(fh, "  // Check if |B|^2 < 0 at control points. ~%"),
+  for i : 1 thru length(nodes) do (
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", magB2Corners[i])
+  ),  
+  printf(fh, "  if (cell_avg) { ~%"),
+  /* Use only the cell average of |B|^2. */
+  for i : 2 thru NC do (
+    printf(fh, "    magB2[~a] = 0.0; ~%", i-1)
+  ),
+  expr_ExB_x : float(expand(append([num_ExB_x[0]],makelist(0.0,i,1,NC-1)))),
+  expr_ExB_y : float(expand(append([num_ExB_y[0]],makelist(0.0,i,1,NC-1)))),
+  expr_ExB_z : float(expand(append([num_ExB_z[0]],makelist(0.0,i,1,NC-1)))),
+
+  for i : 1 thru length(expr_ExB_x) do (
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_x,~a,0,~a); ~%", i-1, expr_ExB_x[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_y,~a,0,~a); ~%", i-1, expr_ExB_y[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_z,~a,0,~a); ~%", i-1, expr_ExB_z[i])
+  ),
+  printf(fh, "  } else { ~%"),
+
+  expr_ExB_x : float(expand(makelist(num_ExB_x[i],i,0,NC-1))),
+  expr_ExB_y : float(expand(makelist(num_ExB_y[i],i,0,NC-1))),
+  expr_ExB_z : float(expand(makelist(num_ExB_z[i],i,0,NC-1))),
+
+  for i : 1 thru length(expr_ExB_x) do (
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_x,~a,0,~a); ~%", i-1, expr_ExB_x[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_y,~a,0,~a); ~%", i-1, expr_ExB_y[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_ExB_z,~a,0,~a); ~%", i-1, expr_ExB_z[i])
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+
+  /* Generate matrix of unknown coefficients */
+  ue : doExpand1(u,bC),
+  un : makelist(u[i],i,0,NC-1),
+  eq : calcInnerProdList(varsC,ue,bC,magB2_e),
+  E  : fullratsimp(coefmatrix(eq,un)),
+  /* declare temp since matrix entries in A are the same for all operations
+     E x B are all being divided by |B|^2 to create E x B/|B|^2 */
+  printf(fh, "  double temp = 0.0; ~%"),
+  /* Matrix is dense so just do a simple write routine */
+  for i : 1 thru NC do (
+    for j : 1 thru NC do (
+      printf(fh,"  temp = ~a; ~%", float(expand(E[i,j]))),
+      printf(fh,"  gkyl_mat_set(&A_ExB_x,~a,~a,~a); ~%", i-1, j-1, temp),
+      printf(fh,"  gkyl_mat_set(&A_ExB_y,~a,~a,~a); ~%", i-1, j-1, temp),
+      printf(fh,"  gkyl_mat_set(&A_ExB_z,~a,~a,~a); ~%", i-1, j-1, temp)
+    )
+  ),
+  printf(fh, "  return cell_avg;~%"),
+  printf(fh, "} ~%")
+)$
+
+copyExB(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH void ~a(int count, struct gkyl_nmat *x, const double *em, int* cell_avg_magB2, double* GKYL_RESTRICT ExB) ~%{ ~%", funcNm),
+  printf(fh, "  // count:          Integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // x:              Input solution vector. ~%"),
+  printf(fh, "  // em:             Input electromagnetic fields. ~%"),
+  printf(fh, "  // cell_avg_magB2: Input flag for cell average if 1/|B|^2 only used cell averages. ~%"),
+  printf(fh, "  // ExB:            E x B velocity = E x B/|B|^2. ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  struct gkyl_mat x_ExBx = gkyl_nmat_get(x, count); ~%"),
+  printf(fh, "  struct gkyl_mat x_ExBy = gkyl_nmat_get(x, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat x_ExBz = gkyl_nmat_get(x, count+2); ~%"),
+
+  printf(fh, "  double *ExB_x = &ExB[~a]; ~%", 0),
+  printf(fh, "  double *ExB_y = &ExB[~a]; ~%", NC),
+  printf(fh, "  double *ExB_z = &ExB[~a]; ~%", NC*2),
+  printf(fh, " ~%"),
+
+  for i : 1 thru NC do (
+    printf(fh,"  ExB_x[~a] = gkyl_mat_get(&x_ExBx,~a,0); ~%", i-1, i-1),
+    printf(fh,"  ExB_y[~a] = gkyl_mat_get(&x_ExBy,~a,0); ~%", i-1, i-1),
+    printf(fh,"  ExB_z[~a] = gkyl_mat_get(&x_ExBz,~a,0); ~%", i-1, i-1)
+  ),
+
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$

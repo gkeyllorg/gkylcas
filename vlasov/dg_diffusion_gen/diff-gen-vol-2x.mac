@@ -1,0 +1,30 @@
+load("core/recovery.mac")$
+load("core/modal-basis.mac")$
+load(stringproc)$
+fpprec : 24$
+
+genDiffusionGenVol2x(fh,bName,dim,polyOrder) := block([vars,ba,numBasis],
+  [vars,ba] : loadBasis(bName,dim,polyOrder),
+  numBasis : length(ba),
+
+  printf(fh, "GKYL_CU_DH double~%"),
+  printf(fh, sconcat("dg_diffusion_gen_vol_2x_", bName, "_p", polyOrder,
+      "(const double* w, const double* dx,~%")),
+  printf(fh, "  const double* Dij, const double* qIn, double* GKYL_RESTRICT out) ~%"),
+  printf(fh, "{~%"),
+  printf(fh, "  // w[NDIM]: Cell-center coordinates~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing~%"),
+  printf(fh, "  // Dij: Diffusion coefficient in the center cell~%"),
+  printf(fh, "  // q: Input field in the left cell~%"),
+  printf(fh, "  // out: Incremented output~%~%"),
+  printf(fh, "  const double Jxx = 4/dx[0]/dx[0];~%"),
+  printf(fh, "  const double Jxy = 4/dx[0]/dx[1];~%"),
+  printf(fh, "  const double Jyy = 4/dx[1]/dx[1];~%~%"),
+  
+  printf(fh, "  const double* Dxx = &Dij[0];~%"),
+  printf(fh, "  const double* Dxy = &Dij[~a];~%", numBasis),
+  printf(fh, "  const double* Dyy = &Dij[~a];~%~%", 2*numBasis),
+  
+  printf(fh, "  return Jxx*Dxx[0] + Jxy*Dxy[0] + Jyy*Dyy[0];~%"),
+  printf(fh, "}~%")
+)$

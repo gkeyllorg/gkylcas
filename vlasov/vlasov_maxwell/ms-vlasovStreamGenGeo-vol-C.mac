@@ -1,0 +1,46 @@
+load("vlasov/vlasov_maxwell/vlasovStreamGenGeoFuncs-vol-C.mac")$
+load(stringproc)$
+/* This script calls the functions which calculate the
+   updates from the volume term due to the streaming
+   term v.grad(f) in Vlasov-Maxwell equations. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 3$
+minVdim_Ser : 3$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser"]$
+minPolyOrder : [minPolyOrder_Ser]$
+maxPolyOrder : [maxPolyOrder_Ser]$
+minCdim      : [minCdim_Ser]$
+minVdim      : [minVdim_Ser]$
+maxCdim      : [maxCdim_Ser]$
+maxVdim      : [maxVdim_Ser]$
+
+/* Compute the volume contribution from ONLY the streaming term (for use in neutral particle simulations) */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for v : max(c,minVdim[bInd]) thru maxVdim[bInd] do (
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        disp(printf(false,sconcat("Creating volume VlasovStream ",bName[bInd]," ~ax~av p~a"),c,v,polyOrder)),
+        fname : sconcat("~/max-out/vlasov_stream_gen_geo_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        funcName : sconcat("vlasov_stream_gen_geo_vol_", c, "x", v, "v_", bName[bInd]),
+        calcVlasovStreamGenGeoVolUpdater(fh, funcName, c, v, bName[bInd], polyOrder),
+        close(fh)
+      )
+    )
+  )
+);

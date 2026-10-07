@@ -1,0 +1,306 @@
+/**
+ * Operators applied inside the integral of the array_integrate updater. 
+ *
+ */
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+fpprec : 24$
+
+arrayIntegrate_none(fh, funcNm, dim, basisFun, polyOrder) := block(
+  [vars,basis,numB,f_c,f_e,intf],
+
+  printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out) ~%{ ~%", funcNm),
+
+  [vars, basis] : loadBasis(basisFun, dim, polyOrder),
+  numB : length(basis),
+
+  f_c : makelist(fIn[coff+i-1], i, 1, numB),
+  f_e : doExpand(f_c, basis),
+
+  intf : fullratsimp(innerProd(vars,1,1,f_e)),
+
+  /* vol includes the (prod_{i=1}^dim dx_i/2) factor. */
+  printf(fh, "  for (unsigned c=0; c<num_comp; ++c)~%"),
+  printf(fh, "    out[c] += ~a*vol;~%",float(expand(subst(coff=c*numB,intf)))),
+
+  printf(fh, "}~%"),
+  printf(fh, "~%")
+)$
+
+arrayIntegrate_abs(fh, funcNm, dim, basisFun, polyOrder) := block(
+  [vars,basis,numB,f_c,f_e,intf],
+
+  printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out) ~%{ ~%", funcNm),
+
+  [vars, basis] : loadBasis(basisFun, dim, polyOrder),
+  numB : length(basis),
+
+  f_c : makelist(fIn[coff+i-1], i, 1, numB),
+  f_e : doExpand(f_c, basis),
+
+  intf : fullratsimp(innerProd(vars,1,1,f_e)),
+
+  /* vol includes the (prod_{i=1}^dim dx_i/2) factor. */
+  printf(fh, "  for (unsigned c=0; c<num_comp; ++c)~%"),
+  printf(fh, "    out[c] += fabs(~a)*vol;~%",float(expand(subst(coff=c*numB,intf)))),
+
+  printf(fh, "}~%"),
+  printf(fh, "~%")
+)$
+
+arrayIntegrate_sq(fh, funcNm, dim, basisFun, polyOrder) := block(
+  [vars,basis,numB,f_c,f_e,intf],
+
+  printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out) ~%{ ~%", funcNm),
+
+  [vars, basis] : loadBasis(basisFun, dim, polyOrder),
+  numB : length(basis),
+
+  f_c : makelist(fIn[c*numB+i-1], i, 1, numB),
+  f_e : doExpand(f_c, basis),
+
+  intfsq : fullratsimp(innerProd(vars,1,1,(f_e)^2)),
+
+  /* Replace exponentials and write out. */
+  exprStr : string(float(expand(intfsq))),
+  subList : [],
+  for k : 0 thru numB-1 do (
+    j : c*numB+k,
+    subList : endcons([sconcat("fIn[",j,"]^2"),sconcat("(fIn[",j,"]*fIn[",j,"])")],subList)
+  ),
+  for s : 1 thru length(subList) do (
+    exprStr : ssubst(subList[s][2],subList[s][1],exprStr)
+  ),
+
+  /* vol includes the (prod_{i=1}^dim dx_i/2) factor. */
+  printf(fh, "  for (unsigned c=0; c<num_comp; ++c) {~%"),
+  printf(fh, "    out[c] += (~a)*vol;~%",exprStr),
+  printf(fh, "  }~%"),
+
+  printf(fh, "}~%"),
+  printf(fh, "~%")
+)$
+
+arrayIntegrate_sq_weighted(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,vSub,numB,f_e,w_e,intwf,volumeFac,exprStr,subList,k,s],
+  kill(varsC, basisC),
+
+  pdim : cdim + vdim,
+
+  if (vdim > 0) then (
+    if (basisFun = "gkhyb") then (
+      [varsC, bC, varsP, bP, vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder)
+    ) else (
+      [varsC, bC, varsP, bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+    )
+  ) else (
+    [varsP, bP] : loadBasis(basisFun, pdim, polyOrder),
+    varsC : varsP,
+    bC : bP
+  ),
+  numB : length(bP),
+
+  printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out) ~%{ ~%", funcNm),
+  printf(fh, "~%"),
+
+  f_e : doExpand1(fIn,bP),
+  w_e : doExpand1(weight,bC),
+
+  intwf : fullratsimp(innerProd(varsP,w_e,f_e,f_e)),
+
+  /* vol includes the (prod_{i=1}^dim dx_i/2) factor. */
+  volumeFac : vol*content(intwf)[1],
+  printf(fh, "  const double volFac = ~a;~%", float(volumeFac)),
+  printf(fh, "~%"),
+
+  /* Replace exponentials and write out. */
+  exprStr : string(float(fullratsimp(intwf/content(intwf)[1]))*volFac),
+  subList : [],
+  for k : 0 thru numB-1 do (
+    subList : endcons([sconcat("fIn[",k,"]^2"),sconcat("(fIn[",k,"]*fIn[",k,"])")],subList)
+  ),
+  for s : 1 thru length(subList) do (
+    exprStr : ssubst(subList[s][2],subList[s][1],exprStr)
+  ),
+  printf(fh, "  ~a += ~a;~%", out[0], exprStr),
+
+  printf(fh, "}~%"),
+  printf(fh, "~%")
+  
+)$
+
+arrayIntegrate_grad_sq(fh, funcNm, dim, basisFun, polyOrder) := block(
+  [vars,basis,f_e,gradfSq_e,dir,volumeFac,exprStr,subList,k,s],
+  kill(varsC, basisC),
+
+  [vars, basis] : loadBasis(basisFun, dim, polyOrder),
+  numB : length(basis),
+
+  printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out) ~%{ ~%", funcNm),
+  printf(fh, "~%"),
+
+  f_e : doExpand1(fIn,basis),
+  gradfSq_e : 0,
+
+  for dir : 1 thru dim do (
+    df_e      : -diff(f_e,vars[dir]),
+    gradfSq_e : gradfSq_e + (4./dxSq[dir-1])*fullratsimp(innerProd(vars,1,1,df_e^2))
+  ),
+
+  volumeFac : vol, /* This includes the (prod_{i=1}^dim dx_i/2) factor. */
+  volumeFac : volumeFac*content(gradfSq_e)[1],
+  printf(fh, "  const double volFac = ~a;~%", float(volumeFac)),
+  printf(fh, "~%"),
+
+  /* Replace exponentials and write out. */
+  exprStr : string(float(fullratsimp(gradfSq_e/content(gradfSq_e)[1]))*volFac),
+  subList : [],
+  for k : 0 thru numB-1 do (
+    subList : endcons([sconcat("fIn[",k,"]^2"),sconcat("(fIn[",k,"]*fIn[",k,"])")],subList)
+  ),
+  for s : 1 thru length(subList) do (
+    exprStr : ssubst(subList[s][2],subList[s][1],exprStr)
+  ),
+  printf(fh, "  ~a += ~a;~%", out[0], exprStr),
+
+  printf(fh, "}~%"),
+  printf(fh, "~%")
+  
+)$
+
+arrayIntegrate_gradperp_sq(fh, funcNm, dim, basisFun, polyOrder) := block(
+  [dimPerp,vars,basis,f_e,gradfSq_e,dir,volumeFac,exprStr,subList,k,s],
+  kill(varsC, basisC),
+
+  dimPerp : 2,
+
+  [vars, basis] : loadBasis(basisFun, dim, polyOrder),
+  numB : length(basis),
+
+  printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out) ~%{ ~%", funcNm),
+  printf(fh, "~%"),
+
+  f_e : doExpand1(fIn,basis),
+  gradfSq_e : 0,
+
+  for dir : 1 thru dimPerp do (
+    df_e      : -diff(f_e,vars[dir]),
+    gradfSq_e : gradfSq_e + fullratsimp(innerProd(vars,1,1,(4./dxSq[dir-1])*df_e^2))
+  ),
+
+  volumeFac : vol, /* This includes the (prod_{i=1}^dim dx_i/2) factor. */
+  volumeFac : volumeFac*content(gradfSq_e)[1],
+  printf(fh, "  const double volFac = ~a;~%", float(volumeFac)),
+  printf(fh, "~%"),
+
+  /* Replace exponentials and write out. */
+  exprStr : string(float(fullratsimp(gradfSq_e/content(gradfSq_e)[1]))*volFac),
+  subList : [],
+  for k : 0 thru numB-1 do (
+    subList : endcons([sconcat("fIn[",k,"]^2"),sconcat("(fIn[",k,"]*fIn[",k,"])")],subList)
+  ),
+  for s : 1 thru length(subList) do (
+    exprStr : ssubst(subList[s][2],subList[s][1],exprStr)
+  ),
+  printf(fh, "  ~a += ~a;~%", out[0], exprStr),
+
+  printf(fh, "}~%"),
+  printf(fh, "~%")
+  
+)$
+
+arrayIntegrate_eps_gradperp_sq(fh, funcNm, dim, basisFun, polyOrder) := block(
+  [dimPerp,vars,basis,f_e,dir,volumeFac,exprStr,subList,k,s],
+  kill(varsC, basisC),
+
+  dimPerp : dim-1,
+
+  [vars, basis] : loadBasis(basisFun, dim, polyOrder),
+  numB : length(basis),
+
+  varsPerp : makelist(vars[d],d,1,dimPerp),
+
+  printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out) ~%{ ~%", funcNm),
+  printf(fh, "~%"),
+
+  /* Pointers to components of (symmetric) permittivity tensor. */
+  varCombos : listify(cartesian_product(setify(varsPerp),setify(varsPerp))),
+  epsSup_l  : unique(makelist(sort(varCombos[i]),i,1,length(varCombos))),
+  eps : [],  eps_e : [],
+  for i : 1 thru dimPerp do (
+    eps   : endcons([],eps),
+    eps_e : endcons([],eps_e),
+    for j : 1 thru dimPerp do (
+      varsSorted : sort([varsPerp[i],varsPerp[j]]),
+      epsNew : eval_string(simplode(["eps",varsSorted[1],varsSorted[2]])),
+      isNew : true,
+      for k : 1 thru length(eps) do (
+        if (isNew) and (length(sublist(eps[k], lambda([x], x=epsNew)))>0) then ( isNew : false )
+      ),
+      eps[i] : endcons(epsNew,eps[i]),
+      if isNew then (
+        idx : sublist_indices(epsSup_l, lambda([w], w=varsSorted))[1],
+        printf(fh, "  const double *~a = &weight[~a];~%", eps[i][j], (idx-1)*numB)
+      ),
+      eps_c : makelist(eps[i][j][k-1],k,1,numB),
+      eps_e[i] : endcons(doExpand(eps_c,basis), eps_e[i])
+    )
+  ),
+  printf(fh, "~%"),
+
+  /* Product of cell lengths. */
+  rdx_ij : [],
+  for i : 1 thru dimPerp do (
+    rdx_ij : endcons([],rdx_ij),
+    for j : 1 thru dimPerp do (
+      ijSorted : sort([i-1,j-1]),
+      rdxNew : eval_string(simplode([rdx,ijSorted[1],ijSorted[2]])),
+      isNew : true,
+      for k : 1 thru length(rdx_ij) do (
+        if (isNew) and (length(sublist(rdx_ij[k], lambda([x], x=rdxNew)))>0) then ( isNew : false )
+      ),
+      rdx_ij[i] : endcons(rdxNew,rdx_ij[i]),
+      if isNew then (
+        if (i = j) then (
+          printf(fh, "  double ~a = 4.0/dxSq[~a];~%", rdx_ij[i][j], i-1)
+        ) else (
+          printf(fh, "  double ~a = 4.0/sqrt(dxSq[~a]*dxSq[~a]);~%", rdx_ij[i][j], i-1, j-1)
+        )
+      )
+    )
+  ),
+  printf(fh, "~%"),
+
+  /* List of substitutions to replace powers. */
+  subList : [],
+  for k : 0 thru numB-1 do (
+    subList : endcons([sconcat("fIn[",k,"]^2"),sconcat("(fIn[",k,"]*fIn[",k,"])")],subList)
+  ),
+
+  f_e : doExpand1(fIn,basis),
+  integrand_e : 0,
+
+  for i : 1 thru dimPerp do (
+    for j : 1 thru dimPerp do (
+      epsdf_e : eps_e[i][j]*diff(f_e,vars[i])*diff(f_e,vars[j]),
+      epsdf_c : rdx_ij[i][j]*calcInnerProdList(vars,1,basis,epsdf_e),
+
+      integrand_e : integrand_e+doExpand(epsdf_c,basis)
+    )
+  ),
+
+  intOut : fullratsimp(innerProd(vars,1,1,integrand_e)),
+
+  expr : vol*float(fullratsimp(intOut)),
+  if expr # 0.0 then (
+    exprStr : string(expr),
+    for s : 1 thru length(subList) do (
+      exprStr : ssubst(subList[s][2],subList[s][1],exprStr)
+    ),
+    printf(fh, "  ~a += ~a; ~%", out[0], exprStr)
+  ),
+
+  printf(fh, "}~%"),
+  printf(fh, "~%")
+  
+)$

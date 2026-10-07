@@ -1,0 +1,79 @@
+/* This script generates the kernels for the source terms in the
+   fluid equations of the parallel-kinetic-perpendicular-moment (pkpm) model,
+   For p_perp fluid equation, momentum sources are rho*E + rho*u x B 
+   Perpendicular pressure source is nu*rho*vth^2 - nu*p_perp + p_perp*div(u) - p_perp bb : grad(u) */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+fpprec : 24$
+
+calcEulerPKPMSource(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rho_e, Ex_e, Ey_e, Ez_e, Bx_e, By_e, Bz_e, 
+   rhoux_e, rhouy_e, rhouz_e, rhou_perp_x_e, rhou_perp_y_e, rhou_perp_z_e, 
+   p_perp_e, nu_e, nu_vth_sq_e, 
+   incr_rhoux, incr_rhouy, incr_rhouz, incr_E_perp],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a_p~a(const double *qmem, const double *vlasov_pkpm_moms, const double *euler_pkpm, double* out) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // qmem:             q/m*EM fields.~%"),
+  printf(fh, "  // vlasov_pkpm_moms: [rho, p_parallel, q_parallel], Moments computed from kinetic equation in pkpm model.~%"),
+  printf(fh, "  // euler_pkpm:       Input fluid variables.~%"),
+  printf(fh, "  // out:              Output increment"),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho = &vlasov_pkpm_moms[~a]; ~%", 0),
+  printf(fh, "~%"),
+  printf(fh, "  const double *Ex = &qmem[~a]; ~%", 0*NC),
+  printf(fh, "  const double *Ey = &qmem[~a]; ~%", 1*NC),
+  printf(fh, "  const double *Ez = &qmem[~a]; ~%", 2*NC),
+  printf(fh, "  const double *Bx = &qmem[~a]; ~%", 3*NC),
+  printf(fh, "  const double *By = &qmem[~a]; ~%", 4*NC),
+  printf(fh, "  const double *Bz = &qmem[~a]; ~%", 5*NC),
+  printf(fh, "~%"),
+  printf(fh, "  const double *rhoux = &euler_pkpm[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhouy = &euler_pkpm[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouz = &euler_pkpm[~a]; ~%", 2*NC),  
+  printf(fh, "~%"),
+
+  printf(fh, "  double *outrhoux = &out[~a]; ~%", 0*NC),
+  printf(fh, "  double *outrhouy = &out[~a]; ~%", 1*NC),
+  printf(fh, "  double *outrhouz = &out[~a]; ~%", 2*NC),
+  printf(fh, "~%"),
+
+  rho_e : doExpand1(rho, bC),
+  Ex_e : doExpand1(Ex, bC),
+  Ey_e : doExpand1(Ey, bC),
+  Ez_e : doExpand1(Ez, bC),  
+  Bx_e : doExpand1(Bx, bC),
+  By_e : doExpand1(By, bC),
+  Bz_e : doExpand1(Bz, bC),  
+
+  rhoux_e : doExpand1(rhoux, bC),
+  rhouy_e : doExpand1(rhouy, bC),
+  rhouz_e : doExpand1(rhouz, bC),
+
+  incr_rhoux : calcInnerProdList(varsC, 1, bC, rho_e*Ex_e + rhouy_e*Bz_e - rhouz_e*By_e),
+  writeCIncrExprs1(outrhoux, incr_rhoux),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  incr_rhouy : calcInnerProdList(varsC, 1, bC, rho_e*Ey_e + rhouz_e*Bx_e - rhoux_e*Bz_e),
+  writeCIncrExprs1(outrhouy, incr_rhouy),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  incr_rhouz : calcInnerProdList(varsC, 1, bC, rho_e*Ez_e + rhoux_e*By_e - rhouy_e*Bx_e),
+  writeCIncrExprs1(outrhouz, incr_rhouz),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "} ~%")
+)$

@@ -1,0 +1,169 @@
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+load("scifac")$
+load("core/nodal_operations/nodal_functions.mac")$
+fpprec : 24$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minDim_Ser : 1$
+maxDim_Ser : 6$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minDim_Tensor : 2$
+maxDim_Tensor : 4$
+
+/* Hybrid basis. */
+minCdim_hyb : 1$
+maxCdim_hyb : 3$
+vDims_hyb : [[1,2,3], [1,2,3], [1,2,3]]$  /* Vdim for each of Cdim. */
+
+/* GK hybrid basis. */
+minCdim_gkhyb : 1$
+maxCdim_gkhyb : 3$
+vDims_gkhyb : [[1,2], [2], [2]]$  /* Vdim for each of Cdim. */
+
+/* GK hybrid vel basis. */
+vDims_gkhyb_vel : [1,2]$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minDim       : [minDim_Ser, minDim_Tensor]$
+maxDim       : [maxDim_Ser, maxDim_Tensor]$
+
+bNameHyb   : ["hyb","gkhyb"]$
+minCdimHyb : [minCdim_hyb, minCdim_gkhyb]$
+maxCdimHyb : [maxCdim_hyb, maxCdim_gkhyb]$
+vDims      : [vDims_hyb, vDims_gkhyb]$
+
+bNameHybVel : ["gkhyb_vel"]$
+vDimsHybVel : [vDims_gkhyb_vel]$
+
+writeNod2ModKernel(dim, basisName, pOrder) := block([nodes,numNodes,nodToMod,fmod_e],
+  printf(fh, "GKYL_CU_DH~%"),
+  printf(fh, "void~%"),
+  printf(fh, "nodal_to_modal_~ad_~a_p~a(const double *fnodal, double *fmodal)~%", dim, basisName, pOrder),
+  printf(fh, "{~%"),
+  /* Get equi-distant node locations */
+  if (dim = 6 and pOrder = 1) then (
+    nodes : getNodes("tensor", dim, pOrder)
+  )
+  else (
+    nodes : getNodes(basisName, dim, pOrder)
+  ),
+  numNodes : length(nodes),
+
+  /* Get modal expansion from nodal points. */
+  nodToMod : calcNodToModWithNodes(basisName, dim, pOrder, nodes),
+  fmod_e : gcfac(fullratsimp(nodToMod . makelist(fnodal[i-1],i,1,numNodes))),
+  fmod_e : makelist(fmod_e[i][1],i,1,numNodes),
+  /* Write coefficients of surface expansion fupwind. */
+  /* Clever factorization is possible for pOrder = 1, but for higher
+     polynomial orders, factorization is *too* clever and can lead to 
+     deeply nested parentheses, not ideal for compiler optimizations */
+  if (pOrder = 1) then (
+    writeCExprsNoExpand1(fmodal, fmod_e)
+  ) else (
+    writeCExprs1(fmodal, fmod_e)
+  ),
+  printf(fh, "}~%~%")
+)$
+
+writeNod2ModKernelHyb(cdim, vdim, basisName) := block([nodes,numNodes,nodToMod,fmod_e],
+  printf(fh, "GKYL_CU_DH~%"),
+  printf(fh, "void~%"),
+  printf(fh, "nodal_to_modal_~ax~av_~a_p1(const double *fnodal, double *fmodal)~%", cdim, vdim, basisName),
+  printf(fh, "{~%"),
+  /* Get equi-distant node locations */
+  if basisName = "hyb" then (
+    nodes : getNodesHyb(cdim, vdim)
+  ) elseif basisName = "gkhyb" then (
+    nodes : getNodesGkHyb(cdim, vdim)
+  ),
+  numNodes : length(nodes),
+
+  /* Get modal expansion from nodal points. */
+  nodToMod : calcNodToModWithNodesHyb(basisName, cdim, vdim, nodes),
+  fmod_e : gcfac(fullratsimp(nodToMod . makelist(fnodal[i-1],i,1,numNodes))),
+  fmod_e : makelist(fmod_e[i][1],i,1,numNodes),
+  writeCExprs1(fmodal, fmod_e),
+  printf(fh, "}~%~%")
+)$
+
+writeNod2ModKernelHybVel(vdim, basisName) := block([cdim,nodes,numNodes,nodToMod,fmod_e],
+  cdim : 0,
+  printf(fh, "GKYL_CU_DH~%"),
+  printf(fh, "void~%"),
+  printf(fh, "nodal_to_modal_~ad_~a_p1(const double *fnodal, double *fmodal)~%", vdim, basisName),
+  printf(fh, "{~%"),
+  /* Get equi-distant node locations */
+  if basisName = "gkhyb_vel" then (
+    nodes : getNodesGkHyb(cdim, vdim)
+  ),
+  numNodes : length(nodes),
+
+  /* Get modal expansion from nodal points. */
+  nodToMod : calcNodToModWithNodesHyb(basisName, cdim, vdim, nodes),
+  fmod_e : gcfac(fullratsimp(nodToMod . makelist(fnodal[i-1],i,1,numNodes))),
+  fmod_e : makelist(fmod_e[i][1],i,1,numNodes),
+  writeCExprs1(fmodal, fmod_e),
+  printf(fh, "}~%~%")
+)$
+
+/* Generate kernels for modal-to-nodal transform for regular bases. */
+for bInd : 1 thru length(bName) do (
+  fname : sconcat("~/max-out/basis_nodal_to_modal_",bName[bInd], ".c"),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_basis_~a_kernels.h>~%", bName[bInd]),
+
+  for d : minDim[bInd] thru maxDim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      writeNod2ModKernel(d, bName[bInd], polyOrder)
+    )
+  ),
+  close(fh)
+);
+
+/* Generate kernels for modal-to-nodal transform for hybrid bases. */
+for bInd : 1 thru length(bNameHyb) do (
+  fname : sconcat("~/max-out/basis_nodal_to_modal_",bNameHyb[bInd], ".c"),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_basis_~a_kernels.h>~%", bNameHyb[bInd]),
+
+  for c : minCdimHyb[bInd] thru maxCdimHyb[bInd] do (
+    vmin : xreduce(min,vDims[bInd][c]),
+    vmax : xreduce(max,vDims[bInd][c]),
+    for v : vmin thru vmax do (
+      writeNod2ModKernelHyb(c, v, bNameHyb[bInd])
+    )
+  ),
+  close(fh)
+);
+
+/* Generate kernels for modal-to-nodal transform for hybrid vel bases. */
+for bInd : 1 thru length(bNameHybVel) do (
+  fname : sconcat("~/max-out/basis_nodal_to_modal_",bNameHybVel[bInd], ".c"),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_basis_~a_kernels.h>~%", bNameHybVel[bInd]),
+
+  vmin : xreduce(min,vDimsHybVel[bInd]),
+  vmax : xreduce(max,vDimsHybVel[bInd]),
+  for v : vmin thru vmax do (
+    writeNod2ModKernelHybVel(v, bNameHybVel[bInd])
+  ),
+  close(fh)
+);

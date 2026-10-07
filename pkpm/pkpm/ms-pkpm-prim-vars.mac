@@ -1,0 +1,62 @@
+load("pkpm/pkpm/pkpm-prim-vars.mac")$
+load(stringproc)$
+/* This script calls the functions which generate the kernels for calculating the primitive 
+   variables using weak division required to update the PKPM system. Primitive variables include:
+   1. u_i (flow velocity) 
+   2. T_perp_over_m (T_perp/m)
+   3. T_perp_over_m_inv (m/T_perp) 
+   Along with div(p_par b)/rho for use in the pressure force. */
+
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 2$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      disp(printf(false,sconcat("Creating pkpm prim vars funcs ",bName[bInd]," ~axp~a"),d,polyOrder)),
+
+      fname : sconcat("~/max-out/pkpm_vars_set_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("pkpm_vars_set_",  d, "x_", bName[bInd], "_p", polyOrder),
+      if (polyOrder = 1) then (
+        setPKPMPrimVars_p1(fh, funcName, d, bName[bInd], polyOrder)
+      )
+      else (
+        setPKPMPrimVars(fh, funcName, d, bName[bInd], polyOrder)
+      ),
+      close(fh),
+
+      fname : sconcat("~/max-out/pkpm_vars_copy_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("pkpm_vars_copy_",  d, "x_", bName[bInd], "_p", polyOrder),
+      copyPKPMPrimVars(fh, funcName, d, bName[bInd], polyOrder),
+      close(fh)
+    )
+  )
+);

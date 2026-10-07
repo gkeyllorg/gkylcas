@@ -1,0 +1,127 @@
+/* Compute the volume expansion of the cotangent vectors 
+   e^i = g^ij e_j for use in volume kernels of general geometry neutrals. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("util_maxima/utilities.mac")$
+load(stringproc)$
+load("scifac")$
+fpprec : 24$
+
+dvdx : [dv0dx0, dv1dx1, dv2dx2]$
+wdx  : [w0dx0, w1dx1, w2dx2]$
+dv11 : [dv10, dv11, dv12]$
+vc   : [vx_c, vy_c, vz_c]$
+
+/* Helper function for switching to eta = (v - w)/(dv/2) coordinates */
+vTransSubs : [vvx=vx*dv1/2+wv1, vvy=vy*dv2/2+wv2, vvz=vz*dv3/2+wv3]$
+
+cidx(cdim)      := makelist(i,i,0,cdim-1)$
+vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+
+calcDualsGenGeo(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, varsP, bP, NP, NC, varsV, 
+   cv, surfVars, surfVars_conf, bSurf_p1, bSurf_conf_p1, cid, vid, 
+   gix_e, giy_e, giz_e, 
+   e_1x_e, e_1y_e, e_1z_e, 
+   e_2x_e, e_2y_e, e_2z_e, 
+   e_3x_e, e_3y_e, e_3z_e, evPoint, 
+   ei_x_surf_c, ei_y_surf_c, ei_z_surf_c,  
+   ei_x_surf_e, ei_y_surf_e, ei_z_surf_e, 
+   alpha_surf_c],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+  NC : length(bC),
+
+  printf(fh, "GKYL_CU_DH void ~a(const double *tvComp, const double *gij, double* GKYL_RESTRICT cot_vec) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // tvComp[~a]:  Components for tangent basis vectors.~%", NC*9),
+  printf(fh, "  // gij[~a]:     Contravariant components of metric tensor.~%", NC*6),
+  printf(fh, "  // cot_vec[~a]: Output volume expansion of components of cotangent vectors.~%", NC*9),
+  printf(fh, "~%"),
+
+  /* Need to construct e^i cotangent vectors in the volume
+     e^i = g^ij . e_j = (g^ix e_1x + g^iy e_2x + g^iz e_3x, 
+                         g^ix e_1y + g^iy e_2y + g^iz e_3y, 
+                         g^ix e_1z + g^iy e_2z + g^iz e_3z)  */ 
+  printf(fh, "  const double *gxx = &gij[~a]; ~%", NC*0),
+  printf(fh, "  const double *gxy = &gij[~a]; ~%", NC*1),
+  printf(fh, "  const double *gxz = &gij[~a]; ~%", NC*2),
+  printf(fh, "  const double *gyy = &gij[~a]; ~%", NC*3),
+  printf(fh, "  const double *gyz = &gij[~a]; ~%", NC*4),
+  printf(fh, "  const double *gzz = &gij[~a]; ~%", NC*5),
+  printf(fh, "~%"),
+  printf(fh, "  const double *e_1x = &tvComp[~a]; ~%", NC*0),
+  printf(fh, "  const double *e_1y = &tvComp[~a]; ~%", NC*1),
+  printf(fh, "  const double *e_1z = &tvComp[~a]; ~%", NC*2),
+  printf(fh, "  const double *e_2x = &tvComp[~a]; ~%", NC*3),
+  printf(fh, "  const double *e_2y = &tvComp[~a]; ~%", NC*4),
+  printf(fh, "  const double *e_2z = &tvComp[~a]; ~%", NC*5),
+  printf(fh, "  const double *e_3x = &tvComp[~a]; ~%", NC*6),
+  printf(fh, "  const double *e_3y = &tvComp[~a]; ~%", NC*7),
+  printf(fh, "  const double *e_3z = &tvComp[~a]; ~%", NC*8),
+  printf(fh, "~%"),
+  /* expand the needed metric coefficients and tangent vectors */
+  gxx_e : doExpand1(gxx, bC),
+  gxy_e : doExpand1(gxy, bC),
+  gxz_e : doExpand1(gxz, bC),
+  gyy_e : doExpand1(gyy, bC),
+  gyz_e : doExpand1(gyz, bC),
+  gzz_e : doExpand1(gzz, bC),
+  e_1x_e : doExpand1(e_1x, bC),
+  e_1y_e : doExpand1(e_1y, bC),
+  e_1z_e : doExpand1(e_1z, bC),
+  e_2x_e : doExpand1(e_2x, bC),
+  e_2y_e : doExpand1(e_2y, bC),
+  e_2z_e : doExpand1(e_2z, bC),
+  e_3x_e : doExpand1(e_3x, bC),
+  e_3y_e : doExpand1(e_3y, bC),
+  e_3z_e : doExpand1(e_3z, bC),
+
+  printf(fh, "  double *e1_x = &cot_vec[~a]; ~%", NC*0),
+  printf(fh, "  double *e1_y = &cot_vec[~a]; ~%", NC*1),
+  printf(fh, "  double *e1_z = &cot_vec[~a]; ~%", NC*2),
+  printf(fh, "  double *e2_x = &cot_vec[~a]; ~%", NC*3),
+  printf(fh, "  double *e2_y = &cot_vec[~a]; ~%", NC*4),
+  printf(fh, "  double *e2_z = &cot_vec[~a]; ~%", NC*5),
+  printf(fh, "  double *e3_x = &cot_vec[~a]; ~%", NC*6),
+  printf(fh, "  double *e3_y = &cot_vec[~a]; ~%", NC*7),
+  printf(fh, "  double *e3_z = &cot_vec[~a]; ~%", NC*8),
+  printf(fh, "~%"),
+
+  e1_x_c : calcInnerProdList(varsC, 1, bC, gxx_e*e_1x_e + gxy_e*e_2x_e + gxz_e*e_3x_e), 
+  e1_y_c : calcInnerProdList(varsC, 1, bC, gxx_e*e_1y_e + gxy_e*e_2y_e + gxz_e*e_3y_e), 
+  e1_z_c : calcInnerProdList(varsC, 1, bC, gxx_e*e_1z_e + gxy_e*e_2z_e + gxz_e*e_3z_e), 
+
+  e2_x_c : calcInnerProdList(varsC, 1, bC, gxy_e*e_1x_e + gyy_e*e_2x_e + gyz_e*e_3x_e), 
+  e2_y_c : calcInnerProdList(varsC, 1, bC, gxy_e*e_1y_e + gyy_e*e_2y_e + gyz_e*e_3y_e), 
+  e2_z_c : calcInnerProdList(varsC, 1, bC, gxy_e*e_1z_e + gyy_e*e_2z_e + gyz_e*e_3z_e), 
+
+  e3_x_c : calcInnerProdList(varsC, 1, bC, gxz_e*e_1x_e + gyz_e*e_2x_e + gzz_e*e_3x_e), 
+  e3_y_c : calcInnerProdList(varsC, 1, bC, gxz_e*e_1y_e + gyz_e*e_2y_e + gzz_e*e_3y_e), 
+  e3_z_c : calcInnerProdList(varsC, 1, bC, gxz_e*e_1z_e + gyz_e*e_2z_e + gzz_e*e_3z_e),   
+
+  writeCExprsNoExpand1(e1_x, gcfac(float(expand(e1_x_c)))),
+  printf(fh, "~%"),
+  writeCExprsNoExpand1(e1_y, gcfac(float(expand(e1_y_c)))),
+  printf(fh, "~%"),
+  writeCExprsNoExpand1(e1_z, gcfac(float(expand(e1_z_c)))),
+  printf(fh, "~%"),
+
+  writeCExprsNoExpand1(e2_x, gcfac(float(expand(e2_x_c)))),
+  printf(fh, "~%"),
+  writeCExprsNoExpand1(e2_y, gcfac(float(expand(e2_y_c)))),
+  printf(fh, "~%"),
+  writeCExprsNoExpand1(e2_z, gcfac(float(expand(e2_z_c)))),
+  printf(fh, "~%"),
+
+  writeCExprsNoExpand1(e3_x, gcfac(float(expand(e3_x_c)))),
+  printf(fh, "~%"),
+  writeCExprsNoExpand1(e3_y, gcfac(float(expand(e3_y_c)))),
+  printf(fh, "~%"),
+  writeCExprsNoExpand1(e3_z, gcfac(float(expand(e3_z_c)))),
+  printf(fh, "~%"),
+
+  flush_output(fh),
+  printf(fh, "} ~%")
+)$

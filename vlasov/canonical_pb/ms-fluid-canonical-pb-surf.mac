@@ -1,0 +1,71 @@
+/*
+  Generate the surface kernels for a canonical-pb fluid system such as
+  incompressible Euler or Hasegawa-Wakatani.
+  Assumes surface alpha pre-computed so kernels are agnostic to different
+  forms of canonical-pb for fluid systems.
+
+  The functions called in this file are in fluid-canonical-funcs-surf.mac.
+*/
+load("vlasov/canonical_pb/fluid-canonical-funcs-surf.mac")$
+ratprint: false;
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 2$
+maxCdim_Ser : 2$
+
+/* Tensor product basis. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 2$
+maxCdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+clabels : ["x","y","z"]$
+
+includeSurfHeaders(fhIn, bname, c, porder, dir) := block([],
+  printf(fhIn, "#include <gkyl_canonical_pb_kernels.h>~%"),
+  printf(fh, "#include <gkyl_basis_~a_~ax_p~a_upwind_quad_to_modal.h> ~%", bname, c, porder)
+)$
+printf(fh, "~%"),
+
+/* Generate kernels of selected types. */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      for dir : 1 thru c do (
+        /* Advection in configuration space.*/
+        fname : sconcat("~/max-out/canonical_pb_surf",clabels[dir],"_", c, "x_", bName[bInd], "_p",polyOrder, ".c"),
+        disp(printf(false,"Creating surface file: ~a",fname)),
+
+        fh : openw(fname),
+        includeSurfHeaders(fh, bName[bInd], c, polyOrder, dir),
+        funcName : sconcat("canonical_pb_surf",clabels[dir],"_", c, "x_", bName[bInd], "_p", polyOrder),
+        calcFluidCanonicalPBSurfUpdateInDir(dir, fh, funcName, c, bName[bInd], polyOrder),
+        close(fh), 
+
+        fname : sconcat("~/max-out/canonical_pb_two_fluid_surf",clabels[dir],"_", c, "x_", bName[bInd], "_p",polyOrder, ".c"),
+        disp(printf(false,"Creating surface file: ~a",fname)),
+
+        fh : openw(fname),
+        includeSurfHeaders(fh, bName[bInd], c, polyOrder, dir),
+        funcName : sconcat("canonical_pb_two_fluid_surf",clabels[dir],"_", c, "x_", bName[bInd], "_p", polyOrder),
+        /* NOTE: THIS FUNCTION REQUIRES A FURTHER SEARCH AND REPLACE AFTER GENERATION TO fUpL -> f1/2UpL, SAME FOR R */
+        calcTwoFluidCanonicalPBSurfUpdateInDir(dir, fh, funcName, c, bName[bInd], polyOrder),
+        close(fh)        
+      )
+    )
+  )
+)$

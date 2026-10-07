@@ -1,0 +1,60 @@
+/* This script generates the kernels for the volume term
+   diffusion contribution from Lenard Bernstein operator to the
+   Vlasov equation. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcVlasovPKPMLBODiffVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,zr,nuVtSqSum_e,polyFact,facDiff_mid],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+  /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+     mean hybrid basis. */
+  pOrderV : polyOrder,
+  if polyOrder=1 then ( pOrderV : 2 ),
+
+  /* Number of basis monomials. */
+  NP : length(bP),  
+  NC : length(bC),
+
+  /* Specify a point to evaluate alpha at for use in computing CFL */
+  /* Here we choose to evaluate things in the middle of the cell, where
+     coordinates = 0. */
+  zr : makelist(varsP[d]=0, d, 1, length(varsP)),
+
+  printf(fh, "#include <gkyl_lbo_pkpm_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *nuSum, const double *nuPrimMomsSum, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]:       Cell-center coordinates. ~%"),
+  printf(fh, "  // dxv[NDIM]:     Cell spacing. ~%"),
+  printf(fh, "  // nuSum:         Collisionalities added (self and cross species collisionalities). ~%"),
+  printf(fh, "  // nuPrimMomsSum: Sum of bulk velocities and thermal speeds (squared) times their respective collisionalities. ~%"),
+  printf(fh, "  // f:             Input distribution functions [F_0, T_perp/m G_1 = T_perp/m (F_0 - F_1)].~%"),
+  printf(fh, "  // out:           Incremented output distribution functions. ~%"),
+
+  printf(fh, "  const double rdvparSq4 = 4.0/(dxv[~a]*dxv[~a]); ~%", cdim, cdim),
+  printf(fh, "~%"),
+  /* Create a pointer to nuVtSqSum. */
+  printf(fh, "  const double *nuVtSqSum = &nuPrimMomsSum[~a];~%", vdim*NC),
+  printf(fh, "~%"),
+  
+  /* Expand (nu*vtSq) in configuration basis. */
+  nuVtSqSum_e : doExpand1(nuVtSqSum, bC),
+
+  /* Evaluate facDiff at zr to approximate max(abs(facDiff))/(dv_i/(2*(p+1)))^2 */
+  polyFact : (pOrderV+1)^2,
+
+  facDiff_mid : rdvparSq4*gcfac(float(expand(subst(zr,polyFact*nuVtSqSum_e)))),
+
+  printf(fh, "  return fabs(~a); ~%", facDiff_mid),
+
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+
+);

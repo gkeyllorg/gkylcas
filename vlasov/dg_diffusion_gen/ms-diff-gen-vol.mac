@@ -1,0 +1,44 @@
+load("vlasov/dg_diffusion_gen/diff-gen-vol-2x.mac")$
+load("vlasov/dg_diffusion_gen/diff-gen-vol-3x.mac")$
+load(stringproc)$
+
+/* Generate general diffusion volume kernels. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minDim_Ser : 2$
+maxDim_Ser : 3$
+
+/* Tensor product basis. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minDim_Tensor : 1$
+maxDim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minDim       : [minDim_Ser, minDim_Tensor]$
+maxDim       : [maxDim_Ser, maxDim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minDim[bInd] thru maxDim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      fname : sconcat("~/max-out/dg_diffusion_gen_vol_",c,"x_", bName[bInd], "_p", polyOrder, ".c"),
+      print("Generating:", fname),
+      fh : openw(fname),
+      printf(fh, "#include <gkyl_dg_diffusion_gen_kernels.h>~%~%"),
+      if c=2 then (
+        genDiffusionGenVol2x(fh,bName[bInd],c,polyOrder)
+      ) else (
+        genDiffusionGenVol3x(fh,bName[bInd],c,polyOrder)
+      ),
+      close(fh)
+    )
+  )
+)$

@@ -1,0 +1,54 @@
+cdim : 2$
+
+load("core/modal-basis.mac")$
+[varsC,bC] : loadBasis("Tensor", cdim, 1)$
+[varsC,bC_p2] : loadBasis("Tensor", cdim, 2)$
+NC : length(bC)$
+NC_p2 : length(bC_p2)$
+
+/* pressure and flow on left and right */
+pl_e : doExpand1(p_l, bC_p2)$
+ul_e : doExpand1(u_l, bC)$
+
+pr_e : doExpand1(p_r, bC_p2)$
+ur_e : doExpand1(u_r, bC)$
+
+p_lr : subst(x=1, pl_e)$
+p_rl : subst(x=-1, pr_e)$
+u_lr : subst(x=1, ul_e)$
+u_rl : subst(x=-1, ur_e)$
+
+avg_p : 0.5*(p_lr + p_rl)$
+avg_u : 0.5*(u_lr + u_rl)$
+
+surfVars : delete(x, varsC)$
+
+p_surf_l : calcInnerProdList(surfVars, 1, subst(x=1, bC_p2), avg_p - p_lr)$
+p_surf_r : calcInnerProdList(surfVars, -1, subst(x=-1, bC_p2), avg_p - p_rl)$
+
+u_surf_l : calcInnerProdList(surfVars, 1, subst(x=1, bC), avg_u - u_lr)$
+u_surf_r : calcInnerProdList(surfVars, -1, subst(x=-1, bC), avg_u - u_rl)$
+
+pl_vol : calcInnerProdList(varsC, 1, bC_p2, diff(pl_e, x))$
+ul_vol : calcInnerProdList(varsC, 1, bC, diff(ul_e, x))$
+
+test_u_p_surf_l : calcInnerProdList(surfVars, 1, [1], u_lr*(avg_p - p_lr))$
+test_u_p_surf_r : calcInnerProdList(surfVars, -1, [1], u_rl*(avg_p - p_rl))$
+
+test_p_u_surf_l : calcInnerProdList(surfVars, 1, [1], p_lr*(avg_u - u_lr))$
+test_p_u_surf_r : calcInnerProdList(surfVars, -1, [1], p_rl*(avg_u - u_rl))$
+
+print(fullratsimp(test_u_p_surf_l + test_u_p_surf_r + test_p_u_surf_l + test_p_u_surf_r))$
+
+div_pu_l : calcInnerProdList(surfVars, 1, [1], p_lr*u_lr)$
+div_pu_r : calcInnerProdList(surfVars, -1, [1], p_rl*u_rl)$
+print(fullratsimp(div_pu_l + div_pu_r))$
+
+print(fullratsimp(test_u_p_surf_r + test_u_p_surf_l + test_p_u_surf_l + test_p_u_surf_r + div_pu_l + div_pu_r))$
+
+test_p_u_vol_l : calcInnerProdList(varsC, 1, [1], pl_e*diff(ul_e, x))$
+test_u_p_vol_l : calcInnerProdList(varsC, 1, [1], ul_e*diff(pl_e, x))$
+
+div_pu_vol_l : calcInnerProdList(varsC, 1, [1], diff(pl_e*ul_e, x))$
+print(fullratsimp(test_p_u_vol_l + test_u_p_vol_l))$
+print(fullratsimp(div_pu_vol_l))$

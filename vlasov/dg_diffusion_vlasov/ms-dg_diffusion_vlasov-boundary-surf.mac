@@ -1,0 +1,71 @@
+kill(all)$
+load("vlasov/dg_diffusion_vlasov/diffFuncs-vlasov-boundary-surf.mac")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 2$
+minVdim_Ser : 1$
+maxVdim_Ser : 3$
+
+/* Tensor order basis. No need to generate p=1. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+minVdim_Tensor : 1$
+maxVdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser     , minCdim_Tensor     ]$
+maxCdim      : [maxCdim_Ser     , maxCdim_Tensor     ]$
+minVdim      : [minVdim_Ser     , minVdim_Tensor     ]$
+maxVdim      : [maxVdim_Ser     , maxVdim_Tensor     ]$
+dirVars      : [[[x,vx],[x,vx,vy],[x,vx,vy,vz]],[[null],[x,y,vx,vy],[x,y,vx,vy,vz]],[[null],[null],[x,y,z,vx,vy,vz]]]$
+
+for bInd : 1 thru length(bName) do (
+  for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+    for cdim : minCdim[bInd] thru maxCdim[bInd] do (
+      for vdim : max(cdim,minVdim[bInd]) thru maxVdim[bInd] do (
+        /* To apply applying diffusion in velocity space replace cdim with
+           cdim+vdim in the loop upper limit below. If you wish the diffusion
+           coefficient to depend on velocity space, make that change in the
+           function that generates the kernel too. */
+        for dir : 1 thru cdim do (
+          dirVar : dirVars[cdim][vdim][dir], 
+
+          fname : sconcat("~/max-out/dg_diffusion_vlasov_order2_boundary_surf", dirVar,"_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder, ".c"),
+          funcName : sconcat("dg_diffusion_vlasov_order2_boundary_surf", dirVar,"_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder),
+          fh : openw(fname),
+          print("Generating:", fname),
+          genDGdiffVlasovKernelBoundarySurf(fh, funcName, cdim, vdim, bName[bInd], polyOrder, dir, 2),
+          close(fh),
+
+          fname : sconcat("~/max-out/dg_diffusion_vlasov_order4_boundary_surf", dirVar,"_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder, ".c"),
+          funcName : sconcat("dg_diffusion_vlasov_order4_boundary_surf", dirVar,"_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder),
+          fh : openw(fname),
+          print("Generating:", fname),
+          genDGdiffVlasovKernelBoundarySurf(fh, funcName, cdim, vdim, bName[bInd], polyOrder, dir, 4),
+          close(fh),
+
+          if polyOrder > 1 then (
+            fname : sconcat("~/max-out/dg_diffusion_vlasov_order6_boundary_surf", dirVar,"_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder, ".c"),
+            funcName : sconcat("dg_diffusion_vlasov_order6_boundary_surf", dirVar,"_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder),
+            fh : openw(fname),
+            print("Generating:", fname),
+            genDGdiffVlasovKernelBoundarySurf(fh, funcName, cdim, vdim, bName[bInd], polyOrder, dir, 6),
+            close(fh)
+          )
+        )
+      )
+    )
+  )
+)$

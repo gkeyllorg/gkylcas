@@ -1,0 +1,70 @@
+/*
+  Generate the kernel for volume and surface expansions of the radiation drag "collisionality" nu.
+
+  The functions called in this file are in radFuncs-drag-nu.mac.
+*/
+load("gyrokinetic/radiation/radFuncs-drag-nu.mac")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor order basis. No need to generate p=1. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* Vdim possibilities for each of Cdim=[1,2,3]. */
+gkVdims : [[2], [2], [2]]$
+
+/* ...... END OF USER INPUTS........ */
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+vlabels : ["vpar","mu"]$
+
+/* Generate kernels of selected types. */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for gkV : 1 thru length(gkVdims[c]) do (
+      v : gkVdims[c][gkV],
+
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x2v */
+      for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
+        /* Radiation drag in vparallel direction.*/
+        fname : sconcat("~/max-out/rad_gyrokinetic_drag_nu",vlabels[1],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        disp(printf(false,"Creating radiation drag vpar file: ~a",fname)),
+  
+        fh : openw(fname),
+        printf(fh, "#include <gkyl_rad_gyrokinetic_kernels.h> ~%"),
+
+        funcName : sconcat("rad_gyrokinetic_drag_nu",vlabels[1],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+        buildGKRadNuKernel(c+1, fh, funcName, c, v, bName[bInd], polyOrder),
+        close(fh), 
+        if (v = 2) then (
+          /* Radiation drag in mu direction.*/
+          fname : sconcat("~/max-out/rad_gyrokinetic_drag_nu",vlabels[2],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+          disp(printf(false,"Creating radiation drag mu file: ~a",fname)),
+    
+          fh : openw(fname),
+          printf(fh, "#include <gkyl_rad_gyrokinetic_kernels.h> ~%"),
+
+          funcName : sconcat("rad_gyrokinetic_drag_nu",vlabels[2],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+          buildGKRadNuKernel(c+2, fh, funcName, c, v, bName[bInd], polyOrder),
+          close(fh)
+        )
+      )
+    )
+  )
+)$

@@ -1,0 +1,48 @@
+load("pkpm/pkpm/pkpm-io-vars.mac")$
+load(stringproc)$
+/* This script calls the functions which construct the output fluid arrays for PKPM, including the conserved fluid variables: 
+   [rho, rho ux, rho uy, rho uz, Pxx + rho ux^2, Pxy + rho ux uy, Pxz + rho ux uz, Pyy + rho uy^2, Pyz + rho uy uz, Pzz + rho uz^2]  
+   and the output primitive and acceleration variables 
+   [ux, uy, uz, T_perp/m, m/T_perp, div(b), 1/rho div(p_par b), T_perp/m div(b), bb : grad(u),
+   vperp configuration space characteristics = bb : grad(u) - div(u) - 2 nu] */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 2$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      disp(printf(false,sconcat("Creating pkpm io variables",bName[bInd]," ~axp~a"),d,polyOrder)),
+      fname : sconcat("~/max-out/pkpm_vars_io_",  d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("pkpm_vars_io_", d, "x_", bName[bInd]),
+      calcPKPMIoVars(fh, funcName, d, bName[bInd], polyOrder),
+      close(fh)
+    )
+  )
+);

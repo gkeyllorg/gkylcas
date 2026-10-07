@@ -1,0 +1,53 @@
+load("gyrokinetic/lbo_gyrokinetic/gkLBOFuncs-diff-vol.mac")$
+load(stringproc)$
+
+/* This script calls the functions which calculate the
+   updates from the volume term contributions in the
+   gyrokinetic LBO. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* Number of velocity dimensions allowed for each
+   configuration-space dimension. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for gkV : 1 thru length(gkVdims[c]) do (
+      v : gkVdims[c][gkV],
+
+      maxPolyOrderB : maxPolyOrder[bInd],
+      minPolyOrderB : minPolyOrder[bInd],
+      if (c+v>4 and maxPolyOrderB > 2) then maxPolyOrderB : 2,
+
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        disp(printf(false,sconcat("Creating diff volume GkLBO ",bName[bInd]," ~ax~av p~a"),c,v,polyOrder)),
+        funcName : sconcat("lbo_gyrokinetic_diff_vol_", c, "x", v, "v_", bName[bInd],"_p",polyOrder),
+        fname : sconcat("~/max-out/",funcName, ".c"),
+        fh : openw(fname),
+        calcGkLBODiffVolUpdater(fh, funcName, c, v, bName[bInd], polyOrder),
+        close(fh) 
+      )
+    )
+  )
+);

@@ -1,0 +1,47 @@
+/*
+  Generate the kernel for volume expansion of cotangent vectors e^i
+  for use in volume kernels of general geometry Vlasov
+
+  The functions called in this file are in vlasovDualsFuncs-C.mac.
+*/
+load("vlasov/vlasov_maxwell/vlasovBmagCartFuncs-C.mac")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 3$
+maxCdim_Ser : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser"]$
+minPolyOrder : [minPolyOrder_Ser]$
+maxPolyOrder : [maxPolyOrder_Ser]$
+minCdim      : [minCdim_Ser]$
+maxCdim      : [maxCdim_Ser]$
+
+/* Generate kernels of selected types. */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (c=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x3v */
+
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
+      /* Surface alpha in direction dir in configuration space.*/
+      for dir : 1 thru c do (
+        fname : sconcat("~/max-out/vlasov_bmag_cart_", c, "x_", bName[bInd], "_p", polyOrder, ".c"),
+        disp(printf(false,"Creating bmag_cart file: ~a",fname)),
+  
+        fh : openw(fname),
+        printf(fh, "#include <gkyl_dg_vlasov_gen_geo_alpha_kernels.h> ~%"),
+
+        funcName : sconcat("vlasov_bmag_cart_",c, "x_", bName[bInd]),
+        calcVlasovBmagCart(fh, funcName, c, bName[bInd], polyOrder),
+        close(fh)
+      ) 
+    )
+  )
+)$

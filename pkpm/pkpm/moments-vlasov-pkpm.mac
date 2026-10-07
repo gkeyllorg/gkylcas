@@ -1,0 +1,123 @@
+/* Function that computes the moments of the distribution function in Vlasov 
+    parallel-kinetic-perpendicular-moment (pkpm) model. 
+    Note the Vlasov equation is in the local plasma rest frame in this model
+    so the second moment is the parallel pressure and third moment is parallel heat
+    flux (no Reynolds stress for example). */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+load("scifac")$
+load("core/nodal_operations/nodal_functions.mac")$
+fpprec : 24$
+
+cvars : [x, y, z]$
+
+let(wvpar^4, wvpar_qu)$
+let(dvpar^4, dvpar_qu)$
+
+let(wvpar^3, wvpar_cu)$
+let(dvpar^3, dvpar_cu)$
+
+let(wvpar^2, wvpar_sq)$
+let(dvpar^2, dvpar_sq)$
+
+/* Calculate mass density, parallel pressure, and perpendicular pressure sequentially */
+calcPKPMUpdateMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,fl,vTrans,rho,ppar,pperp,PKPM_moments,clst],
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NP : length(bP),
+  NC : length(bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, double mass, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  printf(fh, "  const double volFact = dxv[~a]/2.0; ~%", cdim),
+  printf(fh, "  const double wvpar = w[~a], dvpar = dxv[~a]; ~%", cdim, cdim),
+  printf(fh, "  const double wvpar_sq = wvpar*wvpar, dvpar_sq = dvpar*dvpar; ~%"),
+  printf(fh, "~%"),
+
+  /* Access F_0 and T_perp G, first two Laguerre moments */
+  printf(fh, "  const double *F_0 = &f[~a]; ~%", 0),
+  printf(fh, "  const double *G_1 = &f[~a]; ~%", NP),  
+
+  F_0_e : doExpand1(F_0, bP),
+  G_1_e : doExpand1(G_1, bP),
+  vTrans  : vx*dvpar/2+wvpar,
+  
+  rho : calcInnerProdList(varsP, 1, bC, F_0_e),
+  M1 : calcInnerProdList(varsP, vTrans, bC, F_0_e),
+  ppar : calcInnerProdList(varsP, vTrans*vTrans, bC, F_0_e),
+  pperp : calcInnerProdList(varsP, 1.0, bC, G_1_e),
+  
+  ppar : map(letsimp, ppar),
+
+  clst : [volFact, mass],
+  PKPM_moments : [],
+  PKPM_moments : append(PKPM_moments, volFact*mass*rho),
+  PKPM_moments : append(PKPM_moments, volFact*mass*ppar),
+  PKPM_moments : append(PKPM_moments, volFact*mass*pperp),
+  PKPM_moments : append(PKPM_moments, volFact*mass*M1),
+  writeCIncrExprsCollect1(out, PKPM_moments, clst),
+  printf(fh, "} ~%")
+)$
+
+calcPKPMDiagMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,fl,vTrans,
+  rho,M1,ppar,pperp,qpar,qperp,rparpar,rparperp,
+  PKPM_moments,clst],
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NP : length(bP),
+  NC : length(bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_diag_~ax~av_~a_p~a(const double *w, const double *dxv, const int *idx, double mass, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  printf(fh, "  const double volFact = dxv[~a]/2.0; ~%", cdim),
+  printf(fh, "  const double wvpar = w[~a], dvpar = dxv[~a]; ~%", cdim, cdim),
+  printf(fh, "  const double wvpar_sq = wvpar*wvpar, dvpar_sq = dvpar*dvpar; ~%"),
+  printf(fh, "  const double wvpar_cu = wvpar*wvpar*wvpar, dvpar_cu = dvpar*dvpar*dvpar; ~%"),
+  printf(fh, "  const double wvpar_qu = wvpar*wvpar*wvpar*wvpar, dvpar_qu = dvpar*dvpar*dvpar*dvpar; ~%"),
+  printf(fh, "~%"),
+
+  /* Access F_0 and T_perp G, first two Laguerre moments */
+  printf(fh, "  const double *F_0 = &f[~a]; ~%", 0),
+  printf(fh, "  const double *G_1 = &f[~a]; ~%", NP),  
+
+  F_0_e : doExpand1(F_0, bP),
+  G_1_e : doExpand1(G_1, bP),
+  vTrans  : vx*dvpar/2+wvpar,
+  
+  rho : calcInnerProdList(varsP, 1, bC, F_0_e),
+  M1 : calcInnerProdList(varsP, vTrans, bC, F_0_e),
+  ppar : calcInnerProdList(varsP, vTrans*vTrans, bC, F_0_e),
+  pperp : calcInnerProdList(varsP, 1.0, bC, G_1_e),
+  qpar : calcInnerProdList(varsP, vTrans*vTrans*vTrans, bC, F_0_e),
+  qperp : calcInnerProdList(varsP, vTrans, bC, G_1_e),
+  rparpar : calcInnerProdList(varsP, vTrans*vTrans*vTrans*vTrans, bC, F_0_e),
+  rparperp : calcInnerProdList(varsP, vTrans*vTrans, bC, G_1_e),
+
+  ppar : map(letsimp, ppar),
+  qpar : map(letsimp, qpar),
+  rparpar : map(letsimp, rparpar),
+  rparperp : map(letsimp, rparperp),
+
+  clst : [volFact, mass],
+  PKPM_moments : [],
+  PKPM_moments : append(PKPM_moments, volFact*mass*rho),
+  PKPM_moments : append(PKPM_moments, volFact*mass*M1),
+  PKPM_moments : append(PKPM_moments, volFact*mass*ppar),
+  PKPM_moments : append(PKPM_moments, volFact*mass*pperp),
+  PKPM_moments : append(PKPM_moments, volFact*mass*qpar),
+  PKPM_moments : append(PKPM_moments, volFact*mass*qperp),
+  PKPM_moments : append(PKPM_moments, volFact*mass*rparpar),
+  PKPM_moments : append(PKPM_moments, volFact*mass*rparperp),
+  writeCIncrExprsCollect1(out, PKPM_moments, clst),
+  printf(fh, "} ~%")
+)$
+
+calcPKPMMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block([],
+  printf(fh, "#include <gkyl_mom_pkpm_kernels.h> ~%"),
+  calcPKPMUpdateMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder),
+  calcPKPMDiagMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder)
+)$

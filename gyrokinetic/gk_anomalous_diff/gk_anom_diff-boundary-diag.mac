@@ -1,0 +1,133 @@
+load("core/modal-basis.mac")$
+load("core/recovery.mac")$
+load("util_maxima/out-scripts.mac")$
+fpprec : 24$
+
+/* Types of boundary diagnostic stencils:
+     - bound_local: use the local (skin cell) solution to compute the boundary
+       surface.
+     - bound_recovery: treat the boundary surface like an interior surface
+       (should match the surface kernel).
+*/
+bound_diag_bc_type : ["bound_local","bound_recovery"]$
+
+/* Boundary sidex. */
+bound_side : ["lower","upper"]$
+
+gk_anomalous_diff_gen_boundary_diag_ker(fh, funcNm, cdim, vdim, basisType, polyOrder, dir, side, bcType) := block(
+  [dim,bType,vars,basis,varsC,basisC,vSub,numBasis,surfVar,surfIntVars,numBasisC,
+   nuSkin_c,nuGhost_c,nuSkin_e,nuGhost_e,JfSkin_c,JfGhost_c,JfSkin_e,JfGhost_e,jacobgeo_invSkin_e,jacobgeo_invGhost_e,
+   fSkin_c,fGhost_c,fSkin_e,fGhost_e,fRecl_e,nuAv_l,nuSkin_l,fRecr_e,nuAv_r,nuSkin_r,
+   boundSurf_incr_c,bound_out],
+
+  dim : cdim+vdim,
+
+  bType : basisType,
+  if polyOrder=1 then bType : "gkhyb",  /* Force p=1 to mean hybrid. */
+
+  [varsC, basisC, vars, basis, vSub] : loadGkBasis(basisType, cdim, vdim, polyOrder),
+  numBasis : length(basis),
+
+  surfVar  : vars[dir],
+  surfIntVars : delete(surfVar,vars),
+  
+  /* Here we assume diffusivity only depends on position space,
+     but it could be easily changed to vary with velocity space too. */
+  numBasisC : length(basisC),
+  nuSkin_c : makelist(nuSkin[i-1],i,1,numBasisC),
+  nuGhost_c : makelist(nuGhost[i-1],i,1,numBasisC),
+  nuSkin_e : doExpand(nuSkin_c, basisC),
+  nuGhost_e : doExpand(nuGhost_c, basisC),
+  
+  printf(fh, "GKYL_CU_DH double ~a(const double *wSkin, const double *dxSkin, const double *nuSkin, const double *nuGhost, const double *jacobgeo_invSkin, const double *jacobgeo_invGhost, int edge, const double *JfSkin, const double *JfGhost, double* GKYL_RESTRICT out) ~%", funcNm),
+  printf(fh, "{~%"),
+  printf(fh, "  // w[NDIM]: Cell-center coordinate.~%"),
+  printf(fh, "  // dxv[NDIM]: Cell length.~%"),
+  printf(fh, "  // nuSkin/nuGhost: Diffusivity in skin and ghost cells.~%"),
+  printf(fh, "  // jacobgeo_invSkin/jacobgeo_invGhost: reciprocal of the configuration space Jacobian.~%"),
+  printf(fh, "  // edge: -1 for lower boundary, +1 for upper boundary.~%"),
+  printf(fh, "  // JfSkin/JfGhost: distribution times conf-space Jacobian in skin and ghost cells.~%"),
+  printf(fh, "  // out: Incremented output.~%~%"),
+
+  printf(fh, "  const double rdx2sq = pow(2./dxSkin[~a],2.0);~%", dir-1),
+  printf(fh, "~%"),
+
+  JfSkin_c  : makelist(JfSkin[i-1], i, 1, numBasis),
+  JfGhost_c : makelist(JfGhost[i-1], i, 1, numBasis),
+  JfSkin_e  : doExpand(JfSkin_c, basis),
+  JfGhost_e : doExpand(JfGhost_c, basis),
+
+  /* Divide jacobGeo*f by jacobGeo. */
+  jacobgeo_invSkin_e  : doExpand1(jacobgeo_invSkin, basisC),
+  jacobgeo_invGhost_e : doExpand1(jacobgeo_invGhost, basisC),
+  
+  fSkin_c  : calcInnerProdList(vars, jacobgeo_invSkin_e, basis, JfSkin_e),
+  fGhost_c : calcInnerProdList(vars, jacobgeo_invGhost_e, basis, JfGhost_e),
+
+  /* Divide jacobGeo*f by jacobGeo. */
+  printf(fh, "  double fSkin[~a];~%", numBasis),
+  writeCExprsNoExpand1(fSkin, fSkin_c),
+  fSkin_c : makelist(fSkin[i-1], i, 1, numBasis),
+  printf(fh, "~%"),
+  if bcType = "bound_recovery" then (
+    printf(fh, "  double fGhost[~a];~%", numBasis),
+    writeCExprsNoExpand1(fGhost, fGhost_c),
+    fGhost_c : makelist(fGhost[i-1], i, 1, numBasis),
+    printf(fh, "~%")
+  ),
+
+  fSkin_e  : doExpand(fSkin_c, basis),
+  fGhost_e : doExpand(fGhost_c, basis),
+
+  printf(fh, "  double boundSurf_incr[~a] = {0.0}; ~%", numBasis),
+  printf(fh, "~%"),
+
+  if side = "lower" then (
+    /* Lower doman boundary. */
+
+    /* Contribution from the domain boundary surface. Minus sign is because this
+       contribution ought to be the opposite of that in boundary_surf. */
+    if bcType = "bound_recovery" then (
+
+      fRecl_e : calcRecov2CellGen(bType, surfVar, vars, polyOrder, dg(fGhost_c), dg(fSkin_c)),
+      nuAv_l  : (subst(surfVar=1,nuGhost_e) + subst(surfVar=-1,nuSkin_e))/2,
+      boundSurf_incr_c : -calcInnerProdList(surfIntVars, -1, subst(surfVar=-1,basis), nuAv_l*subst(surfVar=0,diff(fRecl_e,surfVar)))
+
+    ) else if bcType = "bound_local" then (
+
+      nuSkin_l : subst(surfVar=-1,nuSkin_e),
+      boundSurf_incr_c : -calcInnerProdList(surfIntVars, -1, subst(surfVar=-1,basis), nuSkin_l*subst(surfVar=-1,diff(fSkin_e,surfVar)))
+
+    )
+  
+  ) else (
+    /* Upper doman boundary. */
+
+    /* Contribution from the domain boundary surface. Minus sign is because this
+       contribution ought to be the opposite of that in boundary_surf. */
+
+    if bcType = "bound_recovery" then (
+
+      fRecr_e : calcRecov2CellGen(bType, surfVar, vars, polyOrder, dg(fSkin_c), dg(fGhost_c)),
+      nuAv_r  : (subst(surfVar=1,nuSkin_e) + subst(surfVar=-1,nuGhost_e))/2,
+      boundSurf_incr_c : -calcInnerProdList(surfIntVars, 1, subst(surfVar=1,basis), nuAv_r*subst(surfVar=0,diff(fRecr_e,surfVar)))
+
+    ) else if bcType = "bound_local" then (
+
+      nuSkin_r : subst(surfVar=1,nuSkin_e),
+      boundSurf_incr_c : -calcInnerProdList(surfIntVars, 1, subst(surfVar=1,basis), nuSkin_r*subst(surfVar=1,diff(fSkin_e,surfVar)))
+    
+    )
+
+  ),
+
+  writeCExprs1(boundSurf_incr, boundSurf_incr_c),
+  printf(fh, "~%"),
+
+  bound_out : makelist(boundSurf_incr[i-1],i,1,numBasis),
+  writeCIncrExprsNoExpand1(out, rdx2sq*bound_out),
+  printf(fh, "~%"),
+  
+  printf(fh, "  return 0.;~%"),  /* Return CFL frequency in volume kernel. */
+  printf(fh, "}~%~%")
+)$

@@ -1,0 +1,275 @@
+/* Generate the kernel that computes the global indexes of the memory
+   to which each node (or nodal basis) in a given cell contributes. */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac");
+load("moments/bvp_utilities/bvp-util.mac");
+load("moments/fem/fem-util.mac");
+fpprec : 24$
+
+generate_fem_poisson_local_to_global(fh, funcNm, dim, basisFun, pMax) := block(
+  [d,i,sI,bcI,polyOrder,dI,pS,nI,j,coordVarS,stencilLoc,bcTypes,bcStrs,bcKey,bcCombos,currBC,stencilStr,
+   bN,numB,nodes,numNodes,storedNodes,storedNodesBC,numStoredNodes,locToNumStoredNodes,numPS,newS,
+   newNodes,cellMemOffFac,upbDirs,nodeMemOff,currNode,cellIdx,nodeUpDirs,newNode,nodeIdx,isOnBoundary,
+   checkCoords,ifStr,newLoc,newCellIdx,condStr,boundCellOffFac,newNodeIdx],
+
+
+  kill(varsC, varsP, basisC, basisP),
+
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x", ".lisp")),
+
+  /* Associative list between stencil location (-1,0,1) and variable strings in kernel name. */
+  coordVarS : getCoordVarS(varsC),
+
+  /* List of stencil locations. Each entry is a dim-dimensional list
+     with -1 meaning it is at a lower boundary, 1 upper boundary, or
+     0 away from boundaries in that direction. */
+  stencilLoc : getStencilCoords(dim),
+
+  /* Types of boundary conditions for which to generate kernels.
+       =0 periodic
+       =1 non-periodic
+  */
+  bcTypes : [0, 1],
+  bcStrs  : ["periodic", "nonperiodic"],
+  bcKey   : makelist([bcTypes[i],bcStrs[i]],i,1,length(bcTypes)),
+
+  bcCombos : makelist([bcTypes[i]],i,1,length(bcTypes)),
+  for d : 2 thru dim do (
+    bcCombos : listify(cartesian_product(setify(bcCombos),setify(bcTypes))),
+    for i : 1 thru length(bcCombos) do ( bcCombos[i] : flatten(bcCombos[i]) )
+  ),
+
+  /* We will create local->global kernels for each interior and upper
+     boundary region of the domain. Each region must have different kernels
+     for each possible combination of the boundary conditions. */
+  for sI : 1 thru length(stencilLoc) do (
+    /* Exclude lower boundary kernels (ones that do not own upper cell-boundary nodes). */
+    if (stencilLoc[sI]=makelist(0,d,1,dim)) or
+       (length(sublist(stencilLoc[sI],lambda([x],x < 0)))=0) then (
+
+      /* Loop over BC combinations. Will create a separate kernel for each. */
+      for bcI : 1 thru length(bcCombos) do (
+  
+        currBC : copylist(bcCombos[bcI]),
+  
+        /* String used in kernel name, identifying stencil location and BC. */
+        stencilStr : "",
+        for d : 1 thru dim do (
+          stencilStr : sconcat(stencilStr,assoc(stencilLoc[sI][d],[[-1,"_lo"],[0,"_in"],[1,"_up"]]),
+                       assoc(stencilLoc[sI][d],coordVarS)[d],"_",assoc(currBC[d],bcKey),string(varsC[d]))
+        ),
+
+        for polyOrder : 1 thru pMax do (
+  
+          printf(fh, "GKYL_CU_DH void ~a_p~a~a(const int *numCells, const int *idx, long *globalIdxs) ~%{ ~%", funcNm, polyOrder, stencilStr),
+          printf(fh, "  // numCells:   number of cells in each direction.~%"),
+          printf(fh, "  // idx:        multi-dimensional index of current cell.~%"),
+          printf(fh, "  // globalIdxs: global linear index of each basis function/node in current cell.~%"),
+          printf(fh, "~%"),
+  
+          bN   : getNodalBasis(basisFun, dim, polyOrder),
+          numB : length(bN),
+  
+          nodes    : args(getNodes(basisFun, dim, polyOrder)),
+          numNodes : length(nodes),
+
+          storedNodes    : getStoredNodes(nodes,stencilLoc[sI]), /* lower nodes only, see notes. */
+          storedNodesBC  : getStoredNodesWithBC(nodes,stencilLoc[sI],currBC), /* BC-aware (includes some upper nodes for nonperiodic BC). */
+          numStoredNodes : length(storedNodesBC),
+
+          /* Create a list of possible locations and number of stored nodes in the domain. */
+          locToNumStoredNodes       : [[makelist(0,d,1,dim),0]],
+          locToNumStoredNodes[1][2] : length(getStoredNodesWithBC(nodes,locToNumStoredNodes[1][1],currBC)),
+          for dI : 1 thru dim do (
+            numPS : length(locToNumStoredNodes),
+            for pS : 1 thru numPS do (
+              for luI : -1 thru 1 step 2 do (  /* Loop over lower and upper. */
+                newS        : [copylist(locToNumStoredNodes[pS][1]),0], /* Copy the previous location. */
+                newS[1][dI] : luI,
+                newS[2]     : length(getStoredNodesWithBC(nodes,newS[1],currBC)),
+                locToNumStoredNodes : endcons(newS,locToNumStoredNodes)
+              )
+            )
+          ),
+
+          /* 
+             In 1D need something like:
+               globalIdx = idx[0]*(nodes/cell in cells prior to this one along this x-line)+local node index.
+             In 2D (row-major order):
+               globalIdx = idx[0]*(nodes/line in y-lines (i.e. i=const) prior to this one)
+                          +idx[1]*(nodes/cell in cells prior to this one along this y-line)+local node index.
+                         = idx[0]*((numCells[1]-1)*(nodes/interior-cell of y-lines prior to this one)
+                                   +nodes/upper-boundary-cell of y-lines prior to this one)
+                          +idx[1]*(nodes/cell in cells prior to this one along this y-line)+local node index.
+             In 3D (row-major order) need something like:
+               globalIdx = idx[0]*(nodes/plane in yz-planes (i.e. i=const) prior to this one)
+                          +idx[1]*(nodes/line in z-lines (i.e. j=const) prior to this one)
+                          +idx[2]*(nodes/cell in cells prior to this one along this z-line)+local node index.
+                         = idx[0]*((numCells[1]-1)*((numCells[2]-1)*(nodes/interior-cell of z-lines prior in yz-planes prior to this one)
+                                                    +nodes/upper-boundary-cell of upper-z-line in yz-planes prior to this one)
+                                   +(numCells[2]-1)*(nodes/upper-boundary-cell of upper-y-line in yz-planes prior to this one)
+                                   +nodes/upper-right-cell of yz-planes prior to this one)
+                          +idx[1]*((numCells[2]-1)*(nodes/interior-cells of z-lines of this yz-plane)+nodes/upper-boundary-cell of z-lines of this yz-plane)
+                          +idx[2]*(nodes/cell in cells prior to this one along this z-line)+local node index.
+          */
+
+          /* This cell's memory offset. Or the number of nodes before this cell (following the
+             fastest-changing dimension, row-major order), as a factor which multiplies each
+             of idx[0], idx[1] and idx[2], i.e. offset=sum_i cellMemOffFac[i]*idx[i-1]. */
+          getCellMemOff(cellLoc) := block([tmpLoc,numNodesFac,dI,d,tmpNum],
+            /* Add nodes along this row-major order line (x-line for 1D, y-line for 2D, z-line for 3D). */
+            tmpLoc      : copylist(cellLoc),
+            tmpLoc[dim] : 0,
+            numNodesFac : makelist(0,d,1,dim),
+            numNodesFac[dim] : assoc(tmpLoc,locToNumStoredNodes),
+            /* Add nodes in lines/planes (2D/3D) prior to this one. */
+            for dI : dim-1 thru 1 step -1 do (
+              tmpLoc          : copylist(cellLoc),
+              for d : dim thru dI step -1 do ( tmpLoc[d] : 0 ),
+              numNodesFac[dI] : (numCells[dim-1]-1)*assoc(tmpLoc,locToNumStoredNodes),
+              tmpLoc[dim]     : 1,
+              numNodesFac[dI] : numNodesFac[dI]+assoc(tmpLoc,locToNumStoredNodes),
+              if (dim=3) and (dI=1) then (
+                numNodesFac[dI] : (numCells[dim-2]-1)*numNodesFac[dI],
+                tmpLoc[dim-1]   : 1,
+                tmpNum          : assoc(tmpLoc,locToNumStoredNodes),
+                numNodesFac[dI] : (numCells[dim-1]-1)*tmpNum+numNodesFac[dI],
+                tmpLoc[dim-2]   : 1,
+                numNodesFac[dI] : numNodesFac[dI]+assoc(tmpLoc,locToNumStoredNodes)
+              )
+            ),
+            return(numNodesFac)
+          ),
+
+          /* Compute the memory offset (nodeIdx-1) of the nodes in this cell (not just the nodes it owns).
+             Ultimate location of this node is sum_{d=1}^dim (cellIdx[d]*cellMemOffFac[d]) + nodeIdx-1 */
+          upbDirs    : sublist_indices(stencilLoc[sI],lambda([x],x=1)),
+          nodeMemOff : makelist(0,i,1,numNodes),
+          for nI : 1 thru numNodes do (
+            cellIdx    : makelist(idx[d-1],d,1,dim),
+            nodeCoords : copylist(nodes[nI]),
+            cellLoc      : copylist(stencilLoc[sI]),
+            /* Need to consider 3 cases:
+                 A: Node is not owned by this cell and is on a periodic boundary.
+                 B: Node is not owned by this cell and is not on a periodic boundary.
+                 C: Node is owned by this cell (i.e. it's in storedNodesBC).
+               For the cases in which the node is not owned by this cell and is not on a periodic boundary
+               we must check if the cell that owns it is a skin cell, in which the node index may change.
+               */
+
+            getAndWriteNodeMemOff(currNode,currCellIdx,currLoc) := block(
+              [nodeUpDirs,isOnPeriodicBoundary,d,currStoredNodesBC,moveLocInDir,
+               condStr,j,newLoc,cellMemOffFac,nodeIdx,nodeMemOff,errcode],
+
+              nodeUpDirs : sublist_indices(currNode,lambda([x],x=1)), /* Node coordinates that =1. */
+
+              isOnPeriodicBoundary : false,
+              for d : 1 thru length(nodeUpDirs) do (
+                if isInList(nodeUpDirs[d],upbDirs) and currBC[nodeUpDirs[d]]=0 then ( isOnPeriodicBoundary : true )
+              ),
+
+              currStoredNodesBC : getStoredNodesWithBC(nodes,currLoc,currBC),
+
+              if isOnPeriodicBoundary then (
+                /* Case A: Node is not owned by this cell and is on a periodic boundary. */
+                for d : 1 thru length(nodeUpDirs) do (
+                  if isInList(nodeUpDirs[d],upbDirs) and currBC[nodeUpDirs[d]]=0 then (
+                    currNode[nodeUpDirs[d]]    : -1,
+                    currCellIdx[nodeUpDirs[d]] :  0,
+                    currLoc[nodeUpDirs[d]]     : -1
+                  )
+                ),
+                errcode : getAndWriteNodeMemOff(currNode,currCellIdx,currLoc),
+                flush_output(fh),
+                return(errcode)
+
+              ) elseif not isInList(currNode,currStoredNodesBC) and not isOnPeriodicBoundary then (
+                /* Case B: Node is not owned by this cell and is not on a periodic boundary. */
+                moveLocInDir : [], /* For special case when this cell is next to a skin cell. */
+                for d : 1 thru length(nodeUpDirs) do (
+                  if not isInList(nodeUpDirs[d],upbDirs) then (
+                    currNode[nodeUpDirs[d]]    : -1,
+                    currCellIdx[nodeUpDirs[d]] :  idx[nodeUpDirs[d]-1]+1,
+                    moveLocInDir : append(moveLocInDir, [nodeUpDirs[d]])
+                  )
+                ),
+
+                /* Check if owner cell is a skin cell, in which case the
+                   nodeIdx might be different because the number of cells it
+                   owns depends on BCs .*/
+
+                lengthGreaterThan(a, b) := length(a) > length(b),
+                /* Combinations of directions to check for skin cells in. Exclude null set. */
+                checkForSkinInDirs : delete([],sort(full_listify(powerset(setify(moveLocInDir))), 'lengthGreaterThan)),
+                ifStr : " ",
+                for hi : 1 thru length(checkForSkinInDirs) do (
+                  checkDirs : checkForSkinInDirs[hi],
+                  newLoc : copylist(currLoc),
+
+                  condStr : "",
+                  for j : 1 thru length(checkDirs) do (
+                    if (j>1) then ( condStr : sconcat(condStr," && ") ),
+                    condStr : sconcat(condStr,"(idx[",checkDirs[j]-1,"]+1==numCells[",checkDirs[j]-1,"]-1)"),
+
+                    newLoc[checkDirs[j]] : 1
+                  ),
+                  printf(fh, "  ~aif (~a) {~%",ifStr,condStr),
+
+                  errcode : getAndWriteNodeMemOff(currNode,currCellIdx,newLoc),
+
+                  printf(fh, "  }"),
+                  ifStr : "else "
+                ),
+
+                printf(fh, "  else {~%"),
+
+                errcode : getAndWriteNodeMemOff(currNode,currCellIdx,currLoc),
+
+                printf(fh, "  }~%"),
+                printf(fh, "~%"),
+                flush_output(fh),
+                return(errcode)
+
+              ) else (
+
+                /* Case C: Node is owned by this cell (i.e. it's in storedNodesBC). */
+                currStoredNodesBC : getStoredNodesWithBC(nodes,currLoc,currBC),
+                cellMemOffFac : getCellMemOff(currLoc),
+                nodeIdx       : sublist_indices(currStoredNodesBC, lambda([x], x=currNode))[1],
+                nodeMemOff    : sum(currCellIdx[d]*cellMemOffFac[d],d,1,dim)+nodeIdx-1,
+                printf(fh, "    ~a = ~a; ~%", globalIdxs[nI-1], fullratsimp(nodeMemOff)),
+                printf(fh, "~%"),
+                flush_output(fh),
+                return(0)
+
+              ),
+
+              print("*** Error: All cases should've been handled. Exit! ***"),
+              print("currNode = ",currNode),
+              print("currLoc = ",currLoc),
+              print("currCellIdx = ",currCellIdx),
+              tmp : [0,0],  print(tmp[3]),
+              return(-1)
+
+            ),
+
+            /* 
+              Aim for:
+                sum(currCellIdx[d]*cellMemOffFac[d],d,1,dim)+newNodeIdx-1,
+            */
+            errcode : getAndWriteNodeMemOff(nodeCoords,cellIdx,cellLoc)
+
+
+          ),
+
+          printf(fh,"~%"),
+
+          printf(fh,"}~%"),
+          printf(fh,"~%")
+        )
+      )
+    )
+  )
+)$

@@ -1,0 +1,371 @@
+/* This script generates the kernels for calculating the pressure tensor 
+   p_ij = (p_par - p_perp) b_i b_j + p_perp g_ij via weak multiplication.
+   Computes both the volume expansion and the necessary surface expansions of p_ij at
+   the corresponding surfaces 
+   (Pxx, Pxy, Pxz and x surfaces, Pxy, Pyy, Pyz at y surfaces, Pxz, Pyz, Pzz at z surfaces) */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+load("scifac")$
+fpprec : 24$
+
+calcPKPMPressure(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, p_par_e, p_perp_e, 
+   p_par_xl_c, p_par_xr_c, p_par_yl_c, p_par_yr_c, p_par_zl_c, p_par_zr_c, 
+   p_perp_xl_c, p_perp_xr_c, p_perp_yl_c, p_perp_yr_c, p_perp_zl_c, p_perp_zr_c],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+  surfVarsx : delete(x,varsC),
+  bSurfx : basisFromVars(basisFun,surfVarsx,polyOrder),
+  if (cdim > 1) then (
+    surfVarsy : delete(y,varsC),
+    bSurfy : basisFromVars(basisFun,surfVarsy,polyOrder)
+  ),
+  if (cdim = 3) then (
+    surfVarsz : delete(z,varsC),
+    bSurfz : basisFromVars(basisFun,surfVarsz,polyOrder)
+  ),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+  if (cdim = 1) then (
+    NSurf : 1
+  )
+  else (
+    NSurf : length(bSurfx)
+  ),
+
+  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *bvar, const double *bvar_surf, const double *vlasov_pkpm_moms, 
+    double* GKYL_RESTRICT p_ij, double* GKYL_RESTRICT p_ij_surf) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // bvar:             Input volume expansion of magnetic field unit vector and tensor.~%"),
+  printf(fh, "  //                   [bx, by, bz, bxbx, bxby, bxbz, byby, bybz, bzbz] ~%"),
+  printf(fh, "  // bvar_surf:        Input surface expansion of magnetic field unit tensor and unit vector. ~%"),
+  printf(fh, "  //                   [bx_xl, bx_xr, bxbx_xl, bxbx_xr, bxby_xl, bxby_xr, bxbz_xl, bxbz_xr, ~%"),
+  printf(fh, "  //                    by_yl, by_yr, byby_yl, byby_yr, bxby_yl, bxby_yr, bybz_yl, bybz_yr, ~%"),
+  printf(fh, "  //                    bz_zl, bz_zr, bzbz_zl, bzbz_zr, bxbz_zl, bxbz_zr, bybz_zl, bybz_zr] ~%"),
+  printf(fh, "  // vlasov_pkpm_moms: [rho, p_parallel, p_perp], Moments computed from kinetic equation in pkpm model.~%"),
+  printf(fh, "  // p_ij:             Output volume expansion of p_ij = (p_par - p_perp) b_i b_j + p_perp g_ij.~%"),
+  printf(fh, "  // p_ij_surf:        Output surface expansion of p_ij = (p_par - p_perp) b_i b_j + p_perp g_ij.~%"),
+  printf(fh, "  //                   [Pxx_xl, Pxx_xr, Pxy_xl, Pxy_xr, Pxz_xl, Pxz_xr, ~%"),
+  printf(fh, "  //                    Pxy_yl, Pxy_yr, Pyy_yl, Pyy_yr, Pyz_yl, Pyz_yr, ~%"),
+  printf(fh, "  //                    Pxz_zl, Pxz_zr, Pyz_zl, Pyz_zr, Pzz_zl, Pzz_zr] ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  // Parallel/Perp pressure are first/second component of pkpm moment array and unit tensor are last six components of bvar array.~%"),
+  printf(fh, "  const double *p_parallel = &vlasov_pkpm_moms[~a]; ~%", 1*NC),
+  printf(fh, "  const double *p_perp = &vlasov_pkpm_moms[~a]; ~%", 2*NC),
+  printf(fh, "  const double *bxbx = &bvar[~a]; ~%", 3*NC),
+  printf(fh, "  const double *bxby = &bvar[~a]; ~%", 4*NC),
+  printf(fh, "  const double *bxbz = &bvar[~a]; ~%", 5*NC),
+  printf(fh, "  const double *byby = &bvar[~a]; ~%", 6*NC),
+  printf(fh, "  const double *bybz = &bvar[~a]; ~%", 7*NC),
+  printf(fh, "  const double *bzbz = &bvar[~a]; ~%", 8*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  double *Pxx = &p_ij[~a]; ~%", 0*NC),
+  printf(fh, "  double *Pxy = &p_ij[~a]; ~%", 1*NC),
+  printf(fh, "  double *Pxz = &p_ij[~a]; ~%", 2*NC),
+  printf(fh, "  double *Pyy = &p_ij[~a]; ~%", 3*NC),
+  printf(fh, "  double *Pyz = &p_ij[~a]; ~%", 4*NC),
+  printf(fh, "  double *Pzz = &p_ij[~a]; ~%", 5*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *bxbx_xl = &bvar_surf[~a]; ~%", 2*NSurf),
+  printf(fh, "  const double *bxbx_xr = &bvar_surf[~a]; ~%", 3*NSurf),
+  printf(fh, "  const double *bxby_xl = &bvar_surf[~a]; ~%", 4*NSurf),
+  printf(fh, "  const double *bxby_xr = &bvar_surf[~a]; ~%", 5*NSurf),
+  printf(fh, "  const double *bxbz_xl = &bvar_surf[~a]; ~%", 6*NSurf),
+  printf(fh, "  const double *bxbz_xr = &bvar_surf[~a]; ~%", 7*NSurf),
+  printf(fh, "  double *Pxx_xl = &p_ij_surf[~a]; ~%", 0*NSurf),
+  printf(fh, "  double *Pxx_xr = &p_ij_surf[~a]; ~%", 1*NSurf),
+  printf(fh, "  double *Pxy_xl = &p_ij_surf[~a]; ~%", 2*NSurf),
+  printf(fh, "  double *Pxy_xr = &p_ij_surf[~a]; ~%", 3*NSurf),
+  printf(fh, "  double *Pxz_xl = &p_ij_surf[~a]; ~%", 4*NSurf),
+  printf(fh, "  double *Pxz_xr = &p_ij_surf[~a]; ~%", 5*NSurf),
+  printf(fh, "~%"),
+  if (cdim > 1) then (
+    printf(fh, "  const double *byby_yl = &bvar_surf[~a]; ~%", 10*NSurf),
+    printf(fh, "  const double *byby_yr = &bvar_surf[~a]; ~%", 11*NSurf),
+    printf(fh, "  const double *bxby_yl = &bvar_surf[~a]; ~%", 12*NSurf),
+    printf(fh, "  const double *bxby_yr = &bvar_surf[~a]; ~%", 13*NSurf),
+    printf(fh, "  const double *bybz_yl = &bvar_surf[~a]; ~%", 14*NSurf),
+    printf(fh, "  const double *bybz_yr = &bvar_surf[~a]; ~%", 15*NSurf),
+    printf(fh, "  double *Pxy_yl = &p_ij_surf[~a]; ~%", 6*NSurf),
+    printf(fh, "  double *Pxy_yr = &p_ij_surf[~a]; ~%", 7*NSurf),
+    printf(fh, "  double *Pyy_yl = &p_ij_surf[~a]; ~%", 8*NSurf),
+    printf(fh, "  double *Pyy_yr = &p_ij_surf[~a]; ~%", 9*NSurf),
+    printf(fh, "  double *Pyz_yl = &p_ij_surf[~a]; ~%", 10*NSurf),
+    printf(fh, "  double *Pyz_yr = &p_ij_surf[~a]; ~%", 11*NSurf),
+    printf(fh, " ~%")
+  ),
+  if (cdim = 3) then (
+    printf(fh, "  const double *bzbz_zl = &bvar_surf[~a]; ~%", 18*NSurf),
+    printf(fh, "  const double *bzbz_zr = &bvar_surf[~a]; ~%", 19*NSurf),
+    printf(fh, "  const double *bxbz_zl = &bvar_surf[~a]; ~%", 20*NSurf),
+    printf(fh, "  const double *bxbz_zr = &bvar_surf[~a]; ~%", 21*NSurf),
+    printf(fh, "  const double *bybz_zl = &bvar_surf[~a]; ~%", 22*NSurf),
+    printf(fh, "  const double *bybz_zr = &bvar_surf[~a]; ~%", 23*NSurf),
+    printf(fh, "  double *Pxz_zl = &p_ij_surf[~a]; ~%", 12*NSurf),
+    printf(fh, "  double *Pxz_zr = &p_ij_surf[~a]; ~%", 13*NSurf),
+    printf(fh, "  double *Pyz_zl = &p_ij_surf[~a]; ~%", 14*NSurf),
+    printf(fh, "  double *Pyz_zr = &p_ij_surf[~a]; ~%", 15*NSurf),
+    printf(fh, "  double *Pzz_zl = &p_ij_surf[~a]; ~%", 16*NSurf),
+    printf(fh, "  double *Pzz_zr = &p_ij_surf[~a]; ~%", 17*NSurf),
+    printf(fh, " ~%")
+  ),
+
+  /* Expand p_par and p_perp for surface evaluations */
+  p_par_e : doExpand1(p_parallel, bC), 
+  p_perp_e : doExpand1(p_perp, bC), 
+
+  /* First construct the volume expansion of the pressure tensor */
+  /* Temporary array of temperature anisotropy */
+  printf(fh, "  double DP[~a] = {0.0}; ~%", NC),
+  for i : 1 thru NC do (
+    printf(fh, "  DP[~a] = p_parallel[~a] - p_perp[~a]; ~%", i-1, i-1, i-1)
+  ),
+  printf(fh, "  // DP b_i b_j. ~%"),
+  printf(fh, "  double DP_bxbx[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(DP, bxbx, DP_bxbx); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double DP_bxby[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(DP, bxby, DP_bxby); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double DP_bxbz[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(DP, bxbz, DP_bxbz); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double DP_byby[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(DP, byby, DP_byby); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double DP_bybz[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(DP, bybz, DP_bybz); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double DP_bzbz[~a] = {0.0}; ~%", NC),
+  printf(fh, "  binop_mul_~ad_~a_p~a(DP, bzbz, DP_bzbz); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  for i : 1 thru NC do (
+    printf(fh, "  Pxx[~a] = DP_bxbx[~a] + p_perp[~a]; ~%", i-1, i-1, i-1),
+    printf(fh, "  Pxy[~a] = DP_bxby[~a]; ~%", i-1, i-1),
+    printf(fh, "  Pxz[~a] = DP_bxbz[~a]; ~%", i-1, i-1),
+    printf(fh, "  Pyy[~a] = DP_byby[~a] + p_perp[~a]; ~%", i-1, i-1, i-1),
+    printf(fh, "  Pyz[~a] = DP_bybz[~a]; ~%", i-1, i-1),
+    printf(fh, "  Pzz[~a] = DP_bzbz[~a] + p_perp[~a]; ~%", i-1, i-1, i-1)
+  ),
+  printf(fh, " ~%"),
+
+  /* Now the surface expansion of the pressure tensor at the corresponding interfaces */
+  if (cdim = 1) then (
+    printf(fh, "  double p_par_xl = ~a; ~%", float(expand(subst(x=-1, p_par_e)))),
+    printf(fh, "  double p_par_xr = ~a; ~%", float(expand(subst(x=1, p_par_e)))),
+    printf(fh, "  double p_perp_xl = ~a; ~%", float(expand(subst(x=-1, p_perp_e)))),
+    printf(fh, "  double p_perp_xr = ~a; ~%", float(expand(subst(x=1, p_perp_e)))),
+    printf(fh, "  Pxx_xl[0] = (p_par_xl - p_perp_xl)*bxbx_xl[0] + p_perp_xl; ~%"),
+    printf(fh, "  Pxx_xr[0] = (p_par_xr - p_perp_xr)*bxbx_xr[0] + p_perp_xr; ~%"),
+    printf(fh, "  Pxy_xl[0] = (p_par_xl - p_perp_xl)*bxby_xl[0]; ~%"),
+    printf(fh, "  Pxy_xr[0] = (p_par_xr - p_perp_xr)*bxby_xr[0]; ~%"),
+    printf(fh, "  Pxz_xl[0] = (p_par_xl - p_perp_xl)*bxbz_xl[0]; ~%"),
+    printf(fh, "  Pxz_xr[0] = (p_par_xr - p_perp_xr)*bxbz_xr[0]; ~%"),
+    printf(fh, " ~%")
+  )
+  else (
+    printf(fh, "  double p_par_xl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double p_par_xr[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double p_par_yl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double p_par_yr[~a] = {0.0}; ~%", NSurf), 
+    if (cdim = 3) then (
+      printf(fh, "  double p_par_zl[~a] = {0.0}; ~%", NSurf),
+      printf(fh, "  double p_par_zr[~a] = {0.0}; ~%", NSurf)
+    ),
+    printf(fh, " ~%"),
+
+    printf(fh, "  double p_perp_xl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double p_perp_xr[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double p_perp_yl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double p_perp_yr[~a] = {0.0}; ~%", NSurf), 
+    if (cdim = 3) then (
+      printf(fh, "  double p_perp_zl[~a] = {0.0}; ~%", NSurf),
+      printf(fh, "  double p_perp_zr[~a] = {0.0}; ~%", NSurf)
+    ),
+    printf(fh, " ~%"),
+
+    p_par_xl_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=-1, p_par_e)),
+    p_par_xr_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=1, p_par_e)),
+    p_perp_xl_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=-1, p_perp_e)),
+    p_perp_xr_c : calcInnerProdList(surfVarsx, 1, bSurfx, subst(x=1, p_perp_e)),
+
+    writeCExprs1(p_par_xl, p_par_xl_c), 
+    writeCExprs1(p_par_xr, p_par_xr_c), 
+    writeCExprs1(p_perp_xl, p_perp_xl_c), 
+    writeCExprs1(p_perp_xr, p_perp_xr_c), 
+    printf(fh, " ~%"), 
+
+    p_par_yl_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=-1, p_par_e)),
+    p_par_yr_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=1, p_par_e)),
+    p_perp_yl_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=-1, p_perp_e)),
+    p_perp_yr_c : calcInnerProdList(surfVarsy, 1, bSurfy, subst(y=1, p_perp_e)),
+
+    writeCExprs1(p_par_yl, p_par_yl_c), 
+    writeCExprs1(p_par_yr, p_par_yr_c), 
+    writeCExprs1(p_perp_yl, p_perp_yl_c), 
+    writeCExprs1(p_perp_yr, p_perp_yr_c), 
+    printf(fh, " ~%"), 
+
+    if (cdim = 3) then (
+      p_par_zl_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=-1, p_par_e)),
+      p_par_zr_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=1, p_par_e)),
+      p_perp_zl_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=-1, p_perp_e)),
+      p_perp_zr_c : calcInnerProdList(surfVarsz, 1, bSurfz, subst(z=1, p_perp_e)),
+
+      writeCExprs1(p_par_zl, p_par_zl_c), 
+      writeCExprs1(p_par_zr, p_par_zr_c), 
+      writeCExprs1(p_perp_zl, p_perp_zl_c), 
+      writeCExprs1(p_perp_zr, p_perp_zr_c), 
+      printf(fh, " ~%")
+    ),
+
+    printf(fh, "  double DP_xl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_xr[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_yl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_yr[~a] = {0.0}; ~%", NSurf), 
+    if (cdim = 3) then (
+      printf(fh, "  double DP_zl[~a] = {0.0}; ~%", NSurf),
+      printf(fh, "  double DP_zr[~a] = {0.0}; ~%", NSurf)
+    ),
+    printf(fh, " ~%"),
+    for i : 1 thru NSurf do (
+      printf(fh, "  DP_xl[~a] = p_par_xl[~a] - p_perp_xl[~a]; ~%", i-1, i-1, i-1),
+      printf(fh, "  DP_xr[~a] = p_par_xr[~a] - p_perp_xr[~a]; ~%", i-1, i-1, i-1),
+      printf(fh, "  DP_yl[~a] = p_par_yl[~a] - p_perp_yl[~a]; ~%", i-1, i-1, i-1),
+      printf(fh, "  DP_yr[~a] = p_par_yr[~a] - p_perp_yr[~a]; ~%", i-1, i-1, i-1),
+      if (cdim = 3) then (
+        printf(fh, "  DP_zl[~a] = p_par_zl[~a] - p_perp_zl[~a]; ~%", i-1, i-1, i-1),
+        printf(fh, "  DP_zr[~a] = p_par_zr[~a] - p_perp_zr[~a]; ~%", i-1, i-1, i-1)
+      )
+    ),
+
+    printf(fh, "  // DP b_i b_j at lower x surface. ~%"),
+    printf(fh, "  double DP_bxbx_xl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_bxby_xl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_bxbz_xl[~a] = {0.0}; ~%", NSurf),
+    if (cdim = 2) then (
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_xl, bxbx_xl, DP_bxbx_xl); ~%", cdim-1, polyOrder),
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_xl, bxby_xl, DP_bxby_xl); ~%", cdim-1, polyOrder),
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_xl, bxbz_xl, DP_bxbz_xl); ~%", cdim-1, polyOrder)
+    )
+    else (
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_xl, bxbx_xl, DP_bxbx_xl); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_xl, bxby_xl, DP_bxby_xl); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_xl, bxbz_xl, DP_bxbz_xl); ~%", cdim-1, basisFun, polyOrder)
+    ),
+    printf(fh, " ~%"),
+
+    printf(fh, "  // DP b_i b_j at upper x surface. ~%"),
+    printf(fh, "  double DP_bxbx_xr[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_bxby_xr[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_bxbz_xr[~a] = {0.0}; ~%", NSurf),
+    if (cdim = 2) then (
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_xr, bxbx_xr, DP_bxbx_xr); ~%", cdim-1, polyOrder),
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_xr, bxby_xr, DP_bxby_xr); ~%", cdim-1, polyOrder),
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_xr, bxbz_xr, DP_bxbz_xr); ~%", cdim-1, polyOrder)
+    )
+    else (
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_xr, bxbx_xr, DP_bxbx_xr); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_xr, bxby_xr, DP_bxby_xr); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_xr, bxbz_xr, DP_bxbz_xr); ~%", cdim-1, basisFun, polyOrder)
+    ),
+    printf(fh, " ~%"),
+
+    printf(fh, "  // DP b_i b_j at lower y surface. ~%"),
+    printf(fh, "  double DP_bxby_yl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_byby_yl[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_bybz_yl[~a] = {0.0}; ~%", NSurf),
+    if (cdim = 2) then (
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_yl, bxby_yl, DP_bxby_yl); ~%", cdim-1, polyOrder),
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_yl, byby_yl, DP_byby_yl); ~%", cdim-1, polyOrder),
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_yl, bybz_yl, DP_bybz_yl); ~%", cdim-1, polyOrder)
+    )
+    else (
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_yl, bxby_yl, DP_bxby_yl); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_yl, byby_yl, DP_byby_yl); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_yl, bybz_yl, DP_bybz_yl); ~%", cdim-1, basisFun, polyOrder)
+    ),
+    printf(fh, " ~%"),
+
+    printf(fh, "  // DP b_i b_j at upper y surface. ~%"),
+    printf(fh, "  double DP_bxby_yr[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_byby_yr[~a] = {0.0}; ~%", NSurf),
+    printf(fh, "  double DP_bybz_yr[~a] = {0.0}; ~%", NSurf),
+    if (cdim = 2) then (
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_yr, bxby_yr, DP_bxby_yr); ~%", cdim-1, polyOrder),
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_yr, byby_yr, DP_byby_yr); ~%", cdim-1, polyOrder),
+      printf(fh, "  binop_mul_~ad_ser_p~a(DP_yr, bybz_yr, DP_bybz_yr); ~%", cdim-1, polyOrder)
+    )
+    else (
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_yr, bxby_yr, DP_bxby_yr); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_yr, byby_yr, DP_byby_yr); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_yr, bybz_yr, DP_bybz_yr); ~%", cdim-1, basisFun, polyOrder)
+    ),
+    printf(fh, " ~%"),
+
+    if (cdim = 3) then (
+      printf(fh, "  // DP b_i b_j at lower z surface. ~%"),
+      printf(fh, "  double DP_bxbz_zl[~a] = {0.0}; ~%", NSurf),
+      printf(fh, "  double DP_bybz_zl[~a] = {0.0}; ~%", NSurf),
+      printf(fh, "  double DP_bzbz_zl[~a] = {0.0}; ~%", NSurf),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_zl, bxbz_zl, DP_bxbz_zl); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_zl, bybz_zl, DP_bybz_zl); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_zl, bzbz_zl, DP_bzbz_zl); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, " ~%"),
+
+      printf(fh, "  // DP b_i b_j at upper z surface. ~%"),
+      printf(fh, "  double DP_bxbz_zr[~a] = {0.0}; ~%", NSurf),
+      printf(fh, "  double DP_bybz_zr[~a] = {0.0}; ~%", NSurf),
+      printf(fh, "  double DP_bzbz_zr[~a] = {0.0}; ~%", NSurf),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_zr, bxbz_zr, DP_bxbz_zr); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_zr, bybz_zr, DP_bybz_zr); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, "  binop_mul_~ad_~a_p~a(DP_zr, bzbz_zr, DP_bzbz_zr); ~%", cdim-1, basisFun, polyOrder),
+      printf(fh, " ~%")
+    ),
+
+    for i : 1 thru NSurf do (
+      printf(fh, "  Pxx_xl[~a] = DP_bxbx_xl[~a] + p_perp_xl[~a]; ~%", i-1, i-1, i-1),
+      printf(fh, "  Pxx_xr[~a] = DP_bxbx_xr[~a] + p_perp_xr[~a]; ~%", i-1, i-1, i-1),
+      printf(fh, "  Pxy_xl[~a] = DP_bxby_xl[~a]; ~%", i-1, i-1),
+      printf(fh, "  Pxy_xr[~a] = DP_bxby_xr[~a]; ~%", i-1, i-1),
+      printf(fh, "  Pxz_xl[~a] = DP_bxbz_xl[~a]; ~%", i-1, i-1),
+      printf(fh, "  Pxz_xr[~a] = DP_bxbz_xr[~a]; ~%", i-1, i-1),
+      printf(fh, " ~%"),
+
+      printf(fh, "  Pxy_yl[~a] = DP_bxby_yl[~a]; ~%", i-1, i-1),
+      printf(fh, "  Pxy_yr[~a] = DP_bxby_yr[~a]; ~%", i-1, i-1),
+      printf(fh, "  Pyy_yl[~a] = DP_byby_yl[~a] + p_perp_yl[~a]; ~%", i-1, i-1, i-1),
+      printf(fh, "  Pyy_yr[~a] = DP_byby_yr[~a] + p_perp_yr[~a]; ~%", i-1, i-1, i-1),
+      printf(fh, "  Pyz_yl[~a] = DP_bybz_yl[~a]; ~%", i-1, i-1),
+      printf(fh, "  Pyz_yr[~a] = DP_bybz_yr[~a]; ~%", i-1, i-1),
+      printf(fh, " ~%"),
+
+      if (cdim = 3) then (
+        printf(fh, "  Pxz_zl[~a] = DP_bxbz_zl[~a]; ~%", i-1, i-1),
+        printf(fh, "  Pxz_zr[~a] = DP_bxbz_zr[~a]; ~%", i-1, i-1),
+        printf(fh, "  Pyz_zl[~a] = DP_bybz_zl[~a]; ~%", i-1, i-1),
+        printf(fh, "  Pyz_zr[~a] = DP_bybz_zr[~a]; ~%", i-1, i-1),
+        printf(fh, "  Pzz_zl[~a] = DP_bzbz_zl[~a] + p_perp_zl[~a]; ~%", i-1, i-1, i-1),
+        printf(fh, "  Pzz_zr[~a] = DP_bzbz_zr[~a] + p_perp_zr[~a]; ~%", i-1, i-1, i-1),
+        printf(fh, " ~%")
+      )
+    )
+  ),
+  printf(fh, "} ~%")
+)$
