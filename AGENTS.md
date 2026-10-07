@@ -20,6 +20,8 @@ of its software, identify bugs and other issues, troubleshoot and make suggestio
   issues you identify along the way that may not be related to your task.
 - New and edited code should prioritize correctness, performance,
   maintainability and simplicity, in that order (from most to least important).
+- For Maxima code edited or created by agents, prioritize correctness, simplicity,
+  and performance, in that order.
 - Test and verify new and edited code.
 - Take into consideration the ideas and guidelines colleagues give you, but be
   creative and suggest alternative approaches.
@@ -38,4 +40,4 @@ working directory. Links inside a skill are relative to that skill's directory.
 | Create or modify CAS scripts | [Software design](.agents/skills/software-design/SKILL.md) |
 | Name new or existing CAS objects | [Naming conventions](.agents/skills/naming-conventions/SKILL.md) |
 | Run CAS code | [Running CAS](.agents/skills/running-cas/SKILL.md) |
-
+| Look up Maxima syntax or behavior while editing or creating CAS code | [Maxima documentation](.agents/skills/maxima-docs/SKILL.md) |
