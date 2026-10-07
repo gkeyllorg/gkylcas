@@ -216,28 +216,26 @@ calcHamilVelSurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_r
   printf(fh, "} ~%")
 )$  
 
-/* Velocity-space surface update from the pre-computed nodal flux, as loops
-   over the shared consumer projection tables (vst_<tag>_prj_v<d>_*, see
-   writeConsumerProjTables in surf-eval-tables.mac). Mode k's projection
-   g = <bSurfP_k, F_nodal>/coef_k factorizes over the conf (x) vel
-   tensor-product node set into the Cw/Vw table contractions
-   (quadrature-weight-folded shape evaluations, exactly the inner products
-   with the nodal cardinal basis by Gauss-Legendre exactness), and the
-   volume increments follow from the restriction identity
+/* Velocity-space surface update from the pre-computed surface flux. The
+   producers (lax_flux_nodal kernels, see nodal-lax-emit.mac) store the flux
+   already projected onto the surface modal basis: mode k's coefficient
+   g = <bSurfP_k, F_nodal>/coef_k, computed there with the shared consumer
+   projection tables (vst_<tag>_prj_v<d>_*, writeConsumerProjTables in
+   surf-eval-tables.mac). The consumer reads flux[off + k] and applies the
+   volume increments that follow from the restriction identity
    bP_m|_{vv=+/-1} = c*bSurfP_{s(m)} (signs and coef folded into the
    coefficient tables at generation time, where all identities are asserted
-   exactly). No G1/Ghat scratch, no duplicated left/right matrices.
+   exactly).
 
    TWO FRAMINGS of the same tables are emitted into each .c file:
    - the WRAPPER (original ABI, production CPU path) loops SURFACE modes k
-     and scatters through the CSR out maps -- flop-minimal (each projection
-     computed once; per-volume-mode recompute measured 1.5-5.8x slower in
-     hyper_dg on CPU);
+     and scatters through the CSR out maps;
    - the `_mode(m, ...)` function (declared in
      gkyl_vlasov_surf_node_kernels.h) does ONE VOLUME MODE's work via the
-     transposed pm_ maps: thread m owns out[m] exclusively, in every
-     direction, so a (cells x np) GPU launch needs no atomics or barriers.
-   Both use emitPrjProjection, so the projections cannot drift apart.
+     transposed pm_ maps (pm_s = surface mode of volume mode m): thread m
+     owns out[m] exclusively, in every direction, so a (cells x np) GPU
+     launch needs no atomics or barriers.
+   Both use emitPrjProjection, so the two cannot drift apart.
    Never hand-edit one form in isolation; regenerate the file. */
 calcVelSurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP, vid,vv, surfVars,surfVVars,
@@ -266,7 +264,7 @@ calcVelSurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   NMV : length(fact[2]),
   tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
   pre : sconcat("vst_", tag, "_prj_v", dir-1),
-  off : (dir-1)*numNodes,
+  off : (dir-1)*NK, /* Modal offset of this direction in the stored flux. */
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder),
@@ -276,18 +274,18 @@ calcVelSurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
      emitConsumerModeFns in surf-eval-tables.mac. */
   if emitConsumerModeFns then (
     printf(fh, "GKYL_CU_DH void ~a_mode(int m, double dv1~a,
-  const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
-    emitPrjProjection(fh, pre, "pm_a", "pm_b", "m", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
+  const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
+    emitPrjProjection(fh, pre, "pm_s", "m", off, "flux_l", "flux_r"),
     printf(fh, "  out[m] += dv1~a*(~a_pm_cl[m]*g_l + ~a_pm_cr[m]*g_r); ~%", dir-1, pre, pre),
     printf(fh, "} ~%~%")
   ),
 
   /* Surface-mode CSR form (CPU): each projection computed once. */
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *Fhat_l_nodal, const double *Fhat_r_nodal, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
   printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
   printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NK),
-  emitPrjProjection(fh, pre, "kamap", "kbmap", "k", NA, NMV, num_nodes_conf, num_nodes_vel, off, "Fhat_l_nodal", "Fhat_r_nodal"),
+  emitPrjProjection(fh, pre, false, "k", off, "flux_l", "flux_r"),
   printf(fh, "  for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
   printf(fh, "    out[~a_out_mode[q]] += dv1~a*(~a_out_cl[q]*g_l + ~a_out_cr[q]*g_r); ~%", pre, dir-1, pre, pre),
   printf(fh, "  } ~%"),

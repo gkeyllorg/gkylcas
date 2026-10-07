@@ -290,6 +290,7 @@ writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars,
      slower in hyper_dg -- so the CPU wrappers loop the CSR arrays above
      (flop-minimal surface-mode framing, disjoint mode groups per
      direction) and only the GPU launch composes the pm_ maps. */
+  emitTabIntArray(fh, sconcat(prefix, "_pm_s"), makelist(smode[m]-1, m, 1, NP)),
   emitTabIntArray(fh, sconcat(prefix, "_pm_a"), makelist(kamap[smode[m]], m, 1, NP)),
   emitTabIntArray(fh, sconcat(prefix, "_pm_b"), makelist(kbmap[smode[m]], m, 1, NP)),
   emitTabDoubleArray(fh, sconcat(prefix, "_pm_cl"), makelist(clm[m], m, 1, NP)),
@@ -313,38 +314,21 @@ writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars,
    the pm_ tables above are already emitted and waiting. */
 emitConsumerModeFns : false$
 
-/* Emit the factorized projection of the nodal flux for one surface mode,
-   whose (a,b) shape columns come from map arrays aname/bname at index
-   expression idx ("k" via kamap/kbmap in the wrapper's CSR loop, "m" via
-   pm_a/pm_b in the per-volume-mode GPU function): declares a, b and
-   g_l/g_r (two-sided; fluxR # false) or g (one-sided), with the
-   outer (i) x inner (j) contraction loops over Cw/Vw. Shared by all four
-   consumer kernel emitters so the two framings cannot drift apart. */
-emitPrjProjection(fh, pre, aname, bname, idx, NA, NMV, NO, NI, off, fluxL, fluxR) := (
-  printf(fh, "  const int a = ~a_~a[~a]; ~%", pre, aname, idx),
-  printf(fh, "  const int b = ~a_~a[~a]; ~%", pre, bname, idx),
-  if (fluxR = false) then (
-    printf(fh, "  double g = 0.0; ~%"),
-    printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
-    printf(fh, "    double t = 0.0; ~%"),
-    printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
-    printf(fh, "      t += ~a_Vw[j*~a + b]*~a[~a + i*~a + j]; ~%", pre, NMV, fluxL, off, NI),
-    printf(fh, "    } ~%"),
-    printf(fh, "    g += ~a_Cw[i*~a + a]*t; ~%", pre, NA),
-    printf(fh, "  } ~%")
-  ) else (
-    printf(fh, "  double g_l = 0.0; ~%"),
-    printf(fh, "  double g_r = 0.0; ~%"),
-    printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
-    printf(fh, "    double t_l = 0.0; ~%"),
-    printf(fh, "    double t_r = 0.0; ~%"),
-    printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
-    printf(fh, "      t_l += ~a_Vw[j*~a + b]*~a[~a + i*~a + j]; ~%", pre, NMV, fluxL, off, NI),
-    printf(fh, "      t_r += ~a_Vw[j*~a + b]*~a[~a + i*~a + j]; ~%", pre, NMV, fluxR, off, NI),
-    printf(fh, "    } ~%"),
-    printf(fh, "    g_l += ~a_Cw[i*~a + a]*t_l; ~%", pre, NA),
-    printf(fh, "    g_r += ~a_Cw[i*~a + a]*t_r; ~%", pre, NA),
-    printf(fh, "  } ~%")
+/* Emit the read of one surface mode's modal flux coefficient(s) for the
+   consumer kernels: the producers (lax_flux_nodal _prj) store the flux
+   already projected onto the surface modal basis, flux[off + k] with off
+   the direction's modal offset. sname is false for the surface-mode CSR
+   form (idx is the surface mode k) or the pm_s map name for the
+   per-volume-mode form (idx is the volume mode m, whose surface mode is
+   pre_pm_s[m]). Declares g_l/g_r (two-sided; fluxR # false) or g
+   (one-sided). Shared by all four consumer kernel emitters. */
+emitPrjProjection(fh, pre, sname, idx, off, fluxL, fluxR) := block([kexpr],
+  kexpr : if (sname = false) then idx else printf(false, "~a_~a[~a]", pre, sname, idx),
+  if (fluxR = false) then
+    printf(fh, "  const double g = ~a[~a + ~a]; ~%", fluxL, off, kexpr)
+  else (
+    printf(fh, "  const double g_l = ~a[~a + ~a]; ~%", fluxL, off, kexpr),
+    printf(fh, "  const double g_r = ~a[~a + ~a]; ~%", fluxR, off, kexpr)
   )
 )$
 
@@ -385,6 +369,20 @@ writePhaseFactorTables(fh, prefix, bP, outerVars, normalVar, innerVars,
   for k : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(ed[5][k]*coefL[k]))),
   printf(fh, "}; ~%"),
   emitTabIntArray(fh, sconcat(prefix, "_cmap"), fact[4]),
+  /* cmap inverted to CSR form (aoff[a] .. aoff[a+1]-1 index the k with
+     cmap[k] = a, in increasing k), for the stage-1 producer that computes one
+     (inner node, outer shape) entry G[j][a] per call. Increasing k keeps the
+     summation order of the former per-node loop, so results are unchanged. */
+  block([aoff, aks, a, k],
+    aoff : makelist(0, a, 1, NA+1),
+    aks : [],
+    for a : 0 thru NA-1 do (
+      for k : 1 thru NB do if fact[4][k] = a then aks : endcons(k-1, aks),
+      aoff[a+2] : length(aks)
+    ),
+    emitTabIntArray(fh, sconcat(prefix, "_aoff"), aoff),
+    emitTabIntArray(fh, sconcat(prefix, "_aks"), aks)
+  ),
   emitTabIntArray(fh, sconcat(prefix, "_vlmap"), ed[2]),
   emitTabIntArray(fh, sconcat(prefix, "_vrmap"), ed[3]),
   if not(psiDerivVars = false) then block([dd, dV, dcl, dcr, kk],

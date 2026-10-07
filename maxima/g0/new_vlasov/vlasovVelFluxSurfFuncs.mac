@@ -28,6 +28,7 @@ load("utilities")$
 load("nodal_operations/nodal_functions")$
 load("new_vlasov/vlasov-basis");
 load("new_vlasov/nodal-lax-emit");
+load("new_vlasov/alpha-factor-emit");
 load("new_vlasov/surf-eval-tables");
 load(stringproc)$
 fpprec : 24$
@@ -47,7 +48,7 @@ vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
 calcHamilPhaseVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP,cid,vv,surfVars,surfVVars,bSurf,NSurf,
    nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
-   surfNodes,numNodes,fact,sizesNA,tabP,NB,NA,NMV],
+   surfNodes,numNodes,fact,sizesNA,tabP,NB,NA,NMV,prelude,outerBody,innerBody],
 
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
   NB : length(bP),
@@ -62,9 +63,11 @@ calcHamilPhaseVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   numNodes : length(surfNodes),
 
   /* -dH/dx_dir at (vv = -1, surface nodes) via the shared phase-factor
-     tables: stage 1 contracts hamil onto the inner shapes at the -1 edge
-     (the cell owns its lower edge; coefr/vrmap), stage 2 dots with the
-     dir-derivative of the outer shapes (CmD). */
+     tables: the inner factor is the -1-edge contraction of hamil onto the
+     inner shapes (the cell owns its lower edge; coefr/vrmap), G[j][a]; the
+     outer factor is the dir-derivative of the outer shapes (CmD) at the
+     configuration node, with the sign, dx and the position-map Jacobian of
+     the derivative direction folded in. One term per outer shape a. */
   fact : laxFactorizeBasis(bP, varsC, cons(vv, surfVVars)),
   sizesNA : laxFactorSizes(fact, vv),
   NA : sizesNA[1], NMV : sizesNA[2],
@@ -73,41 +76,34 @@ calcHamilPhaseVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
   cid : cidx(cdim),
-  /* Node function (Design A): rebuild the j-th G column of the -1-edge
-     Hamiltonian contraction in registers, dot with the dir-derivative of
-     the outer shapes (CmD). */
-  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j, const double *w, const double *dxv,
-  const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
-  const double *poisson_tensor_conf, const double *hamil) ~%{ ~%", funcNm),
-  printf(fh, "  double dx1~a = 2.0/dxv[~a]; ~%", dir-1, cid[dir]),
   /* The -dH/dx_dir derivative picks up 1/J_x,dir -- the position-map (mesh)
      Jacobian in the DIRECTION OF THE DERIVATIVE (cell-wise constant for the
      C^0 linear map), not the total map Jacobian. */
-  printf(fh, "  const double *jacob_c~a = &jacob_pos[~a]; ~%", clabels[dir], (polyOrder+1)*(dir-1)),
-  printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_c~a[0]; ~%", clabels[dir], clabels[dir]),
-  printf(fh, "  double G[~a]; ~%", NA),
-  printf(fh, "  for (int a = 0; a < ~a; ++a) G[a] = 0.0; ~%", NA),
-  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NB),
-  printf(fh, "    G[~a_cmap[k]] += ~a_V[j*~a + ~a_vrmap[k]]*(~a_coefr[k]*hamil[k]); ~%", tabP, tabP, NMV, tabP, tabP),
-  printf(fh, "  } ~%"),
-  printf(fh, "  double dH_dx = 0.0; ~%"),
-  printf(fh, "  for (int a = 0; a < ~a; ++a) dH_dx += ~a_CmD[i*~a + a]*G[a]; ~%", NA, tabP, NA),
-  printf(fh, "  return -dx1~a*jacob_c~a_inv*dH_dx; ~%", dir-1, clabels[dir]),
-  printf(fh, "} ~%~%"),
-  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *vmap,
-  const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf,
-  const double *hamil, double* GKYL_RESTRICT alpha_quad) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
-  printf(fh, "    for (int j = 0; j < ~a; ++j) alpha_quad[i*~a + j] += ~a_node(i, j, w, dxv, vmap, jacob_pos, jacob_vel_surf, poisson_tensor_conf, hamil); ~%", num_nodes_vel, num_nodes_vel, funcNm),
-  printf(fh, "  } ~%"),
-  printf(fh, "} ~%")
+  prelude : [
+    printf(false, "const double dx1~a = 2.0/dxv[~a];", dir-1, cid[dir]),
+    printf(false, "const double jacob_c~a_inv = 1.0/jacob_pos[~a];", clabels[dir], (polyOrder+1)*(dir-1))
+  ],
+  outerBody : [
+    printf(false, "for (int a = 0; a < ~a; ++a) O[a*~a + i] = -dx1~a*jacob_c~a_inv*~a_CmD[i*~a + a];", NA, num_nodes_conf, dir-1, clabels[dir], tabP, NA)
+  ],
+  innerBody : [
+    printf(false, "double G[~a];", NA),
+    printf(false, "for (int a = 0; a < ~a; ++a) G[a] = 0.0;", NA),
+    printf(false, "for (int k = 0; k < ~a; ++k) {", NB),
+    printf(false, "  G[~a_cmap[k]] += ~a_V[j*~a + ~a_vrmap[k]]*(~a_coefr[k]*hamil[k]);", tabP, tabP, NMV, tabP, tabP),
+    "}",
+    printf(false, "for (int a = 0; a < ~a; ++a) I[a*~a + j] = G[a];", NA, num_nodes_vel)
+  ],
+  alphaEmitFactored(fh, funcNm,
+    "const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil",
+    NA, num_nodes_conf, num_nodes_vel, prelude, outerBody, innerBody)
 )$
 
 /* Scalar potential forces at velocity-space surface quadrature points. */
 calcPhiVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP,cid,NC,vv,surfVars,surfVVars,bSurf,NSurf,
    nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
-   surfNodes,numNodes,tag],
+   surfNodes,numNodes,tag,prelude,outerBody,innerBody],
 
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
   NC : length(bC),
@@ -125,23 +121,21 @@ calcPhiVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherO
   printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
   cid : cidx(cdim),
-  /* Transform the configuration gradient of phi to the mapped grid: the force
-     in velocity direction dir is -(1/J_x,dir) d/dxi_dir(phi). The node
-     function re-evaluates the gradient at its own (i, j) (Design A). */
-  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j, const double *dxv, const double *jacob_pos, const double *phi) ~%{ ~%", funcNm),
-  printf(fh, "  double dx1~a = 2.0/dxv[~a]; ~%", dir-1, cid[dir]),
-  printf(fh, "  const double *jacob_c~a = &jacob_pos[~a]; ~%", clabels[dir], (polyOrder+1)*(dir-1)),
-  printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_c~a[0]; ~%", clabels[dir], clabels[dir]),
-  printf(fh, "  double force_quad = 0.0; ~%"),
-  printf(fh, "  for (int a = 0; a < ~a; ++a) force_quad += vst_~a_conf_dx~a[i*~a + a]*phi[a]; ~%", NC, tag, dir-1, NC),
-  printf(fh, "  force_quad *= jacob_c~a_inv; ~%", clabels[dir]),
-  printf(fh, "  return -~a*force_quad; ~%", dx1[dir]),
-  printf(fh, "} ~%~%"),
-  printf(fh, "GKYL_CU_DH void ~a(const double *dxv, const double *jacob_pos, const double *phi, double* GKYL_RESTRICT alpha_quad) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
-  printf(fh, "    for (int j = 0; j < ~a; ++j) alpha_quad[i*~a + j] += ~a_node(i, j, dxv, jacob_pos, phi); ~%", num_nodes_vel, num_nodes_vel, funcNm),
-  printf(fh, "  } ~%"),
-  printf(fh, "} ~%")
+  /* The force in velocity direction dir is -(1/J_x,dir) d/dxi_dir(phi): a
+     configuration-space quantity, so a single outer factor (the gradient at
+     the configuration node, mapped) with inner factor 1. */
+  prelude : [
+    printf(false, "const double dx1~a = 2.0/dxv[~a];", dir-1, cid[dir]),
+    printf(false, "const double jacob_c~a_inv = 1.0/jacob_pos[~a];", clabels[dir], (polyOrder+1)*(dir-1))
+  ],
+  outerBody : [
+    "double force_quad = 0.0;",
+    printf(false, "for (int a = 0; a < ~a; ++a) force_quad += vst_~a_conf_dx~a[i*~a + a]*phi[a];", NC, tag, dir-1, NC),
+    printf(false, "O[i] = -dx1~a*(force_quad*jacob_c~a_inv);", dir-1, clabels[dir])
+  ],
+  innerBody : ["I[j] = 1.0;"],
+  alphaEmitFactored(fh, funcNm, "const double *dxv, const double *jacob_pos, const double *phi",
+    1, num_nodes_conf, num_nodes_vel, prelude, outerBody, innerBody)
 )$
 
 /* Total bulk forces, i.e., forces which are only a function of configuration space
@@ -149,7 +143,7 @@ calcPhiVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherO
 calcEVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP,NC,vv,surfVars,surfVVars,bSurf,NSurf,
    nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
-   surfNodes,numNodes,tag],
+   surfNodes,numNodes,tag,prelude,outerBody,innerBody],
 
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
   NC : length(bC),
@@ -167,27 +161,25 @@ calcEVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrd
   printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
   /* Electric field/external forces are only a function of configuration
-     space; the node function returns its own (i, j) contribution (Design A;
-     the per-node dispatch sums force contributions in a register). */
-  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j, const double *dxv, const double *qmem) ~%{ ~%", funcNm),
-  printf(fh, "  const double *E~a = &qmem[~a]; ~%", clabels[dir], NC*(dir-1)),
-  printf(fh, "  double force_quad = 0.0; ~%"),
-  printf(fh, "  for (int a = 0; a < ~a; ++a) force_quad += vst_~a_conf_ev[i*~a + a]*E~a[a]; ~%", NC, tag, NC, clabels[dir]),
-  printf(fh, "  return force_quad; ~%"),
-  printf(fh, "} ~%~%"),
-  printf(fh, "GKYL_CU_DH void ~a(const double *dxv, const double *qmem, double* GKYL_RESTRICT alpha_quad) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
-  printf(fh, "    for (int j = 0; j < ~a; ++j) alpha_quad[i*~a + j] += ~a_node(i, j, dxv, qmem); ~%", num_nodes_vel, num_nodes_vel, funcNm),
-  printf(fh, "  } ~%"),
-  printf(fh, "} ~%")
+     space: a single outer factor (E_dir at the configuration node), inner
+     factor 1. */
+  prelude : [printf(false, "const double *E~a = &qmem[~a];", clabels[dir], NC*(dir-1))],
+  outerBody : [
+    "double force_quad = 0.0;",
+    printf(false, "for (int a = 0; a < ~a; ++a) force_quad += vst_~a_conf_ev[i*~a + a]*E~a[a];", NC, tag, NC, clabels[dir]),
+    "O[i] = force_quad;"
+  ],
+  innerBody : ["I[j] = 1.0;"],
+  alphaEmitFactored(fh, funcNm, "const double *dxv, const double *qmem",
+    1, num_nodes_conf, num_nodes_vel, prelude, outerBody, innerBody)
 )$
 
 /* Magnetic force with velocity-space Hamiltonian at velocity-space surface quadrature points. */
 calcBHamilVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, rep, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP,NC,NV,NP,vid,vv,surfVars,surfVVars,bSurf,NSurf,
    nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
-   surfNodes,numNodes,tag,NS,b,k,transK,jacob_edge,jacob_vi_surf,jacob_surf_tot,
-   jdiv,jdivK,bLabs,accStr,kk,nPts,fact,sizesNA,NA,tabP,ndk],
+   surfNodes,numNodes,tag,NS,b,k,transK,kk,nPts,fact,sizesNA,NA,tabP,ndk,
+   jdivK,terms,NT,nterm,prelude,outerBody,innerBody,bOff,bNm,sgn,tt,dvfac],
 
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
   NC : length(bC),
@@ -219,7 +211,7 @@ calcBHamilVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_r
     sizesNA : laxFactorSizes(fact, vv),
     NA : sizesNA[1],
     tabP : sconcat("vst_", tag, "_ph_v", dir-1)
-  ),
+  ) else NA : 1,
 
   printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
@@ -227,10 +219,8 @@ calcBHamilVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_r
   /* Transverse velocity directions entering (dH/dv x B)_dir, and the
      transverse Jacobian divisors: cell constants (index 0 of each transverse
      block of jacob_vel_surf) for the C^0 linear map, per-node values indexed
-     from j for the C^1 cubic map. */
+     from the inner node j for the C^1 cubic map. */
   transK : delete(dir, makelist(k, k, 1, vdim)),
-  /* jacob_vel_surf stride: ACTIVE variant's velocity surface node count
-     (hybrid lo 3 / ho 4; ser and tensor p>=2 keep p+2). */
   nPts : vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder),
   jdivK : ["", "", ""],
   for kk : 1 thru length(transK) do block([k],
@@ -249,90 +239,66 @@ calcBHamilVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_r
       jdivK[k] : sconcat("jacob_vel_surf[", nPts*(k-1), "]")
   ),
 
-  /* Node function (Design A): dH/dv_k at (vv = -1, velocity node j) -- the
-     sparse (separable) representation only references the constant and
-     single-velocity-variable coefficients via the shared sparse index list
-     -- then the B quads at configuration node i, then the accumulate. */
-  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j, const double *dxv, const double *jacob_vel_surf,
-  const double *hamil, const double *qmem) ~%{ ~%", funcNm),
-  for k in transK do (
-    printf(fh, "  double dH_d~a = 0.0; ~%", vlabels[k]),
-    if (hamil_rep = "phase") then (
-      /* Two-stage contraction (see calcHamilPhaseVelSurfForce): rebuild the
-         j-th column of the -1-edge inner v_k-derivative contraction in
-         registers (Vd/dcoefr), then dot with the outer shapes evaluated at
-         configuration node i (Cm). */
-      ndk : laxDerivSizes(fact, vv, varsV[k]),
-      printf(fh, "  { ~%"),
-      printf(fh, "    double G[~a]; ~%", NA),
-      printf(fh, "    for (int a = 0; a < ~a; ++a) G[a] = 0.0; ~%", NA),
-      printf(fh, "    for (int b = 0; b < ~a; ++b) { ~%", NP),
-      printf(fh, "      G[~a_cmap[b]] += ~a_Vd~a[j*~a + ~a_vrd~amap[b]]*(~a_dcoefr~a[b]*hamil[b]); ~%", tabP, tabP, k-1, ndk, tabP, k-1, tabP, k-1),
-      printf(fh, "    } ~%"),
-      printf(fh, "    for (int a = 0; a < ~a; ++a) dH_d~a += ~a_Cm[i*~a + a]*G[a]; ~%", NA, vlabels[k], tabP, NA),
-      printf(fh, "  } ~%")
-    )
-    else if (hamil_rep = "vel_sparse") then (
-      printf(fh, "  for (int s = 0; s < ~a; ++s) { ~%", NS),
-      printf(fh, "    const int b = vst_~a_vel_sparse_idx[s]; ~%", tag),
-      printf(fh, "    dH_d~a += vst_~a_vel_dv~a_v~a[j*~a + b]*hamil[b]; ~%", vlabels[k], tag, k-1, dir-1, NV),
-      printf(fh, "  } ~%")
-    )
-    else (
-      printf(fh, "  for (int b = 0; b < ~a; ++b) dH_d~a += vst_~a_vel_dv~a_v~a[j*~a + b]*hamil[b]; ~%", NV, vlabels[k], tag, k-1, dir-1, NV)
-    )
-  ),
+  /* (dH/dv x B)_dir as a sum of products: one term per transverse direction
+     k, [transverse direction, B component (qmem block), sign]:
+       2V: alpha_vx = +dH/dvy Bz,  alpha_vy = -dH/dvx Bz;
+       3V: alpha_vx = dH/dvy Bz - dH/dvz By, etc. (cyclic). */
   if (vdim = 2) then (
-    printf(fh, "  const double *Bz = &qmem[~a]; ~%", NC*5),
-    printf(fh, "  double Bz_quad = 0.0; ~%"),
-    printf(fh, "  for (int a = 0; a < ~a; ++a) Bz_quad += vst_~a_conf_ev[i*~a + a]*Bz[a]; ~%", NC, tag, NC),
-    if (dir = 1) then
-      printf(fh, "  return 2.0/(dxv[~a]*~a)*dH_dvy*Bz_quad; ~%", vid[2], jdivK[2])
+    if (dir = 1) then terms : [[2, 5, "+"]] else terms : [[1, 5, "-"]]
+  ) else (
+    if (dir = 1) then terms : [[2, 5, "+"], [3, 4, "-"]]
+    else if (dir = 2) then terms : [[3, 3, "+"], [1, 5, "-"]]
+    else terms : [[1, 4, "+"], [2, 3, "-"]]
+  ),
+  /* Outer factor of term (k, B_c): +/-B_c at the configuration node (times
+     the outer shape evaluation Cm[i][a] for phase Hamiltonians, one term per
+     outer shape a); inner factor: dv1_k dH/dv_k at the velocity node divided
+     by the transverse Jacobian (per-node for the cubic map). */
+  NT : length(terms)*NA,
+  prelude : [],
+  outerBody : [],
+  innerBody : [],
+  for tt : 1 thru length(terms) do block([k, bOff, sgn, bNm],
+    k : terms[tt][1], bOff : terms[tt][2], sgn : terms[tt][3],
+    bNm : ["Bx", "By", "Bz"][bOff-2],
+    prelude : endcons(printf(false, "const double *~a = &qmem[~a];", bNm, NC*bOff), prelude),
+    outerBody : append(outerBody, [
+      printf(false, "double ~a_quad = 0.0;", bNm),
+      printf(false, "for (int a = 0; a < ~a; ++a) ~a_quad += vst_~a_conf_ev[i*~a + a]*~a[a];", NC, bNm, tag, NC, bNm)
+    ]),
+    if (hamil_rep = "phase") then
+      outerBody : endcons(printf(false, "for (int a = 0; a < ~a; ++a) O[(~a + a)*~a + i] = ~a~a_quad*~a_Cm[i*~a + a];",
+        NA, (tt-1)*NA, num_nodes_conf, if sgn = "-" then "-" else "", bNm, tabP, NA), outerBody)
     else
-      printf(fh, "  return -2.0/(dxv[~a]*~a)*dH_dvx*Bz_quad; ~%", vid[1], jdivK[1])
-  )
-  else if (vdim = 3) then (
-    if (dir = 1) then (
-      printf(fh, "  double dv11 = 2.0/dxv[~a]; ~%", vid[2]),
-      printf(fh, "  double dv12 = 2.0/dxv[~a]; ~%", vid[3]),
-      bLabs : ["By", "Bz"],
-      printf(fh, "  const double *By = &qmem[~a]; ~%", NC*4),
-      printf(fh, "  const double *Bz = &qmem[~a]; ~%", NC*5),
-      accStr : sconcat("return dv11*dH_dvy*Bz_quad/", jdivK[2], " - dv12*dH_dvz*By_quad/", jdivK[3], ";")
-    )
-    else if (dir = 2) then (
-      printf(fh, "  double dv10 = 2.0/dxv[~a]; ~%", vid[1]),
-      printf(fh, "  double dv12 = 2.0/dxv[~a]; ~%", vid[3]),
-      bLabs : ["Bx", "Bz"],
-      printf(fh, "  const double *Bx = &qmem[~a]; ~%", NC*3),
-      printf(fh, "  const double *Bz = &qmem[~a]; ~%", NC*5),
-      accStr : sconcat("return dv12*dH_dvz*Bx_quad/", jdivK[3], " - dv10*dH_dvx*Bz_quad/", jdivK[1], ";")
+      outerBody : endcons(printf(false, "O[~a*~a + i] = ~a~a_quad;", tt-1, num_nodes_conf, if sgn = "-" then "-" else "", bNm), outerBody),
+    dvfac : printf(false, "2.0/(dxv[~a]*~a)", vid[k], jdivK[k]),
+    if (hamil_rep = "phase") then (
+      ndk : laxDerivSizes(fact, vv, varsV[k]),
+      innerBody : append(innerBody, [
+        printf(false, "double Gd~a[~a];", k-1, NA),
+        printf(false, "for (int a = 0; a < ~a; ++a) Gd~a[a] = 0.0;", NA, k-1),
+        printf(false, "for (int b = 0; b < ~a; ++b) {", NP),
+        printf(false, "  Gd~a[~a_cmap[b]] += ~a_Vd~a[j*~a + ~a_vrd~amap[b]]*(~a_dcoefr~a[b]*hamil[b]);", k-1, tabP, tabP, k-1, ndk, tabP, k-1, tabP, k-1),
+        "}",
+        printf(false, "for (int a = 0; a < ~a; ++a) I[(~a + a)*~a + j] = ~a*Gd~a[a];", NA, (tt-1)*NA, num_nodes_vel, dvfac, k-1)
+      ])
     )
     else (
-      printf(fh, "  double dv10 = 2.0/dxv[~a]; ~%", vid[1]),
-      printf(fh, "  double dv11 = 2.0/dxv[~a]; ~%", vid[2]),
-      bLabs : ["Bx", "By"],
-      printf(fh, "  const double *Bx = &qmem[~a]; ~%", NC*3),
-      printf(fh, "  const double *By = &qmem[~a]; ~%", NC*4),
-      accStr : sconcat("return dv10*dH_dvx*By_quad/", jdivK[1], " - dv11*dH_dvy*Bx_quad/", jdivK[2], ";")
-    ),
-    printf(fh, "  double ~a_quad = 0.0; ~%", bLabs[1]),
-    printf(fh, "  double ~a_quad = 0.0; ~%", bLabs[2]),
-    printf(fh, "  for (int a = 0; a < ~a; ++a) { ~%", NC),
-    printf(fh, "    ~a_quad += vst_~a_conf_ev[i*~a + a]*~a[a]; ~%", bLabs[1], tag, NC, bLabs[1]),
-    printf(fh, "    ~a_quad += vst_~a_conf_ev[i*~a + a]*~a[a]; ~%", bLabs[2], tag, NC, bLabs[2]),
-    printf(fh, "  } ~%"),
-    printf(fh, "  ~a ~%", accStr)
+      innerBody : endcons(printf(false, "double dH_d~a = 0.0;", vlabels[k]), innerBody),
+      if (hamil_rep = "vel_sparse") then
+        innerBody : append(innerBody, [
+          printf(false, "for (int s = 0; s < ~a; ++s) {", NS),
+          printf(false, "  const int b = vst_~a_vel_sparse_idx[s];", tag),
+          printf(false, "  dH_d~a += vst_~a_vel_dv~a_v~a[j*~a + b]*hamil[b];", vlabels[k], tag, k-1, dir-1, NV),
+          "}"
+        ])
+      else
+        innerBody : endcons(printf(false, "for (int b = 0; b < ~a; ++b) dH_d~a += vst_~a_vel_dv~a_v~a[j*~a + b]*hamil[b];", NV, vlabels[k], tag, k-1, dir-1, NV), innerBody),
+      innerBody : endcons(printf(false, "I[~a*~a + j] = ~a*dH_d~a;", tt-1, num_nodes_vel, dvfac, vlabels[k]), innerBody)
+    )
   ),
-  printf(fh, "} ~%~%"),
-
-  /* Wrapper with the original ABI: loop the node function. */
-  printf(fh, "GKYL_CU_DH void ~a(const double *dxv, const double *jacob_vel_surf,
-  const double *hamil, const double *qmem, double* GKYL_RESTRICT alpha_quad) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
-  printf(fh, "    for (int j = 0; j < ~a; ++j) alpha_quad[i*~a + j] += ~a_node(i, j, dxv, jacob_vel_surf, hamil, qmem); ~%", num_nodes_vel, num_nodes_vel, funcNm),
-  printf(fh, "  } ~%"),
-  printf(fh, "} ~%")
+  alphaEmitFactored(fh, funcNm, "const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem",
+    NT, num_nodes_conf, num_nodes_vel, prelude, outerBody, innerBody)
 )$
 
 /* Radiation drag force, F_rad(v) where F_rad(v) is only a function of velocity space,
@@ -341,7 +307,7 @@ calcRadVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherO
   [varsC,bC,varsV,bV,varsP,bP,NV,
    vv,surfVars,surfVVars,bSurf,NSurf,
    nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
-   surfNodes,numNodes,tag],
+   surfNodes,numNodes,tag,prelude,outerBody,innerBody],
 
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
   NV : length(bV),
@@ -359,20 +325,17 @@ calcRadVelSurfForce(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherO
   printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
   /* The drag force is only a function of velocity space: each cell owns its
-     *lower* edge fluxes, so evaluate at (vv = -1, velocity node j). The node
-     function re-evaluates at its own (i, j) (Design A). */
-  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j, const double *dxv, const double *rad) ~%{ ~%", funcNm),
-  printf(fh, "  const double *rad_v~a = &rad[~a]; ~%", clabels[dir], NV*(dir-1)),
-  printf(fh, "  double rad_quad = 0.0; ~%"),
-  printf(fh, "  for (int b = 0; b < ~a; ++b) rad_quad += vst_~a_vel_ev_v~a[j*~a + b]*rad_v~a[b]; ~%", NV, tag, dir-1, NV, clabels[dir]),
-  printf(fh, "  return rad_quad; ~%"),
-  printf(fh, "} ~%~%"),
-  printf(fh, "GKYL_CU_DH void ~a(const double *dxv,
-  const double *rad, double* GKYL_RESTRICT alpha_quad) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
-  printf(fh, "    for (int j = 0; j < ~a; ++j) alpha_quad[i*~a + j] += ~a_node(i, j, dxv, rad); ~%", num_nodes_vel, num_nodes_vel, funcNm),
-  printf(fh, "  } ~%"),
-  printf(fh, "} ~%")
+     *lower* edge fluxes, so a single inner factor (F_rad,dir at vv = -1 and
+     velocity node j), outer factor 1. */
+  prelude : [printf(false, "const double *rad_v~a = &rad[~a];", clabels[dir], NV*(dir-1))],
+  outerBody : ["O[i] = 1.0;"],
+  innerBody : [
+    "double rad_quad = 0.0;",
+    printf(false, "for (int b = 0; b < ~a; ++b) rad_quad += vst_~a_vel_ev_v~a[j*~a + b]*rad_v~a[b];", NV, tag, dir-1, NV, clabels[dir]),
+    "I[j] = rad_quad;"
+  ],
+  alphaEmitFactored(fh, funcNm, "const double *dxv, const double *rad",
+    1, num_nodes_conf, num_nodes_vel, prelude, outerBody, innerBody)
 )$
 
 /* Nodal Lax-Friedrichs to modal velocity-space flux. */
@@ -381,7 +344,7 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep
    vv,surfVars,surfVVars,bSurf,NSurf,
    nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
    surfNodes,numNodes,jacob_edge,jacob_vi_surf,jacob_surf_tot,
-   fact,sizesNA,tabP,i,jacDecls,hasJac,nPts,trK,trKs],
+   fact,sizesNA,tabP,i,jacDecls,hasJac,nPts,trK,trKs,bSurfP,NK,factP,prjPre],
 
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
 
@@ -402,6 +365,13 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep
   fact : laxFactorizeBasis(bP, varsC, cons(vv, surfVVars)),
   sizesNA : laxFactorSizes(fact, vv),
   tabP : sconcat("vst_", surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder), "_ph_v", dir-1),
+  /* Surface modal basis and its consumer-projection table sizes (same
+     factorization/dedup path as writeConsumerProjTables, so the sizes match
+     the vst_<tag>_prj_v<d> tables of the nod2mod header). */
+  bSurfP : basisFromVars(vlasovBtype(basisFun, polyOrder), surfVars, polyOrder),
+  NK : length(bSurfP),
+  factP : laxFactorizeBasis(bSurfP, varsC, if length(surfVVars) = 0 then [prjdummy] else surfVVars),
+  prjPre : sconcat("vst_", surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder), "_prj_v", dir-1),
 
   /* Jacobian factor at node (i, j), computed inside the node function.
      C^0 linear map: cell constants (index 0 of each transverse block of
@@ -442,10 +412,16 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep
 
   printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
+  surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder),
 
-  /* Per-node function (Design A): one call per surface node. */
+  /* Stage-1 producer (one call per (inner node, outer shape) item), per-node
+     function (one call per surface node) and modal projection (one call per
+     surface mode). */
+  laxEmitStage1Fn(fh, funcNm, tabP, sizesNA[1], sizesNA[2], num_nodes_vel),
   laxEmitNodeFn(fh, funcNm, tabP, length(bP), sizesNA[1], sizesNA[2], num_nodes_vel,
-    (dir-1)*numNodes, " const double *jacob_vel_surf_r,", jacDecls, hasJac, []),
+    " const double *jacob_vel_surf_r,", jacDecls, hasJac, []),
+  laxEmitPrjFn(fh, funcNm, prjPre, NK, length(factP[1]), length(factP[2]), num_nodes_conf, num_nodes_vel,
+    (dir-1)*NK),
 
   /* CFL finalizer: converts the node-loop's alpha_max reduction into the
      stable time-step estimate (kernel-specific jacobian handling). */
@@ -466,8 +442,8 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep
      loop the node function, reduce alpha_max, finalize the CFL. */
   printf(fh, "GKYL_CU_DH double ~a(const double *dxv, const double *jacob_vel_surf_l, const double *jacob_vel_surf_r,
   const double *alpha_quad, const double *f_l, const double *f_r,
-  double* GKYL_RESTRICT Fhat_nodal) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
-  laxEmitWrapperLoop(fh, funcNm, num_nodes_conf, num_nodes_vel, " jacob_vel_surf_r,"),
+  double* GKYL_RESTRICT flux) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  laxEmitWrapperLoop(fh, funcNm, num_nodes_conf, num_nodes_vel, sizesNA[1], NK, " jacob_vel_surf_r,"),
   printf(fh, "  return ~a_cfl(dxv, jacob_vel_surf_l, jacob_vel_surf_r, alpha_max); ~%", funcNm),
   printf(fh, "} ~%")
 )$

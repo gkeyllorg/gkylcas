@@ -26,6 +26,7 @@ load("utilities")$
 load("nodal_operations/nodal_functions")$
 load("new_vlasov/vlasov-basis");
 load("new_vlasov/nodal-lax-emit");
+load("new_vlasov/alpha-factor-emit");
 load("new_vlasov/surf-eval-tables");
 load(stringproc)$
 fpprec : 24$
@@ -40,7 +41,8 @@ vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
 calcHamilVelSurfForceFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, useHigherOrder) := block(
   [varsC,bC,varsV,bV,varsP,bP,cid,cv,surfVars,surfCVars,bSurf,NSurf,
    nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
-   surfNodes,numNodes,NC,NV,NB,vid,tag,fact,NA,tabP,NS,b,j,edge,i],
+   surfNodes,numNodes,NC,NV,NB,vid,tag,fact,NA,tabP,NS,b,d,edge,nJPts,jvinvExpr,
+   NT,prelude,outerBody,innerBody,elbl,cond,ePre],
 
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
   NC : length(bC), 
@@ -65,117 +67,110 @@ calcHamilVelSurfForceFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hami
   NV : length(bV),
   NB : length(bP),
 
-  /* alpha^i = Pi^{ij} dH/dz^j; Pi_xx = 0, so only velocity gradients enter.
-     Pi rows are configuration-space expansions evaluated at (cv = edge,
-     remaining conf nodes); dH/dv_j is evaluated on the velocity-volume node
-     grid (vel Hamiltonians) or via the shared phase-factor tables (phase).
-     The node function does one (i, m) node's work (Design A); the flat node
-     is n = i*NIv + m. Each cell owns its *lower* edge fluxes:
-     hamil_pt_edge = -1 evaluates at cv = -1 (the r-edge tables), +1 at
-     cv = +1 (the l-edge tables). */
-  /* vmap/jacob_pos: shared conf-producer ABI (mesh maps); alpha_dir here is
-     Pi . dH/dv only, so neither is used. Each dH/dv_j derivative picks up the
-     inverse velocity-map Jacobian of its own direction (cell constant). */
-  printf(fh, "GKYL_CU_DH double ~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv,
-  const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
-  const double *poisson_tensor_conf, const double *hamil) ~%{ ~%", funcNm),
-  for j : 1 thru vdim do printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", j-1, vid[j]),
-  /* Inverse velocity-map Jacobian of each derivative's direction: a cell
-     constant for the C^0 linear map (ser), but the C^1 cubic map (tensor) has
-     a QUADRATIC in-cell Jacobian, so it must be evaluated per velocity-volume
-     node m (lexicographic over the vel dims, last direction fastest, nJPts
-     1D Gauss nodes per direction matching the jacob_vel_surf blocks). */
+  /* alpha^dir = Pi^{dir,d} dH/dv_d (Pi_xx = 0, so only velocity gradients
+     enter), as outer x inner products, one term per velocity derivative d
+     (per (d, outer shape a) for phase Hamiltonians):
+       O(i) = Pi^{dir,d}(i)   the Poisson-tensor row evaluated at (cv = edge,
+                              transverse configuration node i) [times Cm[i][a]],
+       I(j) = dH/dv_d(j) dv1_d / J_v,d(j)   on the velocity-volume node grid
+                              [G_d[j][a] for phase Hamiltonians].
+     Each cell owns its *lower* edge fluxes: hamil_pt_edge = -1 evaluates at
+     cv = -1 (the r-edge tables), +1 at cv = +1 (the l-edge tables); both
+     factors branch on it. Each dH/dv_d derivative picks up the inverse
+     velocity-map Jacobian of its own direction: a cell constant for the C^0
+     linear map (ser), per velocity node for the C^1 cubic map (tensor) whose
+     in-cell Jacobian is quadratic. vmap/jacob_pos: shared conf-producer ABI
+     (mesh maps), unused here. */
+  prelude : [], outerBody : [], innerBody : [],
+  for d : 1 thru vdim do prelude : endcons(printf(false, "const double dv1~a = 2.0/dxv[~a];", d-1, vid[d]), prelude),
   nJPts : vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder),
-  jvinvExpr : makelist("", j, 1, vdim),
+  jvinvExpr : makelist("", d, 1, vdim),
   if (vlasovVelMapRep(basisFun) = "cubic") then (
-    for j : 1 thru vdim do block([nidx],
-      if (vdim = 1) then nidx : "m"
-      elseif (vdim = 2) then nidx : if (j = 1) then sconcat("m/", nJPts) else sconcat("m%", nJPts)
-      else nidx : if (j = 1) then sconcat("m/", nJPts*nJPts)
-        elseif (j = 2) then sconcat("m/", nJPts, "%", nJPts)
-        else sconcat("m%", nJPts),
-      jvinvExpr[j] : sconcat("(1.0/jacob_vel_surf[", nJPts*(j-1), " + ", nidx, "])")
+    for d : 1 thru vdim do block([nidx],
+      if (vdim = 1) then nidx : "j"
+      elseif (vdim = 2) then nidx : if (d = 1) then sconcat("j/", nJPts) else sconcat("j%", nJPts)
+      else nidx : if (d = 1) then sconcat("j/", nJPts*nJPts)
+        elseif (d = 2) then sconcat("j/", nJPts, "%", nJPts)
+        else sconcat("j%", nJPts),
+      jvinvExpr[d] : sconcat("(1.0/jacob_vel_surf[", nJPts*(d-1), " + ", nidx, "])")
     )
   ) else (
-    for j : 1 thru vdim do (
-      printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a]; ~%", clabels[j], nJPts*(j-1)),
-      jvinvExpr[j] : sconcat("jacob_v", clabels[j], "_inv")
+    for d : 1 thru vdim do (
+      prelude : endcons(printf(false, "const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a];", clabels[d], nJPts*(d-1)), prelude),
+      jvinvExpr[d] : sconcat("jacob_v", clabels[d], "_inv")
     )
   ),
-  for j : 1 thru vdim do
-    printf(fh, "  const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a]; ~%", j - 1, NC*(dir-1)*vdim + NC*(j-1)),
+  for d : 1 thru vdim do
+    prelude : endcons(printf(false, "const double *poisson_tensor_conf_~a = &poisson_tensor_conf[~a];", d - 1, NC*(dir-1)*vdim + NC*(d-1)), prelude),
 
   if (hamil_rep = "phase") then (
     fact : laxFactorizeBasis(bP, surfCVars, cons(cv, varsV)),
     NA : laxFactorSizes(fact, cv)[1],
     tabP : sconcat("vst_", tag, "_ph_x", dir-1),
-    for edge in [-1, 1] do block([elbl, cond],
+    NT : vdim*NA
+  ) else (
+    NA : 1,
+    NT : vdim
+  ),
+
+  /* Outer factors: Pi rows at the edge's transverse configuration nodes. */
+  for edge in [-1, 1] do (
+    if edge = -1 then (elbl : "r", cond : "== -1") else (elbl : "l", cond : "== 1"),
+    outerBody : endcons(printf(false, "~a (hamil_pt_edge ~a) {", if edge = -1 then "if" else "else if", cond), outerBody),
+    for d : 1 thru vdim do (
+      outerBody : endcons(printf(false, "  double P~a = 0.0;", d-1), outerBody),
+      outerBody : endcons(printf(false, "  for (int a = 0; a < ~a; ++a) P~a += vst_~a_confsurf_x~a_ev_~a[i*~a + a]*poisson_tensor_conf_~a[a];",
+        NC, d-1, tag, dir-1, elbl, NC, d-1), outerBody),
+      if (hamil_rep = "phase") then
+        outerBody : endcons(printf(false, "  for (int a = 0; a < ~a; ++a) O[(~a + a)*~a + i] = P~a*~a_Cm[i*~a + a];", NA, (d-1)*NA, num_nodes_conf, d-1, tabP, NA), outerBody)
+      else
+        outerBody : endcons(printf(false, "  O[~a*~a + i] = P~a;", d-1, num_nodes_conf, d-1), outerBody)
+    ),
+    outerBody : endcons("}", outerBody)
+  ),
+
+  /* Inner factors: dH/dv_d at the velocity-volume node, times dv1_d / J_v,d. */
+  if (hamil_rep = "phase") then (
+    for edge in [-1, 1] do (
       if edge = -1 then (elbl : "r", cond : "== -1") else (elbl : "l", cond : "== 1"),
-      printf(fh, "  ~a (hamil_pt_edge ~a) { ~%", if edge = -1 then "if" else "else if", cond),
-      for j : 1 thru vdim do block([NMVd],
-        NMVd : laxDerivSizes(fact, cv, varsV[j]),
-        printf(fh, "    double G~a[~a]; ~%", j-1, NA),
-        printf(fh, "    for (int a = 0; a < ~a; ++a) G~a[a] = 0.0; ~%", NA, j-1),
-        printf(fh, "    for (int k = 0; k < ~a; ++k) { ~%", NB),
-        printf(fh, "      G~a[~a_cmap[k]] += ~a_Vd~a[m*~a + ~a_v~ad~amap[k]]*(~a_dcoef~a~a[k]*hamil[k]); ~%",
-          j-1, tabP, tabP, j-1, NMVd, tabP, elbl, j-1, tabP, elbl, j-1),
-        printf(fh, "    } ~%")
+      innerBody : endcons(printf(false, "~a (hamil_pt_edge ~a) {", if edge = -1 then "if" else "else if", cond), innerBody),
+      for d : 1 thru vdim do block([NMVd],
+        NMVd : laxDerivSizes(fact, cv, varsV[d]),
+        innerBody : endcons(printf(false, "  double G~a[~a];", d-1, NA), innerBody),
+        innerBody : endcons(printf(false, "  for (int a = 0; a < ~a; ++a) G~a[a] = 0.0;", NA, d-1), innerBody),
+        innerBody : endcons(printf(false, "  for (int k = 0; k < ~a; ++k) {", NB), innerBody),
+        innerBody : endcons(printf(false, "    G~a[~a_cmap[k]] += ~a_Vd~a[j*~a + ~a_v~ad~amap[k]]*(~a_dcoef~a~a[k]*hamil[k]);",
+          d-1, tabP, tabP, d-1, NMVd, tabP, elbl, d-1, tabP, elbl, d-1), innerBody),
+        innerBody : endcons("  }", innerBody),
+        innerBody : endcons(printf(false, "  for (int a = 0; a < ~a; ++a) I[(~a + a)*~a + j] = G~a[a]*dv1~a*~a;", NA, (d-1)*NA, num_nodes_vel, d-1, d-1, jvinvExpr[d]), innerBody)
       ),
-      for j : 1 thru vdim do (
-        printf(fh, "    double P~a = 0.0; ~%", j-1),
-        printf(fh, "    for (int a = 0; a < ~a; ++a) P~a += vst_~a_confsurf_x~a_ev_~a[i*~a + a]*poisson_tensor_conf_~a[a]; ~%",
-          NC, j-1, tag, dir-1, elbl, NC, j-1),
-        printf(fh, "    double dH~a = 0.0; ~%", j-1),
-        printf(fh, "    for (int a = 0; a < ~a; ++a) dH~a += ~a_Cm[i*~a + a]*G~a[a]; ~%", NA, j-1, tabP, NA, j-1)
-      ),
-      printf(fh, "    return ~a; ~%",
-        simplode(makelist(sconcat("P", j-1, "*dH", j-1, "*dv1", j-1, "*", jvinvExpr[j]), j, 1, vdim), " + ")),
-      printf(fh, "  } ~%")
+      innerBody : endcons("}", innerBody)
     )
   )
   else (
-    /* Velocity-space Hamiltonian: dH/dv_j has no cv dependence; the sparse
+    /* Velocity-space Hamiltonian: dH/dv_d has no cv dependence; the sparse
        (separable) flavor only references the constant and single-velocity-
        variable coefficients via the shared sparse index list. */
     NS : 0,
     for b : 1 thru NV do
       if length(intersection(setify(listofvars(bV[b])), setify(varsV))) <= 1 then NS : NS + 1,
-    for j : 1 thru vdim do (
-      printf(fh, "  double dH_dv~a = 0.0; ~%", j-1),
-      if (hamil_rep = "vel_sparse") then (
-        printf(fh, "  for (int s = 0; s < ~a; ++s) { ~%", NS),
-        printf(fh, "    const int b = vst_~a_vel_sparse_idx[s]; ~%", tag),
-        printf(fh, "    dH_dv~a += vst_~a_vel_vol_dv~a[m*~a + b]*hamil[b]; ~%", j-1, tag, j-1, NV),
-        printf(fh, "  } ~%")
-      )
-      else (
-        printf(fh, "  for (int b = 0; b < ~a; ++b) dH_dv~a += vst_~a_vel_vol_dv~a[m*~a + b]*hamil[b]; ~%", NV, j-1, tag, j-1, NV)
-      )
-    ),
-    for edge in [-1, 1] do block([elbl, cond],
-      if edge = -1 then (elbl : "r", cond : "== -1") else (elbl : "l", cond : "== 1"),
-      printf(fh, "  ~a (hamil_pt_edge ~a) { ~%", if edge = -1 then "if" else "else if", cond),
-      for j : 1 thru vdim do (
-        printf(fh, "    double P~a = 0.0; ~%", j-1),
-        printf(fh, "    for (int a = 0; a < ~a; ++a) P~a += vst_~a_confsurf_x~a_ev_~a[i*~a + a]*poisson_tensor_conf_~a[a]; ~%",
-          NC, j-1, tag, dir-1, elbl, NC, j-1)
-      ),
-      printf(fh, "    return ~a; ~%",
-        simplode(makelist(sconcat("P", j-1, "*dH_dv", j-1, "*dv1", j-1, "*", jvinvExpr[j]), j, 1, vdim), " + ")),
-      printf(fh, "  } ~%")
+    for d : 1 thru vdim do (
+      innerBody : endcons(printf(false, "double dH_dv~a = 0.0;", d-1), innerBody),
+      if (hamil_rep = "vel_sparse") then
+        innerBody : append(innerBody, [
+          printf(false, "for (int s = 0; s < ~a; ++s) {", NS),
+          printf(false, "  const int b = vst_~a_vel_sparse_idx[s];", tag),
+          printf(false, "  dH_dv~a += vst_~a_vel_vol_dv~a[j*~a + b]*hamil[b];", d-1, tag, d-1, NV),
+          "}"])
+      else
+        innerBody : endcons(printf(false, "for (int b = 0; b < ~a; ++b) dH_dv~a += vst_~a_vel_vol_dv~a[j*~a + b]*hamil[b];", NV, d-1, tag, d-1, NV), innerBody),
+      innerBody : endcons(printf(false, "I[~a*~a + j] = dH_dv~a*dv1~a*~a;", d-1, num_nodes_vel, d-1, d-1, jvinvExpr[d]), innerBody)
     )
   ),
-  printf(fh, "  return 0.0; ~%"),
-  printf(fh, "} ~%~%"),
 
-  /* Wrapper with the original ABI: loop the node function. */
-  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const int hamil_pt_edge,
-    const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
-    const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad) ~%{ ~%", funcNm),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", num_nodes_conf),
-  printf(fh, "    for (int m = 0; m < ~a; ++m) alpha_quad[i*~a + m] += ~a_node(i, m, hamil_pt_edge, w, dxv, vmap, jacob_pos, jacob_vel_surf, poisson_tensor_conf, hamil); ~%", num_nodes_vel, num_nodes_vel, funcNm),
-  printf(fh, "  } ~%"),
-  printf(fh, "} ~%")
+  alphaEmitFactored(fh, funcNm,
+    "const double *w, const double *dxv, const int hamil_pt_edge, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil",
+    NT, num_nodes_conf, num_nodes_vel, prelude, outerBody, innerBody)
 )$
 
 /* Nodal Lax-Friedrichs to modal configuration-space flux. */
@@ -183,7 +178,7 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   [varsC,bC,varsV,bV,varsP,bP,cid,cv,
    surfVars,surfCVars,bSurf,NSurf,
    nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
-   surfNodes,numNodes,fact,sizesNA,tabP],
+   surfNodes,numNodes,fact,sizesNA,tabP,bSurfP,NK,factP,prjPre],
 
   [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
 
@@ -205,19 +200,30 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   fact : laxFactorizeBasis(bP, surfCVars, cons(cv, varsV)),
   sizesNA : laxFactorSizes(fact, cv),
   tabP : sconcat("vst_", surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder), "_ph_x", dir-1),
+  /* Surface modal basis and its consumer-projection table sizes (same
+     factorization/dedup path as writeConsumerProjTables). */
+  bSurfP : basisFromVars(vlasovBtype(basisFun, polyOrder), surfVars, polyOrder),
+  NK : length(bSurfP),
+  factP : laxFactorizeBasis(bSurfP, if length(surfCVars) = 0 then [prjdummy] else surfCVars, varsV),
+  prjPre : sconcat("vst_", surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder), "_prj_x", dir-1),
 
   printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
   surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
+  surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder),
 
-  /* Per-node function (Design A): one call per surface node. The stored f is
+  /* Stage-1 producer (one call per (inner node, outer shape) item) and
+     per-node function (one call per surface node). The stored f is
      J_pos-weighted with a cell-constant Jacobian that jumps across the
      interface, so each side is un-weighted by its OWN cell's Jacobian in the
      surface direction before the Lax combination (l = lower neighbor,
      c = current cell, which owns its lower-edge flux). */
+  laxEmitStage1Fn(fh, funcNm, tabP, sizesNA[1], sizesNA[2], num_nodes_vel),
   laxEmitNodeFn(fh, funcNm, tabP, length(bP), sizesNA[1], sizesNA[2], num_nodes_vel,
-    (dir-1)*numNodes, " const double *jacob_pos_l, const double *jacob_pos_r,", [], false,
+    " const double *jacob_pos_l, const double *jacob_pos_r,", [], false,
     [printf(false, "  f_l_quad *= 1.0/jacob_pos_l[~a]; ", (polyOrder+1)*(dir-1)),
      printf(false, "  f_r_quad *= 1.0/jacob_pos_r[~a]; ", (polyOrder+1)*(dir-1))]),
+  laxEmitPrjFn(fh, funcNm, prjPre, NK, length(factP[1]), length(factP[2]), num_nodes_conf, num_nodes_vel,
+    (dir-1)*NK),
 
   /* CFL finalizer for the node-loop's alpha_max reduction: the physical cell
      width in the surface direction is J_pos*dx, so the rate carries the
@@ -233,8 +239,8 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   /* Wrapper with the original ABI (minus the retired dead lax scratch). */
   printf(fh, "GKYL_CU_DH double ~a(const double *dxv, const double *jacob_pos_l, const double *jacob_pos_r,
   const double *alpha_quad, const double *f_l, const double *f_r,
-  double* GKYL_RESTRICT Fhat_nodal) ~%{ ~%", funcNm),
-  laxEmitWrapperLoop(fh, funcNm, num_nodes_conf, num_nodes_vel, " jacob_pos_l, jacob_pos_r,"),
+  double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  laxEmitWrapperLoop(fh, funcNm, num_nodes_conf, num_nodes_vel, sizesNA[1], NK, " jacob_pos_l, jacob_pos_r,"),
   printf(fh, "  return ~a_cfl(dxv, jacob_pos_l, jacob_pos_r, alpha_max); ~%", funcNm),
   printf(fh, "} ~%")
 )$

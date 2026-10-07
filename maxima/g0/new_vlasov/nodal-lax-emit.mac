@@ -24,21 +24,32 @@
    (last surface variable fastest, so the outer/configuration block is
    slowest); laxAssertNodeOrder verifies this at generation time.
 
-   The loop structure is the CPU realization of the planned GPU 2D
-   (cell x node) thread mapping: stage 1 becomes a cooperative shared-memory
-   fill, stage 2 the per-node-thread dot product, and the static matrices
-   become constant device data.
+   The two stages are emitted as two callable functions, which is also the
+   GPU 2D (cell x node) thread mapping: `_g` computes one G[j][a] entry per
+   call (one thread per (inner node, outer shape) item, cooperative
+   shared-memory fill), `_node` does the per-node stage-2 dot product and the
+   Lax flux from the filled G. Stage 1 is the expensive part (NB terms with
+   table gathers) and depends on the inner node only, so this does it once
+   per inner node instead of once per surface node; the static matrices are
+   constant device data. A third function, `_prj`, projects the nodal Lax
+   flux of a surface onto the surface modal basis (one surface mode per
+   call, quadrature-weight-folded Cw/Vw tables of the nod2mod header), so the
+   stored flux is MODAL (num_surf_basis coefficients per direction) and the
+   hyper_dg surface consumers only scatter modal coefficients into the
+   volume increment.
 
-   PAIRING CONSTRAINT: every emitter writes BOTH callable forms into the
-   same .c file — the per-node `_node` function and the whole-array wrapper
-   (original ABI, loop bounds emitted as literals so the compiler inlines
-   the node function and recovers unrolled-kernel performance). The C
-   dispatch tables in vlasov/zero/gkyl_dg_vlasov_{vel,conf}_flux_surf_priv.h
-   reference both symbol sets (`_arr` tables -> wrappers for the CPU path,
-   `_node` tables -> node functions for the GPU 2D launcher), so a kernel
-   file missing either form fails at link time even if only one path runs.
-   Never hand-edit one form in isolation; regenerate the file so the pair
-   (and gkyl_vlasov_surf_node_kernels.h) stays consistent. */
+   PAIRING CONSTRAINT: every emitter writes ALL callable forms into the same
+   .c file — the stage-1 `_g` function, the per-node `_node` function, the
+   projection `_prj` function and the whole-array wrapper (original ABI; it
+   fills G, loops the nodes into a local nodal buffer and projects, with
+   loop bounds emitted as literals so the compiler inlines the functions and
+   recovers unrolled-kernel performance). The C dispatch
+   tables in vlasov/zero/gkyl_dg_vlasov_{vel,conf}_flux_surf_priv.h
+   reference all symbol sets (`_arr` tables -> wrappers for the CPU path,
+   `_g`, `_node` and `_prj` tables -> the GPU 2D launcher), so a kernel file missing
+   any form fails at link time even if only one path runs. Never hand-edit
+   one form in isolation; regenerate the file so the set (and
+   gkyl_vlasov_surf_node_kernels.h) stays consistent. */
 
 /* Reference point for shape normalization; must avoid the roots of every
    Legendre polynomial used (P1, P2, P3 are all nonzero at 2/5). */
@@ -105,11 +116,36 @@ laxAssertNodeOrder(surfNodes, nodesOuter, nodesInner) := block(
     )
 )$
 
-/* Emit the per-node function (Design A GPU decomposition): given (i, j),
-   rebuild the j-th G column of both sides in registers (NA doubles), do the
-   stage-2 dot, apply the Lax flux at flat node n = i*NI + j, and return
-   |alpha| at the node for the caller's CFL reduction. The wrapper (and later
-   the CUDA launcher) supplies one thread/iteration per node.
+/* Emit the stage-1 producer: item indexes the (inner node j, outer shape a)
+   pairs as j*NA + a; the call computes G_l[item] and G_r[item], the
+   contraction of f with the inner-factor evaluations over the basis
+   functions whose outer factor is shape a (CSR tables aoff/aks). Items are
+   NI*NA <= NO*NI, so a launcher with one thread per surface node can give
+   every item its own thread; items beyond NI*NA are a no-op. */
+laxEmitStage1Fn(fh, funcNm, prefix, NA, NMV, NI) := block(
+  printf(fh, "GKYL_CU_DH void ~a_g(int item, const double *f_l, const double *f_r,
+  double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r) ~%{ ~%", funcNm),
+  printf(fh, "  if (item >= ~a) return; ~%", NI*NA),
+  printf(fh, "  const int j = item/~a; ~%", NA),
+  printf(fh, "  const int a = item - j*~a; ~%", NA),
+  printf(fh, "  double g_l = 0.0; ~%"),
+  printf(fh, "  double g_r = 0.0; ~%"),
+  printf(fh, "  for (int q = ~a_aoff[a]; q < ~a_aoff[a+1]; ++q) { ~%", prefix, prefix),
+  printf(fh, "    const int k = ~a_aks[q]; ~%", prefix),
+  printf(fh, "    g_l += ~a_V[j*~a + ~a_vlmap[k]]*(~a_coefl[k]*f_l[k]); ~%", prefix, NMV, prefix, prefix),
+  printf(fh, "    g_r += ~a_V[j*~a + ~a_vrmap[k]]*(~a_coefr[k]*f_r[k]); ~%", prefix, NMV, prefix, prefix),
+  printf(fh, "  } ~%"),
+  printf(fh, "  G_l[item] = g_l; ~%"),
+  printf(fh, "  G_r[item] = g_r; ~%"),
+  printf(fh, "} ~%~%")
+)$
+
+/* Emit the per-node function: given (i, j) and the filled stage-1 arrays
+   (G[j*NA + a]), do the stage-2 dot, apply the Lax flux at flat node
+   n = i*NI + j of the per-direction nodal buffer Fhat_nodal (NO*NI entries,
+   consumed by _prj), and return |alpha| at the node for the caller's CFL
+   reduction. The wrapper (and the CUDA launcher) supplies one
+   thread/iteration per node.
    prefix is the SHARED table symbol prefix (vst_<tag>_ph_<surf>).
    jacDecls is a list of C lines computing `const double jac = ...;` from j
    (index arithmetic for the cubic map, cell constants for the linear map);
@@ -118,43 +154,70 @@ laxAssertNodeOrder(surfNodes, nodesOuter, nodesInner) := block(
    scaleLines is a list of C lines emitted after the stage-2 nodal
    reconstruction (e.g. per-side `f_l_quad *= ...;` un-weighting on
    configuration-direction surfaces); [] means none. */
-laxEmitNodeFn(fh, funcNm, prefix, NB, NA, NMV, NI, outOff, jacArgs, jacDecls, hasJac, scaleLines) := block([ln],
+laxEmitNodeFn(fh, funcNm, prefix, NB, NA, NMV, NI, jacArgs, jacDecls, hasJac, scaleLines) := block([ln],
   printf(fh, "GKYL_CU_DH double ~a_node(int i, int j,~a
-  double alpha, const double *f_l, const double *f_r, double* GKYL_RESTRICT Fhat_nodal) ~%{ ~%", funcNm, jacArgs),
-  printf(fh, "  double G_l[~a]; ~%", NA),
-  printf(fh, "  double G_r[~a]; ~%", NA),
-  printf(fh, "  for (int a = 0; a < ~a; ++a) { G_l[a] = 0.0; G_r[a] = 0.0; } ~%", NA),
-  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NB),
-  printf(fh, "    const int a = ~a_cmap[k]; ~%", prefix),
-  printf(fh, "    G_l[a] += ~a_V[j*~a + ~a_vlmap[k]]*(~a_coefl[k]*f_l[k]); ~%", prefix, NMV, prefix, prefix),
-  printf(fh, "    G_r[a] += ~a_V[j*~a + ~a_vrmap[k]]*(~a_coefr[k]*f_r[k]); ~%", prefix, NMV, prefix, prefix),
-  printf(fh, "  } ~%"),
+  double alpha, const double *G_l, const double *G_r, double* GKYL_RESTRICT Fhat_nodal) ~%{ ~%", funcNm, jacArgs),
   printf(fh, "  double f_l_quad = 0.0; ~%"),
   printf(fh, "  double f_r_quad = 0.0; ~%"),
   printf(fh, "  for (int a = 0; a < ~a; ++a) { ~%", NA),
-  printf(fh, "    f_l_quad += ~a_Cm[i*~a + a]*G_l[a]; ~%", prefix, NA),
-  printf(fh, "    f_r_quad += ~a_Cm[i*~a + a]*G_r[a]; ~%", prefix, NA),
+  printf(fh, "    f_l_quad += ~a_Cm[i*~a + a]*G_l[j*~a + a]; ~%", prefix, NA, NA),
+  printf(fh, "    f_r_quad += ~a_Cm[i*~a + a]*G_r[j*~a + a]; ~%", prefix, NA, NA),
   printf(fh, "  } ~%"),
   for ln in scaleLines do printf(fh, "~a~%", ln),
   printf(fh, "  const int n = i*~a + j; ~%", NI),
   for ln in jacDecls do printf(fh, "~a~%", ln),
   if hasJac then
-    printf(fh, "  Fhat_nodal[~a + n] = 0.5*jac*(alpha*(f_r_quad + f_l_quad) - fabs(alpha)*(f_r_quad - f_l_quad)); ~%", outOff)
+    printf(fh, "  Fhat_nodal[n] = 0.5*jac*(alpha*(f_r_quad + f_l_quad) - fabs(alpha)*(f_r_quad - f_l_quad)); ~%")
   else
-    printf(fh, "  Fhat_nodal[~a + n] = 0.5*(alpha*(f_r_quad + f_l_quad) - fabs(alpha)*(f_r_quad - f_l_quad)); ~%", outOff),
+    printf(fh, "  Fhat_nodal[n] = 0.5*(alpha*(f_r_quad + f_l_quad) - fabs(alpha)*(f_r_quad - f_l_quad)); ~%"),
   printf(fh, "  return fabs(alpha); ~%"),
   printf(fh, "} ~%~%")
 )$
 
-/* Emit the wrapper body: loop the node function over all (i, j), reducing
-   alpha_max. nodeCallArgs must match the node function's jacArgs. The
-   wrapper still ingests the full nodal alpha_quad array (original ABI);
-   the per-node dispatch in the updater passes a register double instead. */
-laxEmitWrapperLoop(fh, funcNm, NO, NI, nodeCallArgs) := block(
+/* Emit the projection: surface mode k of the nodal flux Fhat_nodal
+   (NO*NI entries, this direction only) onto the surface modal basis, stored
+   at flux[outOff + k] with outOff the direction's modal offset. prjPre is
+   the consumer-projection table prefix (vst_<tag>_prj_<surf>) whose
+   quadrature-weight-folded Cw/Vw and kamap/kbmap columns it contracts: the
+   inner-node contraction t_i = sum_j Vw[j][b] F[i][j] for every outer node i
+   (j outer so each Vw entry is loaded once; each t_i still sums over j in
+   increasing order, the order the former consumer-side projection used, so
+   results are unchanged), then g = sum_i Cw[i][a] t_i. Calls with k >= NK
+   are a no-op (the launcher gives one thread per surface node and there are
+   at least as many nodes as modes). */
+laxEmitPrjFn(fh, funcNm, prjPre, NK, NAp, NMVp, NO, NI, outOff) := block(
+  printf(fh, "GKYL_CU_DH void ~a_prj(int k, const double *Fhat_nodal, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  printf(fh, "  if (k >= ~a) return; ~%", NK),
+  printf(fh, "  const int a = ~a_kamap[k]; ~%", prjPre),
+  printf(fh, "  const int b = ~a_kbmap[k]; ~%", prjPre),
+  printf(fh, "  double t[~a]; ~%", NO),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) t[i] = 0.0; ~%", NO),
+  printf(fh, "  for (int j = 0; j < ~a; ++j) { ~%", NI),
+  printf(fh, "    const double w = ~a_Vw[j*~a + b]; ~%", prjPre, NMVp),
+  printf(fh, "    for (int i = 0; i < ~a; ++i) t[i] += w*Fhat_nodal[i*~a + j]; ~%", NO, NI),
+  printf(fh, "  } ~%"),
+  printf(fh, "  double g = 0.0; ~%"),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) g += ~a_Cw[i*~a + a]*t[i]; ~%", NO, prjPre, NAp),
+  printf(fh, "  flux[~a + k] = g; ~%", outOff),
+  printf(fh, "} ~%~%")
+)$
+
+/* Emit the wrapper body: fill the stage-1 arrays, loop the node function
+   over all (i, j) into a local nodal buffer (reducing alpha_max), then
+   project every surface mode into the modal output flux. nodeCallArgs must
+   match the node function's jacArgs. The wrapper still ingests the full
+   nodal alpha_quad array (original ABI); the per-node dispatch in the
+   updater passes a register double instead. */
+laxEmitWrapperLoop(fh, funcNm, NO, NI, NA, NK, nodeCallArgs) := block(
+  printf(fh, "  double G_l[~a]; ~%", NI*NA),
+  printf(fh, "  double G_r[~a]; ~%", NI*NA),
+  printf(fh, "  double Fhat_nodal[~a]; ~%", NO*NI),
+  printf(fh, "  for (int item = 0; item < ~a; ++item) ~a_g(item, f_l, f_r, G_l, G_r); ~%", NI*NA, funcNm),
   printf(fh, "  double alpha_max = 0.0; ~%"),
   printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
   printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
-  printf(fh, "      alpha_max = fmax(alpha_max, ~a_node(i, j,~a alpha_quad[i*~a + j], f_l, f_r, Fhat_nodal)); ~%", funcNm, nodeCallArgs, NI),
+  printf(fh, "      alpha_max = fmax(alpha_max, ~a_node(i, j,~a alpha_quad[i*~a + j], G_l, G_r, Fhat_nodal)); ~%", funcNm, nodeCallArgs, NI),
   printf(fh, "    } ~%"),
-  printf(fh, "  } ~%")
+  printf(fh, "  } ~%"),
+  printf(fh, "  for (int k = 0; k < ~a; ++k) ~a_prj(k, Fhat_nodal, flux); ~%", NK, funcNm)
 )$

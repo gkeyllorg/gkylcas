@@ -1,0 +1,83 @@
+/* alpha-factor-emit.mac ----------------------------------------------------
+   Sum-factorized emission of the force producers (the alpha_quad kernels of
+   the velocity- and configuration-direction surface fluxes).
+
+   Every force contribution at a surface node (outer node i, inner node j) is
+   a sum of products of a factor that depends only on the outer node and a
+   factor that depends only on the inner node,
+
+     alpha(i, j) = sum_t O_t(i) * I_t(j),   t = 0 .. NT-1,
+
+   because the fields entering it are configuration-space expansions
+   evaluated at the outer (configuration) nodes (E, B, grad phi, the Poisson
+   tensor), velocity-space expansions evaluated at the inner (velocity)
+   nodes (dH/dv, F_rad, the velocity map), or phase-space expansions whose
+   basis is outer x inner separable (phase-space Hamiltonians, via the same
+   G contraction as the distribution function). NT is a small number: 1 for
+   E/phi (inner factor 1), 1 for radiation (outer factor 1), vdim-1 for the
+   Lorentz force, NA (outer shapes) per velocity derivative for phase
+   Hamiltonians.
+
+   Each producer emits
+     int <name>_shared(int tid, int nthreads, <inputs>, double *O, double *I)
+       fills O[t*NO + i] for the outer nodes i = tid, tid+nthreads, ... and
+       I[t*NI + j] for the inner nodes likewise (one GPU thread per node, or
+       tid = 0, nthreads = 1 on the CPU) and returns NT. Called with O == NULL
+       it only returns NT (size query, used by the updaters to lay out the
+       force buffers at construction).
+     <name>(<inputs>, alpha_quad)  the whole-surface wrapper (original ABI):
+       fills O/I locally and accumulates sum_t O*I at every node.
+   The per-node combination is NOT generated per producer: the updaters chain
+   the producers' _shared calls (each one's return value is the next one's
+   offset into O/I) and do alpha(i, j) = sum over all terms of O[t*NO+i]*
+   I[t*NI+j] in one place, which is what makes the shared (per cell) vs. per
+   surface node work visible in the updater.
+
+   The emitter takes the producer-specific pieces as lists of C lines:
+   prelude (cell constants and pointer aliases, in scope for both loops),
+   outerBody (computes the O entries for outer node `i`) and innerBody
+   (computes the I entries for inner node `j`). */
+
+/* Argument-declaration string -> plain call-argument string: keeps the
+   identifiers, drops types/qualifiers ("const double *w, const int e" ->
+   "w, e"). */
+alphaCallArgs(argDecl) := block([parts, p, toks],
+  parts : split(argDecl, ","),
+  simplode(makelist(block([toks],
+    toks : split(sremove("*", strim(" ", p)), " "),
+    last(toks)), p, parts), ", ")
+)$
+
+alphaEmitFactored(fh, funcNm, argDecl, NT, NO, NI, prelude, outerBody, innerBody) := block([ln, callArgs],
+  callArgs : alphaCallArgs(argDecl),
+  /* Shared factors; returns the term count. */
+  printf(fh, "GKYL_CU_DH int ~a_shared(int tid, int nthreads, ~a,
+  double* GKYL_RESTRICT O, double* GKYL_RESTRICT I) ~%{ ~%", funcNm, argDecl),
+  if NT > 0 then (
+    printf(fh, "  if (O == NULL) return ~a; ~%", NT),
+    for ln in prelude do printf(fh, "  ~a ~%", ln),
+    printf(fh, "  for (int i = tid; i < ~a; i += nthreads) { ~%", NO),
+    for ln in outerBody do printf(fh, "    ~a ~%", ln),
+    printf(fh, "  } ~%"),
+    printf(fh, "  for (int j = tid; j < ~a; j += nthreads) { ~%", NI),
+    for ln in innerBody do printf(fh, "    ~a ~%", ln),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, "  return ~a; ~%", NT),
+  printf(fh, "} ~%~%"),
+  /* Whole-surface wrapper. */
+  printf(fh, "GKYL_CU_DH void ~a(~a, double* GKYL_RESTRICT alpha_quad) ~%{ ~%", funcNm, argDecl),
+  if NT > 0 then (
+    printf(fh, "  double O[~a]; ~%", NT*NO),
+    printf(fh, "  double I[~a]; ~%", NT*NI),
+    printf(fh, "  ~a_shared(0, 1, ~a, O, I); ~%", funcNm, callArgs),
+    printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
+    printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
+    printf(fh, "      double alpha = 0.0; ~%"),
+    printf(fh, "      for (int t = 0; t < ~a; ++t) alpha += O[t*~a + i]*I[t*~a + j]; ~%", NT, NO, NI),
+    printf(fh, "      alpha_quad[i*~a + j] += alpha; ~%", NI),
+    printf(fh, "    } ~%"),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, "} ~%")
+)$

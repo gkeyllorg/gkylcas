@@ -35,10 +35,9 @@ dx11 : [dx10, dx11, dx12]$
 dv11 : [dv10, dv11, dv12]$
 cidx(cdim) := makelist(i,i,0,cdim-1)$
 vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
-/* Configuration-space boundary surface update from the pre-computed nodal
-   flux, as loops over the shared consumer projection tables
-   (vst_<tag>_prj_x<d>_*, see writeConsumerProjTables in
-   surf-eval-tables.mac). One-sided version of calcSurfStreamFlux in
+/* Configuration-space boundary surface update from the pre-computed surface
+   flux (stored by the producers already projected onto the surface modal
+   basis, consumer projection tables vst_<tag>_prj_x<d>_*). One-sided version of calcSurfStreamFlux in
    triadSurfFuncs.mac (two-framings pairing convention as in calcVelSurf):
    edge == -1 is the LEFT domain boundary (skin cell evaluated at cv=+1, the
    right-interface coefficients), edge == +1 the RIGHT boundary (skin at
@@ -71,7 +70,7 @@ calcSurfStreamFluxBoundary(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   NMV : length(fact[2]),
   tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
   pre : sconcat("vst_", tag, "_prj_x", dir-1),
-  off : (dir-1)*numNodes,
+  off : (dir-1)*NK, /* Modal offset of this direction in the stored flux. */
 
   printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
   surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder),
@@ -82,7 +81,7 @@ calcSurfStreamFluxBoundary(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   if emitConsumerModeFns then (
     printf(fh, "GKYL_CU_DH void ~a_mode(int m, int edge, double dx1~a,
   const double *flux, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
-    emitPrjProjection(fh, pre, "pm_a", "pm_b", "m", NA, NMV, num_nodes_conf, num_nodes_vel, off, "flux", false),
+    emitPrjProjection(fh, pre, "pm_s", "m", off, "flux", false),
     printf(fh, "  if (edge == -1) { ~%"),
     printf(fh, "    out[m] += dx1~a*~a_pm_cr[m]*g; ~%", dir-1, pre),
     printf(fh, "  } else { ~%"),
@@ -96,7 +95,7 @@ calcSurfStreamFluxBoundary(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, use
   const int edge, const double *flux, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
   printf(fh, "  double dx1~a = 2.0/dxv[~a]; ~%", dir-1, cid[dir]),
   printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NK),
-  emitPrjProjection(fh, pre, "kamap", "kbmap", "k", NA, NMV, num_nodes_conf, num_nodes_vel, off, "flux", false),
+  emitPrjProjection(fh, pre, false, "k", off, "flux", false),
   printf(fh, "  if (edge == -1) { ~%"),
   printf(fh, "    for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
   printf(fh, "      out[~a_out_mode[q]] += dx1~a*~a_out_cr[q]*g; ~%", pre, dir-1, pre),

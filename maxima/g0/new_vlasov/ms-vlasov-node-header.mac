@@ -17,11 +17,17 @@ vlabels : ["vx","vy","vz"]$
 
 fh : openw("~/max-out/gkyl_vlasov_surf_node_kernels.h")$
 printf(fh, "#pragma once ~%")$
-printf(fh, "// Per-node (Design A) kernel API: each _node function does one surface ~%")$
-printf(fh, "// node's work; producers RETURN their force contribution (the dispatch ~%")$
-printf(fh, "// sums them in a register), the Lax _node functions take that alpha by ~%")$
-printf(fh, "// value and return |alpha| for the caller's CFL reduction, finalized by ~%")$
-printf(fh, "// the _cfl functions. ~%")$
+printf(fh, "// Sum-factorized surface kernel API. Force producers: _shared fills the ~%")$
+printf(fh, "// outer (per configuration node, O[t*NO + i]) and inner (per velocity ~%")$
+printf(fh, "// node, I[t*NI + j]) factors of their terms, grid-stride over (tid, nthreads), ~%")$
+printf(fh, "// and return the term count (with O == NULL: size query only); the dispatch ~%")$
+printf(fh, "// chains the producers and forms alpha(i, j) = sum_t O*I over all ~%")$
+printf(fh, "// producers' terms in one place. Lax: the _g functions fill one (inner node, outer shape) entry ~%")$
+printf(fh, "// of the stage-1 arrays G_l/G_r per call, the Lax _node functions take ~%")$
+printf(fh, "// alpha by value and the filled G arrays, write the node's Lax flux into ~%")$
+printf(fh, "// the per-direction nodal buffer and return |alpha| for the caller's CFL ~%")$
+printf(fh, "// reduction (finalized by the _cfl functions), and the Lax _prj functions ~%")$
+printf(fh, "// project one surface mode of that buffer into the modal flux. ~%")$
 printf(fh, "#include <math.h> ~%")$
 printf(fh, "#include <gkyl_util.h> ~%")$
 printf(fh, "EXTERN_C_BEG ~%")$
@@ -47,31 +53,35 @@ for bInd : 1 thru 2 do (
             if (((bName[bInd] = "ser") and (pi = 1) and (not useHigherOrder)) or (useHigherOrder and (bName[bInd] = "tensor") and (pi > 1))) then si : "",
             maxC : c, if (v < c) then maxC : v,
             for dir : 1 thru maxC do (
-              printf(fh, "~adouble phi_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *jacob_pos, const double *phi); ~%",
+              printf(fh, "~aint phi_~aalpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *dxv, const double *jacob_pos, const double *phi, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
               /* Phase-space Hamiltonian velocity flux: serendipity and the
                  tensor p=1 hybrid (no phase rep for tensor p>1). */
               if ((bName[bInd] = "ser" or bName[bInd] = "tensor") and not(c+v>=5 and pi>1)) then
-                printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-                  deco, si, vlabels[dir], c, v, bName[bInd], pi)
+                (printf(fh, "~aint hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
+                  deco, si, vlabels[dir], c, v, bName[bInd], pi))
             ),
             for dir : 1 thru v do (
-              printf(fh, "~adouble E_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *qmem); ~%",
+              printf(fh, "~aint E_~aalpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *dxv, const double *qmem, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
-              printf(fh, "~adouble rad_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *rad); ~%",
+              printf(fh, "~aint rad_~aalpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *dxv, const double *rad, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
               if (v > 1) then (
-                printf(fh, "~adouble B_~ahamil_vel_dense_alpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem); ~%",
+                printf(fh, "~aint B_~ahamil_vel_dense_alpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
                   deco, si, vlabels[dir], c, v, bName[bInd], pi),
-                printf(fh, "~adouble B_~ahamil_vel_sparse_alpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem); ~%",
+                printf(fh, "~aint B_~ahamil_vel_sparse_alpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
                   deco, si, vlabels[dir], c, v, bName[bInd], pi),
                 /* Phase-space Hamiltonian magnetic force: serendipity and
                    the tensor p=1 hybrid (no tensor p>1 representation). */
                 if ((bName[bInd] = "ser" or bName[bInd] = "tensor") and not(c+v>=5 and pi>1)) then
-                  printf(fh, "~adouble B_~ahamil_phase_alpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem); ~%",
-                    deco, si, vlabels[dir], c, v, bName[bInd], pi)
+                  (printf(fh, "~aint B_~ahamil_phase_alpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
+                    deco, si, vlabels[dir], c, v, bName[bInd], pi))
               ),
-              printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_node(int i, int j, const double *jacob_vel_surf_r, double alpha, const double *f_l, const double *f_r, double* GKYL_RESTRICT Fhat_nodal); ~%",
+              printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_g(int item, const double *f_l, const double *f_r, double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r); ~%",
+                deco, si, vlabels[dir], c, v, bName[bInd], pi),
+              printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_node(int i, int j, const double *jacob_vel_surf_r, double alpha, const double *G_l, const double *G_r, double* GKYL_RESTRICT Fhat_nodal); ~%",
+                deco, si, vlabels[dir], c, v, bName[bInd], pi),
+              printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_prj(int k, const double *Fhat_nodal, double* GKYL_RESTRICT flux); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
               printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_cfl(const double *dxv, const double *jacob_vel_surf_l, const double *jacob_vel_surf_r, double alpha_max); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi)
@@ -111,19 +121,23 @@ for c : 1 thru 3 do (
           si : if useHigherOrder then "ho_" else "",
           if not((bName[bInd] = "ser") and (pi = 1) and useHigherOrder) then (
             if ((bName[bInd] = "ser") and (pi = 1)) then si : "",
-            printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_node(int i, int j, const double *jacob_pos_l, const double *jacob_pos_r, double alpha, const double *f_l, const double *f_r, double* GKYL_RESTRICT Fhat_nodal); ~%",
+            printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_g(int item, const double *f_l, const double *f_r, double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r); ~%",
+              deco, si, clabels[dir], c, v, bName[bInd], pi),
+            printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_node(int i, int j, const double *jacob_pos_l, const double *jacob_pos_r, double alpha, const double *G_l, const double *G_r, double* GKYL_RESTRICT Fhat_nodal); ~%",
+              deco, si, clabels[dir], c, v, bName[bInd], pi),
+            printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_prj(int k, const double *Fhat_nodal, double* GKYL_RESTRICT flux); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi),
             printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_cfl(const double *dxv, const double *jacob_pos_l, const double *jacob_pos_r, double alpha_max); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi),
             /* Velocity-space Hamiltonian producers: Serendipity and the
                tensor p=1 hybrid (every rep is usable on tensor p=1). */
-            printf(fh, "~adouble hamil_vel_dense_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
+            printf(fh, "~aint hamil_vel_dense_~aalpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *w, const double *dxv, const int hamil_pt_edge, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi),
             if (v > 1) then
-              printf(fh, "~adouble hamil_vel_sparse_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-                deco, si, clabels[dir], c, v, bName[bInd], pi),
-            if not(c+v>=5 and pi>1) then printf(fh, "~adouble hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int m, int hamil_pt_edge, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-              deco, si, clabels[dir], c, v, bName[bInd], pi)
+              (printf(fh, "~aint hamil_vel_sparse_~aalpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *w, const double *dxv, const int hamil_pt_edge, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
+                deco, si, clabels[dir], c, v, bName[bInd], pi)),
+            if not(c+v>=5 and pi>1) then (printf(fh, "~aint hamil_phase_~aalpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *w, const double *dxv, const int hamil_pt_edge, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
+              deco, si, clabels[dir], c, v, bName[bInd], pi))
             /* DISABLED until the per-mode GPU launcher lands (re-enable with
                emitConsumerModeFns in surf-eval-tables.mac): the from-flux
                stream consumer per-mode decls -- mirror ms-triadSurf.mac and
@@ -157,8 +171,8 @@ for c : 1 thru 3 do (
           if not((bName[bInd] = "ser") and (pi = 1) and useHigherOrder) then (
             if ((bName[bInd] = "ser") and (pi = 1)) then si : "",
             for rep in (if v > 1 then ["vel_dense", "vel_sparse", "phase"] else ["vel_dense", "phase"]) do
-              if not(rep = "phase" and c+v>=5 and pi>1) then printf(fh, "~adouble nc_hamil_~a_~aalpha_quad_~a_~ax~av_~a_p~a_node(int i, int j, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil); ~%",
-                deco, rep, si, vlabels[dir], c, v, bName[bInd], pi)
+              if not(rep = "phase" and c+v>=5 and pi>1) then (printf(fh, "~aint nc_hamil_~a_~aalpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int nthreads, const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
+                deco, rep, si, vlabels[dir], c, v, bName[bInd], pi))
           )
         )
       ),
