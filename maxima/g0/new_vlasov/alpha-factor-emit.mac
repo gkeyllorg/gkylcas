@@ -19,22 +19,24 @@
    Hamiltonians.
 
    Each producer emits
-     int <name>_shared(int tid, int nthreads, <inputs>, double *O, double *I)
-       fills O[t*NO + i] for the outer nodes i = tid, tid+nthreads, ... and
-       I[t*NI + j] for the inner nodes likewise (one GPU thread per node, or
-       tid = 0, nthreads = 1 on the CPU) and returns NT. Called with O == NULL
-       it only returns NT (size query, used by the updaters to lay out the
-       force buffers at construction).
+     int <name>_shared(int tid, int off, <inputs>, double *O, double *I)
+       node thread tid fills the outer factors O[(off + t)*NO + tid] if
+       tid < NO and the inner factors I[(off + t)*NI + tid] if tid < NI (one
+       surface-node thread per call: max(NO, NI) <= NO*NI, so the launcher's
+       one thread per surface node covers every producer; the CPU loops tid
+       over the nodes), and returns NT; off is where this producer's terms
+       start in the dispatch's O/I buffers (the running term count of the
+       producers before it). Called with O == NULL it only returns NT (size
+       query, used by the updaters to lay out the force buffers).
      <name>(<inputs>, alpha_quad)  the whole-surface wrapper (original ABI):
        fills O/I locally and accumulates sum_t O*I at every node.
    The per-node combination is NOT generated per producer: the updaters chain
-   the producers' _shared calls (each one's return value is the next one's
-   offset into O/I) and do alpha(i, j) = sum over all terms of O[t*NO+i]*
-   I[t*NI+j] in one place, which is what makes the shared (per cell) vs. per
+   the producers' _shared calls (nt += producer(tid, nt, ..., O, I)) and do
+   alpha(i, j) = sum over all terms of O[t*NO+i]*I[t*NI+j] in one place, which is what makes the shared (per cell) vs. per
    surface node work visible in the updater.
 
    The emitter takes the producer-specific pieces as lists of C lines:
-   prelude (cell constants and pointer aliases, in scope for both loops),
+   prelude (cell constants and pointer aliases, in scope for both blocks),
    outerBody (computes the O entries for outer node `i`) and innerBody
    (computes the I entries for inner node `j`). */
 
@@ -51,15 +53,19 @@ alphaCallArgs(argDecl) := block([parts, p, toks],
 alphaEmitFactored(fh, funcNm, argDecl, NT, NO, NI, prelude, outerBody, innerBody) := block([ln, callArgs],
   callArgs : alphaCallArgs(argDecl),
   /* Shared factors; returns the term count. */
-  printf(fh, "GKYL_CU_DH int ~a_shared(int tid, int nthreads, ~a,
+  printf(fh, "GKYL_CU_DH int ~a_shared(int tid, int off, ~a,
   double* GKYL_RESTRICT O, double* GKYL_RESTRICT I) ~%{ ~%", funcNm, argDecl),
   if NT > 0 then (
     printf(fh, "  if (O == NULL) return ~a; ~%", NT),
+    printf(fh, "  O += off*~a; ~%", NO),
+    printf(fh, "  I += off*~a; ~%", NI),
     for ln in prelude do printf(fh, "  ~a ~%", ln),
-    printf(fh, "  for (int i = tid; i < ~a; i += nthreads) { ~%", NO),
+    printf(fh, "  if (tid < ~a) { ~%", NO),
+    printf(fh, "    const int i = tid; ~%"),
     for ln in outerBody do printf(fh, "    ~a ~%", ln),
     printf(fh, "  } ~%"),
-    printf(fh, "  for (int j = tid; j < ~a; j += nthreads) { ~%", NI),
+    printf(fh, "  if (tid < ~a) { ~%", NI),
+    printf(fh, "    const int j = tid; ~%"),
     for ln in innerBody do printf(fh, "    ~a ~%", ln),
     printf(fh, "  } ~%")
   ),
@@ -70,7 +76,7 @@ alphaEmitFactored(fh, funcNm, argDecl, NT, NO, NI, prelude, outerBody, innerBody
   if NT > 0 then (
     printf(fh, "  double O[~a]; ~%", NT*NO),
     printf(fh, "  double I[~a]; ~%", NT*NI),
-    printf(fh, "  ~a_shared(0, 1, ~a, O, I); ~%", funcNm, callArgs),
+    printf(fh, "  for (int tid = 0; tid < ~a; ++tid) ~a_shared(tid, 0, ~a, O, I); ~%", max(NO, NI), funcNm, callArgs),
     printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
     printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
     printf(fh, "      double alpha = 0.0; ~%"),

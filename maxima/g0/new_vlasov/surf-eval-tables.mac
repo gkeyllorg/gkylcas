@@ -238,6 +238,20 @@ writeConsumerProjTables(fh, prefix, bP, bSurfP, outerVars, normalVar, innerVars,
   printf(fh, "}; ~%"),
   emitTabIntArray(fh, sconcat(prefix, "_kamap"), kamap),
   emitTabIntArray(fh, sconcat(prefix, "_kbmap"), kbmap),
+  /* kbmap inverted to CSR form (boff[b] .. boff[b+1]-1 index the surface
+     modes k with kbmap[k] = b, in increasing k), for the projection that
+     contracts the inner nodes once per inner mode b and then finishes every
+     surface mode sharing that b. */
+  block([boff, bks],
+    boff : makelist(0, b, 1, NMV+1),
+    bks : [],
+    for b : 0 thru NMV-1 do (
+      for k : 1 thru NK do if kbmap[k] = b then bks : endcons(k-1, bks),
+      boff[b+2] : length(bks)
+    ),
+    emitTabIntArray(fh, sconcat(prefix, "_boff"), boff),
+    emitTabIntArray(fh, sconcat(prefix, "_bks"), bks)
+  ),
   /* Volume-increment maps: restriction of each bP_m to the two edges. */
   smode : makelist(0, m, 1, NP),
   clm : makelist(0, m, 1, NP),
@@ -362,6 +376,27 @@ writePhaseFactorTables(fh, prefix, bP, outerVars, normalVar, innerVars,
   /* One V matrix serves both edges: psi(-1,.) = +/- psi(+1,.) (parity of the
      normal factor); the sign is folded into the per-edge coefficient copies. */
   emitTabMatrix(fh, sconcat(prefix, "_V"), ed[1], innerVars, nodesInner),
+  /* Stage-1 tables with the per-edge coefficient folded in,
+       Wl[k*NI + j] = coefl[k] * V[j][vlmap[k]],  Wr likewise,
+     so the producer does one FMA per (mode, inner node) term, W*f[k]; laid
+     out with the inner node fastest since its warps read consecutive inner
+     nodes of one mode. */
+  block([sub, j, k, side, nm, sgn, vmap],
+    for side : 1 thru 2 do (
+      nm : if side = 1 then "_Wl" else "_Wr",
+      sgn : if side = 1 then ed[4] else ed[5],
+      vmap : if side = 1 then ed[2] else ed[3],
+      printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a~a[~a] = { ~%", prefix, nm, NB*NI),
+      for k : 1 thru NB do
+        for j : 1 thru NI do (
+          sub : if listp(nodesInner[j])
+                then makelist(innerVars[d] = nodesInner[j][d], d, 1, length(innerVars))
+                else [],
+          printf(fh, "  ~a, ~%", float(expand(sgn[k]*coefL[k]*subst(sub, ed[1][vmap[k]+1]))))
+        ),
+      printf(fh, "}; ~%")
+    )
+  ),
   printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a_coefl[~a] = { ~%", prefix, NB),
   for k : 1 thru NB do printf(fh, "  ~a, ~%", float(expand(ed[4][k]*coefL[k]))),
   printf(fh, "}; ~%"),
