@@ -17,20 +17,24 @@ vlabels : ["vx","vy","vz"]$
 
 fh : openw("~/max-out/gkyl_vlasov_surf_node_kernels.h")$
 printf(fh, "#pragma once ~%")$
-printf(fh, "// Sum-factorized surface kernel API. Force producers: _shared fills the ~%")$
-printf(fh, "// outer (per configuration node, O[t*NO + i]) and inner (per velocity ~%")$
-printf(fh, "// node, I[t*NI + j]) factors of their terms, one surface-node thread tid per ~%")$
-printf(fh, "// call (outer row tid if tid < NO, inner row tid if tid < NI), starting at term ~%")$
-printf(fh, "// off, and return the term count (with O == NULL: size query only); the dispatch ~%")$
-printf(fh, "// chains the producers and forms alpha(i, j) = sum_t O*I over all ~%")$
-printf(fh, "// producers' terms in one place. Lax stages do one unit per call (one thread per ~%")$
-printf(fh, "// surface node; units beyond a stage's count are no-ops): the _g functions fill one ~%")$
-printf(fh, "// (outer shape, inner node) entry of the stage-1 arrays G_l/G_r, the _node functions take ~%")$
-printf(fh, "// alpha by value and the filled G arrays, write the node's Lax flux into ~%")$
-printf(fh, "// the per-direction nodal buffer and return |alpha| for the caller's CFL ~%")$
-printf(fh, "// reduction (finalized by the _cfl functions), and the Lax _prj functions ~%")$
-printf(fh, "// project that buffer onto the surface modal basis (one inner surface mode or ~%")$
-printf(fh, "// surface mode per call). ~%")$
+printf(fh, "// Sum-factorized surface kernel API. A cell's surface update runs as stages, ~%")$
+printf(fh, "// each called once per node thread of the cell (the CUDA launcher gives one ~%")$
+printf(fh, "// thread per surface node; the CPU dispatch loops over them): ~%")$
+printf(fh, "//   _shared(tid, off, ...)  force producer: node thread tid fills row tid of its ~%")$
+printf(fh, "//       outer factors O[(off+t)*NO + i] (if tid < NO) and of its inner factors ~%")$
+printf(fh, "//       I[(off+t)*NI + j] (if tid < NI) for its terms t, starting at term off; ~%")$
+printf(fh, "//       returns the term count (O == NULL: size query only). The dispatch chains ~%")$
+printf(fh, "//       the producers and forms alpha(i, j) = sum_t O*I over all terms. ~%")$
+printf(fh, "//   _g(tid, ...)            stage 1 of the nodal f evaluation: node thread tid does ~%")$
+printf(fh, "//       one (outer shape a, inner node j) pair, fills G_l/G_r[j][a]; tid >= NA*NI: no-op. ~%")$
+printf(fh, "//   _node(i, j, ...)        the node's Lax flux from alpha (by value) and the filled ~%")$
+printf(fh, "//       G, into the nodal buffer; returns |alpha| for the CFL reduction (_cfl). ~%")$
+printf(fh, "//   _prj(tid, ...)          projection of the nodal buffer onto the surface modal ~%")$
+printf(fh, "//       basis: node thread tid does inner surface mode tid (the inner-node ~%")$
+printf(fh, "//       contraction once, then every surface mode sharing it); beyond the count: no-op. ~%")$
+printf(fh, "// tid is the thread's index among the cell's node threads, NOT its node: that ~%")$
+printf(fh, "// keeps each stage's work in the fewest warps. Only _node is indexed by the ~%")$
+printf(fh, "// node (i, j). ~%")$
 printf(fh, "#include <math.h> ~%")$
 printf(fh, "#include <gkyl_util.h> ~%")$
 printf(fh, "EXTERN_C_BEG ~%")$
@@ -80,11 +84,11 @@ for bInd : 1 thru 2 do (
                   (printf(fh, "~aint B_~ahamil_phase_alpha_quad_~a_~ax~av_~a_p~a_shared(int tid, int off, const double *dxv, const double *jacob_vel_surf, const double *hamil, const double *qmem, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%",
                     deco, si, vlabels[dir], c, v, bName[bInd], pi))
               ),
-              printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_g(int item, const double *f_l, const double *f_r, double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r); ~%",
+              printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_g(int tid, const double *f_l, const double *f_r, double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
               printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_node(int i, int j, const double *jacob_vel_surf_r, double alpha, const double *G_l, const double *G_r, double* GKYL_RESTRICT Fhat_nodal); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
-              printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_prj(int unit, const double *Fhat_nodal, double* GKYL_RESTRICT flux); ~%",
+              printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_prj(int tid, const double *Fhat_nodal, double* GKYL_RESTRICT flux); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi),
               printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_cfl(const double *dxv, const double *jacob_vel_surf_l, const double *jacob_vel_surf_r, double alpha_max); ~%",
                 deco, si, vlabels[dir], c, v, bName[bInd], pi)
@@ -124,11 +128,11 @@ for c : 1 thru 3 do (
           si : if useHigherOrder then "ho_" else "",
           if not((bName[bInd] = "ser") and (pi = 1) and useHigherOrder) then (
             if ((bName[bInd] = "ser") and (pi = 1)) then si : "",
-            printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_g(int item, const double *f_l, const double *f_r, double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r); ~%",
+            printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_g(int tid, const double *f_l, const double *f_r, double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi),
             printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_node(int i, int j, const double *jacob_pos_l, const double *jacob_pos_r, double alpha, const double *G_l, const double *G_r, double* GKYL_RESTRICT Fhat_nodal); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi),
-            printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_prj(int unit, const double *Fhat_nodal, double* GKYL_RESTRICT flux); ~%",
+            printf(fh, "~avoid ~alax_flux_nodal_~a_~ax~av_~a_p~a_prj(int tid, const double *Fhat_nodal, double* GKYL_RESTRICT flux); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi),
             printf(fh, "~adouble ~alax_flux_nodal_~a_~ax~av_~a_p~a_cfl(const double *dxv, const double *jacob_pos_l, const double *jacob_pos_r, double alpha_max); ~%",
               deco, si, clabels[dir], c, v, bName[bInd], pi),

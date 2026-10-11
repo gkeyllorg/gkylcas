@@ -116,8 +116,8 @@ laxAssertNodeOrder(surfNodes, nodesOuter, nodesInner) := block(
     )
 )$
 
-/* Emit the stage-1 producer: one item per call, item = a*NI + j for the
-   outer shape a and inner node j (inner node fastest, so consecutive
+/* Emit the stage-1 producer: one item per call, node thread tid does item
+   tid = a*NI + j for the outer shape a and inner node j (inner node fastest, so consecutive
    threads of a warp work on one shape, i.e. one k sequence, and read the
    node tables contiguously); computes G_l[j*NA + a] and G_r[j*NA + a], the
    contraction of f with the inner-factor evaluations over the basis
@@ -127,11 +127,11 @@ laxAssertNodeOrder(surfNodes, nodesOuter, nodesInner) := block(
    launcher's one thread per surface node covers them; items beyond are a
    no-op. The sum over q is in increasing k, as in the former per-node loop. */
 laxEmitStage1Fn(fh, funcNm, prefix, NA, NMV, NI) := block(
-  printf(fh, "GKYL_CU_DH void ~a_g(int item, const double *f_l, const double *f_r,
+  printf(fh, "GKYL_CU_DH void ~a_g(int tid, const double *f_l, const double *f_r,
   double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r) ~%{ ~%", funcNm),
-  printf(fh, "  if (item >= ~a) return; ~%", NA*NI),
-  printf(fh, "  const int a = item/~a; ~%", NI),
-  printf(fh, "  const int j = item - a*~a; ~%", NI),
+  printf(fh, "  if (tid >= ~a) return; ~%", NA*NI),
+  printf(fh, "  const int a = tid/~a; ~%", NI),
+  printf(fh, "  const int j = tid - a*~a; ~%", NI),
   printf(fh, "  double g_l = 0.0; ~%"),
   printf(fh, "  double g_r = 0.0; ~%"),
   printf(fh, "  for (int q = ~a_aoff[a]; q < ~a_aoff[a+1]; ++q) { ~%", prefix, prefix),
@@ -180,58 +180,37 @@ laxEmitNodeFn(fh, funcNm, prefix, NB, NA, NMV, NI, jacArgs, jacDecls, hasJac, sc
 
 /* Emit the projection of the nodal flux Fhat_nodal (NO*NI entries, this
    direction only) onto the surface modal basis, stored at flux[outOff + k]
-   with outOff the direction's modal offset: one unit per call, like the
-   other Lax stages (the launcher gives one thread per surface node; units
-   beyond the count are a no-op, and there are never more units than
-   nodes). prjPre is the consumer-projection table prefix
+   with outOff the direction's modal offset: one item per call, node thread
+   tid does item tid, like the other stages (the launcher gives one thread
+   per surface node; items beyond the count are a no-op, and there are never
+   more items than nodes). prjPre is the consumer-projection table prefix
    (vst_<tag>_prj_<surf>) whose quadrature-weight-folded Cw/Vw and
-   kamap/kbmap/boff/bks tables it contracts: the inner-node contraction
-   t_i = sum_j Vw[j][b] F[i][j] (for every outer node i; j outer so each Vw
-   entry is loaded once; each t_i sums over j in increasing order, the order
-   the former consumer-side projection used) and then g_k = sum_i Cw[i][a_k]
-   t_i. The units are the NMVp inner surface modes b when that keeps the
-   per-unit path (NI*NO + ceil(NK/NMVp)*NO) within 1.5x of the per-mode one
-   (NI*NO + NO): t is then computed once per b and finishes every surface
-   mode sharing that b (1x3v p2: 8 units, 2.3x fewer FMAs than per mode).
-   Otherwise (few inner modes, many outer nodes, e.g. 2x2v p2: 3 inner modes
-   for 20 surface modes over 16 outer nodes) the units are the NK surface
-   modes, each recomputing its t, so that the work is spread over more
-   threads: the kernel is FP64-throughput bound, but a phase run by 3
-   threads per cell is latency bound. */
-laxEmitPrjFn(fh, funcNm, prjPre, NK, NAp, NMVp, NO, NI, outOff) := block([perB],
-  perB : is(NI*NO + ceiling(NK/NMVp)*NO <= 1.5*(NI*NO + NO)),
-  printf(fh, "GKYL_CU_DH void ~a_prj(int unit, const double *Fhat_nodal, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
-  if perB then (
-    printf(fh, "  if (unit >= ~a) return; ~%", NMVp),
-    printf(fh, "  const int b = unit; ~%"),
-    printf(fh, "  double t[~a]; ~%", NO),
-    printf(fh, "  for (int i = 0; i < ~a; ++i) t[i] = 0.0; ~%", NO),
-    printf(fh, "  for (int j = 0; j < ~a; ++j) { ~%", NI),
-    printf(fh, "    const double w = ~a_Vw[j*~a + b]; ~%", prjPre, NMVp),
-    printf(fh, "    for (int i = 0; i < ~a; ++i) t[i] += w*Fhat_nodal[i*~a + j]; ~%", NO, NI),
-    printf(fh, "  } ~%"),
-    printf(fh, "  for (int q = ~a_boff[b]; q < ~a_boff[b+1]; ++q) { ~%", prjPre, prjPre),
-    printf(fh, "    const int k = ~a_bks[q]; ~%", prjPre),
-    printf(fh, "    const int a = ~a_kamap[k]; ~%", prjPre),
-    printf(fh, "    double g = 0.0; ~%"),
-    printf(fh, "    for (int i = 0; i < ~a; ++i) g += ~a_Cw[i*~a + a]*t[i]; ~%", NO, prjPre, NAp),
-    printf(fh, "    flux[~a + k] = g; ~%", outOff),
-    printf(fh, "  } ~%")
-  ) else (
-    printf(fh, "  if (unit >= ~a) return; ~%", NK),
-    printf(fh, "  const int k = unit; ~%"),
-    printf(fh, "  const int a = ~a_kamap[k]; ~%", prjPre),
-    printf(fh, "  const int b = ~a_kbmap[k]; ~%", prjPre),
-    printf(fh, "  double t[~a]; ~%", NO),
-    printf(fh, "  for (int i = 0; i < ~a; ++i) t[i] = 0.0; ~%", NO),
-    printf(fh, "  for (int j = 0; j < ~a; ++j) { ~%", NI),
-    printf(fh, "    const double w = ~a_Vw[j*~a + b]; ~%", prjPre, NMVp),
-    printf(fh, "    for (int i = 0; i < ~a; ++i) t[i] += w*Fhat_nodal[i*~a + j]; ~%", NO, NI),
-    printf(fh, "  } ~%"),
-    printf(fh, "  double g = 0.0; ~%"),
-    printf(fh, "  for (int i = 0; i < ~a; ++i) g += ~a_Cw[i*~a + a]*t[i]; ~%", NO, prjPre, NAp),
-    printf(fh, "  flux[~a + k] = g; ~%", outOff)
-  ),
+   kamap/boff/bks tables it contracts. An item is one inner surface mode b:
+   the inner-node contraction t_i = sum_j Vw[j][b] F[i][j] (for every outer
+   node i; j outer so each Vw entry is loaded once; each t_i sums over j in
+   increasing order, the order the former consumer-side projection used) is
+   done once and then finishes every surface mode k with kbmap[k] = b,
+   g_k = sum_i Cw[i][a_k] t_i. The same rule for every kernel: measured
+   against one surface mode per item it is faster wherever the kernels are
+   large (2x3v, 3x3v) and costs ~15% only in the 2x2v p=2 kernels, where
+   few inner modes make each item a long serial chain. */
+laxEmitPrjFn(fh, funcNm, prjPre, NK, NAp, NMVp, NO, NI, outOff) := block(
+  printf(fh, "GKYL_CU_DH void ~a_prj(int tid, const double *Fhat_nodal, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  printf(fh, "  if (tid >= ~a) return; ~%", NMVp),
+  printf(fh, "  const int b = tid; ~%"),
+  printf(fh, "  double t[~a]; ~%", NO),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) t[i] = 0.0; ~%", NO),
+  printf(fh, "  for (int j = 0; j < ~a; ++j) { ~%", NI),
+  printf(fh, "    const double w = ~a_Vw[j*~a + b]; ~%", prjPre, NMVp),
+  printf(fh, "    for (int i = 0; i < ~a; ++i) t[i] += w*Fhat_nodal[i*~a + j]; ~%", NO, NI),
+  printf(fh, "  } ~%"),
+  printf(fh, "  for (int q = ~a_boff[b]; q < ~a_boff[b+1]; ++q) { ~%", prjPre, prjPre),
+  printf(fh, "    const int k = ~a_bks[q]; ~%", prjPre),
+  printf(fh, "    const int a = ~a_kamap[k]; ~%", prjPre),
+  printf(fh, "    double g = 0.0; ~%"),
+  printf(fh, "    for (int i = 0; i < ~a; ++i) g += ~a_Cw[i*~a + a]*t[i]; ~%", NO, prjPre, NAp),
+  printf(fh, "    flux[~a + k] = g; ~%", outOff),
+  printf(fh, "  } ~%"),
   printf(fh, "} ~%~%")
 )$
 
@@ -245,12 +224,12 @@ laxEmitWrapperLoop(fh, funcNm, NO, NI, NA, NK, nodeCallArgs) := block(
   printf(fh, "  double G_l[~a]; ~%", NI*NA),
   printf(fh, "  double G_r[~a]; ~%", NI*NA),
   printf(fh, "  double Fhat_nodal[~a]; ~%", NO*NI),
-  printf(fh, "  for (int item = 0; item < ~a; ++item) ~a_g(item, f_l, f_r, G_l, G_r); ~%", NI*NA, funcNm),
+  printf(fh, "  for (int tid = 0; tid < ~a; ++tid) ~a_g(tid, f_l, f_r, G_l, G_r); ~%", NI*NA, funcNm),
   printf(fh, "  double alpha_max = 0.0; ~%"),
   printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
   printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
   printf(fh, "      alpha_max = fmax(alpha_max, ~a_node(i, j,~a alpha_quad[i*~a + j], G_l, G_r, Fhat_nodal)); ~%", funcNm, nodeCallArgs, NI),
   printf(fh, "    } ~%"),
   printf(fh, "  } ~%"),
-  printf(fh, "  for (int unit = 0; unit < ~a; ++unit) ~a_prj(unit, Fhat_nodal, flux); ~%", NO*NI, funcNm)
+  printf(fh, "  for (int tid = 0; tid < ~a; ++tid) ~a_prj(tid, Fhat_nodal, flux); ~%", NO*NI, funcNm)
 )$
