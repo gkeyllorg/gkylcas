@@ -12,7 +12,9 @@
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 
-dirNames : ["x","y","z"]$
+confDirNames : ["x","y","z"]$
+gkVelDirNames : ["vpar","mu"]$
+velDirNames : ["vx","vy","vz"]$
 
 /* Same as writeCIncrExprsNoExpand1 but with atomicAdd (GPU kernels). */
 writeCIncrExprsNoExpand1atomicadd(lhs, rhs) := block([expr],
@@ -36,9 +38,14 @@ writeArrayAverageKernel(fh, fhHeader, funcName, f_c) := block([],
 )$
 
 /* Generate the kernels averaging a cdim x vdim (vdim=0 for conf-space) field
-   over every non-empty subset of its conf dimensions. */
+   over every non-empty subset of its dimensions. */
 genArrayAverageKernels(fh, fhHeader, cdim, vdim, basisType, polyOrder) := block(
-  [varsC,bC,vars,basis,vSub,dimStr,f_e,w_e,op,avgDims,avgStr,outVars,bRed,f_c,fRed_e,fFull_c,funcName,d,k],
+  [varsC,bC,vars,basis,vSub,dimStr,ndim,dirNames,f_e,w_e,op,avgDims,avgStr,outVars,
+   numConfOut,bRed,f_c,fRed_e,fFull_c,funcName,d,k],
+
+  ndim : cdim+vdim,
+  dirNames : append(makelist(confDirNames[d], d, 1, cdim),
+    makelist(if basisType = "gkhyb" then gkVelDirNames[d] else velDirNames[d], d, 1, vdim)),
 
   if vdim = 0 then (
     [vars, basis] : loadBasis(basisType, cdim, polyOrder),
@@ -61,18 +68,22 @@ genArrayAverageKernels(fh, fhHeader, cdim, vdim, basisType, polyOrder) := block(
 
   /* The averaged dimensions are encoded in the bits of op, e.g. op=3 is avgxy
      and op=5 is avgxz. The updater's kernel tables follow this ordering. */
-  for op : 1 thru 2^cdim-1 do (
-    avgDims : sublist(makelist(d, d, 1, cdim), lambda([d], is(mod(floor(op/2^(d-1)), 2) = 1))),
+  for op : 1 thru 2^ndim-1 do (
+    avgDims : sublist(makelist(d, d, 1, ndim), lambda([d], is(mod(floor(op/2^(d-1)), 2) = 1))),
     avgStr : apply(sconcat, makelist(dirNames[d], d, avgDims)),
     outVars : copylist(vars),
     for d in avgDims do (outVars : delete(vars[d], outVars)),
+    numConfOut : length(sublist(outVars, lambda([v], member(v, makelist(vars[d], d, 1, cdim))))),
 
     /* Basis of the remaining dimensions. */
     if length(outVars) = 0 then (
       bRed : []
-    ) elseif basisType = "hyb" and length(outVars) = vdim then (
+    ) elseif basisType = "hyb" and numConfOut = 0 then (
       /* Velocity-only hybrid basis is the p=2 serendipity basis. */
       bRed : basisFromVars("ser", outVars, 2)
+    ) elseif basisType = "hyb" and numConfOut = length(outVars) then (
+      /* Conf-only hybrid basis is the p=1 serendipity basis. */
+      bRed : basisFromVars("ser", outVars, 1)
     ) else (
       bRed : basisFromVars(basisType, outVars, polyOrder)
     ),

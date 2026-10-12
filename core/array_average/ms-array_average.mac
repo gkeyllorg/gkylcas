@@ -1,5 +1,5 @@
 /* Generate kernels for the updater averaging a gkyl_array over a subset of
-   its configuration-space dimensions. */
+   its dimensions. */
 
 load("core/array_average/array_average.mac")$
 
