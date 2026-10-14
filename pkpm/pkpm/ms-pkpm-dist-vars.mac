@@ -1,0 +1,67 @@
+load("pkpm/pkpm/pkpm-dist-vars.mac")$
+load(stringproc)$
+/* This script calls the functions which calculate the pkpm distribution function variables including:
+   1. Compute div(p_par b) from the streaming term div(v_par b F_0) for a consistent pressure force which
+   prevents the development of spurious flows: integral(v_par F_0)
+   2. In the mirror force for the T_perp/m*G = T_perp/m*(F_0 - F_1) kinetic equation, compute the distribution function 
+   source along with the vperp characteristics which are a pure source term in the first Laguerre moment update.
+   g_dist_source = [2.0*T_perp/m*(2.0*T_perp/m G + T_perp/m (F_2 - F_0)), 
+                    (-vpar div(b) + bb:grad(u) - div(u) - 2 nu) T_perp/m G + 2 nu vth^2 F_0 ]
+   First output is mirror force source *distribution*, second output is *total* vperp characteristics source.
+                    
+   Note that T_perp/m*G is the evolved quantity for the first Laguerre moment. 
+   Also outputs F_1 from T_perp/m*G for the evolution of F_2 if F_2 is present. 
+   To simplify internal Gkeyll logic, kernels assume F_2 is present and outputs F_1 even if F_2 = 0.0. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      disp(printf(false,sconcat("Creating PKPM distribution function variables",bName[bInd]," ~axp~a"),d,polyOrder)),
+      fname : sconcat("~/max-out/pkpm_dist_mirror_force_",  d, "x1v_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("pkpm_dist_mirror_force_", d, "x1v_", bName[bInd]),
+      calcPKPMDistMirrorForce(fh, funcName, d, 1, bName[bInd], polyOrder),
+      close(fh),
+
+      for dir : 1 thru d do ( 
+        if (dir = 1) then fname : sconcat("~/max-out/pkpm_dist_div_ppar_x_", d, "x1v_", bName[bInd], "_p", polyOrder, ".c"),
+        if (dir = 2) then fname : sconcat("~/max-out/pkpm_dist_div_ppar_y_", d, "x1v_", bName[bInd], "_p", polyOrder, ".c"),
+        if (dir = 3) then fname : sconcat("~/max-out/pkpm_dist_div_ppar_z_", d, "x1v_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        funcName : sconcat("pkpm_dist_div_ppar"),
+        printf(fh, "#include <gkyl_vlasov_pkpm_kernels.h> ~%"),
+        calcPKPMDivPParUpdateInDir(dir, fh, funcName, d, 1, bName[bInd], polyOrder), 
+        close(fh)
+      )
+    )
+  )
+);

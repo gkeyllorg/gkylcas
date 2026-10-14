@@ -1,0 +1,87 @@
+load("vlasov/vlasov/vlasovDivideJvelFuncs.mac")$
+load(stringproc)$
+/* This script calls the function which divides out the velocity-space
+   Jacobian at nodes from Jf and converts the resulting nodal 
+   expansion back to a modal expansion. 
+
+   Also creates a function for rescaling an input f *without* the Jacobian
+   into Jf from multiplying f at nodes by the velocity-space Jacobian at
+   nodes and converting back to the modal expansion. The latter function
+   is used at restarts since we write out f, not Jf. 
+*/
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel); pure p=1 tensor
+   kernels still do not exist anywhere. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* see begining of v loop below though. */
+maxCdim_Tensor : 3$
+maxVdim_Tensor : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    minVdimB : max(c,minVdim[bInd]), 
+    maxVdimB : maxVdim[bInd], 
+    if (c = 2) then minVdimB : 1, /* We support 2x1v. */
+    for v : minVdimB thru maxVdimB do (
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+
+      /* Skip 2x3v tensor kernels: not used by the kernel tables and very
+         expensive to generate. */
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1,
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        disp(printf(false,sconcat("Creating Jf/J  ",bName[bInd]," ~ax~avP~a"),c,v,polyOrder)),
+        fname : sconcat("~/max-out/vlasov_divide_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        funcName : sconcat("vlasov_divide_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+        /* Tensor (p>1) uses the C^1 cubic map representation; Serendipity
+           (and p=1) uses the C^0 piecewise linear representation. */
+        if (bName[bInd] = "tensor") then (
+          divideJvel(fh, funcName, c, v, bName[bInd], polyOrder, "cubic")
+        )
+        else (
+          divideJvel(fh, funcName, c, v, bName[bInd], polyOrder, "linear")
+        ),
+        close(fh),
+
+        disp(printf(false,sconcat("Creating J*f  ",bName[bInd]," ~ax~avP~a"),c,v,polyOrder)),
+        fname : sconcat("~/max-out/vlasov_rescale_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        funcName : sconcat("vlasov_rescale_Jv_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+        if (bName[bInd] = "tensor") then (
+          rescaleJvel(fh, funcName, c, v, bName[bInd], polyOrder, "cubic")
+        )
+        else (
+          rescaleJvel(fh, funcName, c, v, bName[bInd], polyOrder, "linear")
+        ),
+        close(fh)                      
+      )
+    )
+  )
+);

@@ -1,0 +1,335 @@
+/* This script generates the kernels for computing the semi-implicit 
+   source solve as described in Wang et al. JCP 2020.
+   We construct a linear system of (3*num_species + 3) for each of the
+   species current densities and the three components of the electric field. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+load("scifac")$
+load("core/nodal_operations/nodal_functions.mac")$
+fpprec : 24$
+
+setDGEMSourceSolve(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rho_e, 
+   nodesCorners, rhoCorners, rho_temp_e, 
+   expr_ux, expr_uy, expr_uz, 
+   ue, un, eq_rho, E_rho],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(int count, 
+  int num_species, double qbym[GKYL_MAX_SPECIES], double epsilon0, double dt, 
+  struct gkyl_nmat *A_n, struct gkyl_nmat *rhs_n, 
+  const double *app_accel[GKYL_MAX_SPECIES], const double *ext_em, const double *app_current, 
+  double* GKYL_RESTRICT fluid[GKYL_MAX_SPECIES], double* GKYL_RESTRICT em) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // count: integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // A:           preallocated LHS matrix. ~%"),
+  printf(fh, "  // rhs:         preallocated RHS vector. ~%"),
+  printf(fh, "  // app_accel:   Applied accelerations (external forces).~%"),
+  printf(fh, "  // ext_em:      Externally applied EM fields.~%"),
+  printf(fh, "  // app_current: Applied external currents.~%"),
+  printf(fh, "  // fluid:       [rho, rho ux, rho uy, rho uz...], Fluid input state vector.~%"),
+  printf(fh, "  //              only need rho and momentum to get update source terms of fluid system. ~%"),
+  printf(fh, "  //              (isothermal Euler, Euler, Ten moment). ~%"),
+  printf(fh, "  // em:          [Ex, Ey, Ez, Bx, By, Bz], EM input state vector.~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  struct gkyl_mat lhs = gkyl_nmat_get(A_n, count); ~%"),
+  printf(fh, "  struct gkyl_mat rhs = gkyl_nmat_get(rhs_n, count); ~%"),
+  printf(fh, "  // Clear matrix and rhs source solve. ~%"),
+  printf(fh, "  gkyl_mat_clear(&lhs, 0.0); gkyl_mat_clear(&rhs, 0.0); ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  double rho[GKYL_MAX_SPECIES][~a]; ~%", NC), 
+  printf(fh, "  double rhoux[GKYL_MAX_SPECIES][~a]; ~%", NC), 
+  printf(fh, "  double rhouy[GKYL_MAX_SPECIES][~a]; ~%", NC), 
+  printf(fh, "  double rhouz[GKYL_MAX_SPECIES][~a]; ~%", NC), 
+  printf(fh, "~%"),
+  printf(fh, "  double app_accel_x[GKYL_MAX_SPECIES][~a]; ~%", NC), 
+  printf(fh, "  double app_accel_y[GKYL_MAX_SPECIES][~a]; ~%", NC), 
+  printf(fh, "  double app_accel_z[GKYL_MAX_SPECIES][~a]; ~%", NC), 
+  printf(fh, "~%"),
+
+  printf(fh, "  for (int i = 0; i < num_species; ++i) { ~%"),
+  printf(fh, "    double *inp_fluid = fluid[i]; ~%"),
+  printf(fh, "    const double *inp_app_accel = app_accel[i]; ~%"),
+  printf(fh, "~%"),
+  for j : 1 thru NC do (
+    printf(fh, "    rho[i][~a] = inp_fluid[~a]; ~%", j-1, j-1), 
+    printf(fh, "    rhoux[i][~a] = inp_fluid[~a]; ~%", j-1, j-1+1*NC), 
+    printf(fh, "    rhouy[i][~a] = inp_fluid[~a]; ~%", j-1, j-1+2*NC), 
+    printf(fh, "    rhouz[i][~a] = inp_fluid[~a]; ~%", j-1, j-1+3*NC),
+    printf(fh, "~%"),
+    printf(fh, "    app_accel_x[i][~a] = inp_app_accel[~a]; ~%", j-1, j-1+0*NC), 
+    printf(fh, "    app_accel_y[i][~a] = inp_app_accel[~a]; ~%", j-1, j-1+1*NC), 
+    printf(fh, "    app_accel_z[i][~a] = inp_app_accel[~a]; ~%", j-1, j-1+2*NC),
+    printf(fh, "~%")    
+  ), 
+  printf(fh, "  } ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  double *Ex = &em[~a]; ~%", 0*NC),
+  printf(fh, "  double *Ey = &em[~a]; ~%", 1*NC),
+  printf(fh, "  double *Ez = &em[~a]; ~%", 2*NC),
+  printf(fh, "  double *Bx = &em[~a]; ~%", 3*NC),
+  printf(fh, "  double *By = &em[~a]; ~%", 4*NC),
+  printf(fh, "  double *Bz = &em[~a]; ~%", 5*NC),
+  printf(fh, "~%"), 
+  printf(fh, "  const double *ext_Ex = &ext_em[~a]; ~%", 0*NC),
+  printf(fh, "  const double *ext_Ey = &ext_em[~a]; ~%", 1*NC),
+  printf(fh, "  const double *ext_Ez = &ext_em[~a]; ~%", 2*NC),
+  printf(fh, "  const double *ext_Bx = &ext_em[~a]; ~%", 3*NC),
+  printf(fh, "  const double *ext_By = &ext_em[~a]; ~%", 4*NC),
+  printf(fh, "  const double *ext_Bz = &ext_em[~a]; ~%", 5*NC),
+  printf(fh, "~%"), 
+  printf(fh, "  const double *app_curr_x = &app_current[~a]; ~%", 0*NC),
+  printf(fh, "  const double *app_curr_y = &app_current[~a]; ~%", 1*NC),
+  printf(fh, "  const double *app_curr_z = &app_current[~a]; ~%", 2*NC),
+  printf(fh, "~%"), 
+
+  printf(fh, "  double tot_Bx[~a]; ~%", NC), 
+  printf(fh, "  double tot_By[~a]; ~%", NC), 
+  printf(fh, "  double tot_Bz[~a]; ~%", NC), 
+  for j : 1 thru NC do (
+    printf(fh, "  tot_Bx[~a] = Bx[~a] + ext_Bx[~a]; ~%", j-1, j-1, j-1), 
+    printf(fh, "  tot_By[~a] = By[~a] + ext_By[~a]; ~%", j-1, j-1, j-1), 
+    printf(fh, "  tot_Bz[~a] = Bz[~a] + ext_Bz[~a]; ~%", j-1, j-1, j-1) 
+  ), 
+  printf(fh, "~%"),
+
+  /* Set the RHS for all known quantities including the solution at the old time-step, and any 
+     external electromagnetic fields, applied accelerations, or applied currents */
+  printf(fh, "  // Set RHS for momentum equations, including solution at known time-step and external forces. ~%"),     
+  printf(fh, "  for (int i = 0; i < num_species; ++i) { ~%"),
+  printf(fh, "~%"),
+  for j : 1 thru NC do (
+    printf(fh,"    gkyl_mat_set(&rhs, ~a + i*(~a), 0, qbym[i]*rhoux[i][~a] + 0.5*dt*qbym[i]*rho[i][~a]*(qbym[i]*ext_Ex[~a] + app_accel_x[i][~a])); ~%", j-1, 3*NC, j-1, j-1, j-1, j-1),
+    printf(fh,"    gkyl_mat_set(&rhs, ~a + i*(~a), 0, qbym[i]*rhouy[i][~a] + 0.5*dt*qbym[i]*rho[i][~a]*(qbym[i]*ext_Ey[~a] + app_accel_y[i][~a])); ~%", j-1+1*NC, 3*NC, j-1, j-1, j-1, j-1),
+    printf(fh,"    gkyl_mat_set(&rhs, ~a + i*(~a), 0, qbym[i]*rhouz[i][~a] + 0.5*dt*qbym[i]*rho[i][~a]*(qbym[i]*ext_Ez[~a] + app_accel_z[i][~a])); ~%", j-1+2*NC, 3*NC, j-1, j-1, j-1, j-1),
+    printf(fh, "~%")
+  ),  
+  printf(fh, "  } ~%"),
+  printf(fh, "~%"),  
+
+  printf(fh, "  // Set RHS for Ampere's Law, including solution at known time-step and applied currents. ~%"),   
+  for j : 1 thru NC do (
+    printf(fh,"  gkyl_mat_set(&rhs, ~a + num_species*(~a), 0, epsilon0*Ex[~a] - 0.5*dt*app_curr_x[~a]); ~%", j-1, 3*NC, j-1, j-1),
+    printf(fh,"  gkyl_mat_set(&rhs, ~a + num_species*(~a), 0, epsilon0*Ey[~a] - 0.5*dt*app_curr_y[~a]); ~%", j-1+1*NC, 3*NC, j-1, j-1),
+    printf(fh,"  gkyl_mat_set(&rhs, ~a + num_species*(~a), 0, epsilon0*Ez[~a] - 0.5*dt*app_curr_z[~a]); ~%", j-1+2*NC, 3*NC, j-1, j-1),
+    printf(fh, "~%")
+  ),  
+  printf(fh, "~%"),  
+
+  /* Expand total magnetic field and mass density */
+  tot_Bx_e : doExpand1(tot_Bx,bC),
+  tot_By_e : doExpand1(tot_By,bC),
+  tot_Bz_e : doExpand1(tot_Bz,bC),
+  rhoi_e : doExpand1(rho[s],bC),
+
+  /* Generate matrices of unknown coefficients */
+
+  /* Unknowns from cross product with Bx */
+  JxB_x_e : doExpand1(JxB_x,bC),
+  JxB_x_n : makelist(JxB_x[i],i,0,NC-1),
+  eq_JxB_x : calcInnerProdList(varsC, JxB_x_e, bC, tot_Bx_e),
+  E_JxB_x : fullratsimp(coefmatrix(eq_JxB_x, JxB_x_n)),
+
+  /* Unknowns from cross product with By */
+  JxB_y_e : doExpand1(JxB_y,bC),
+  JxB_y_n : makelist(JxB_y[i],i,0,NC-1),
+  eq_JxB_y : calcInnerProdList(varsC, JxB_y_e, bC, tot_By_e),
+  E_JxB_y : fullratsimp(coefmatrix(eq_JxB_y, JxB_y_n)),
+
+  /* Unknowns from cross product with Bz */
+  JxB_z_e : doExpand1(JxB_z,bC),
+  JxB_z_n : makelist(JxB_z[i],i,0,NC-1),
+  eq_JxB_z : calcInnerProdList(varsC, JxB_z_e, bC, tot_Bz_e),
+  E_JxB_z : fullratsimp(coefmatrix(eq_JxB_z, JxB_z_n)),
+
+  /* Unknowns from electric field force */
+  rhoE_e : doExpand1(rhoE,bC),
+  rhoE_n : makelist(rhoE[i],i,0,NC-1),
+  eq_rhoE : calcInnerProdList(varsC, rhoE_e, bC, rhoi_e),
+  E_rhoE : fullratsimp(coefmatrix(eq_rhoE, rhoE_n)),
+
+  /* Remaining unknowns (no weak multiplications) */
+  A_e : doExpand1(A,bC),
+  A_n : makelist(A[i],i,0,NC-1),
+  eq_A : calcInnerProdList(varsC, 1, bC, A_e),
+  E_A : fullratsimp(coefmatrix(eq_A, A_n)),
+
+  printf(fh, "  // Construct LHS. ~%"), 
+  printf(fh, "  // For momentum equation: J_s^{n+1} - 0.5*dt*(q_s^2/m_s^2*rho_s^n*E^{n+1} + q_s/m_s*J_s^{n+1} x B^n). ~%"), 
+  printf(fh, "  // For Ampere's Law: epsilon0*E^{n+1} + 0.5*dt*sum_s J_s^{n+1}. ~%"), 
+  printf(fh, "  for (int s = 0; s < num_species; ++s) { ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "    double E_field_fac = -0.5*dt*qbym[s]*qbym[s]/epsilon0; ~%", NC), 
+  printf(fh, "    double B_field_fac = -0.5*dt*qbym[s]; ~%", NC), 
+  /* Matrix is dense so just do a simple write routine */
+  for i : 1 thru NC do (
+    for j : 1 thru NC do (
+      /* Diagonal entries of matrix (Jx^{n+1}, Jy^{n+1}, Jz^{n+1}) */
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + s*(~a), ~a); ~%", i-1, 3*NC, j-1, 3*NC, float(expand(E_A[i,j]))),
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + s*(~a), ~a); ~%", i-1+1*NC, 3*NC, j-1+1*NC, 3*NC, float(expand(E_A[i,j]))),
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + s*(~a), ~a); ~%", i-1+2*NC, 3*NC, j-1+2*NC, 3*NC, float(expand(E_A[i,j]))),
+      printf(fh, " ~%"),
+
+      /* Electric field force (-0.5*dt*q^2/m^2*rho^n)/epsilon0 * (epsilon0*E^{n+1}) for Ex, Ey, and Ez */
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + num_species*(~a), E_field_fac*(~a)); ~%", i-1, 3*NC, j-1, 3*NC, float(expand(E_rhoE[i,j]))),
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + num_species*(~a), E_field_fac*(~a)); ~%", i-1+1*NC, 3*NC, j-1+1*NC, 3*NC, float(expand(E_rhoE[i,j]))),
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + num_species*(~a), E_field_fac*(~a)); ~%", i-1+2*NC, 3*NC, j-1+2*NC, 3*NC, float(expand(E_rhoE[i,j]))),
+      printf(fh, " ~%"),
+
+      /* Magnetic force from Bx affects Jy and Jz (Jz*Bx and -Jy*Bx respectively) */
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + s*(~a), B_field_fac*(~a)); ~%", i-1+1*NC, 3*NC, j-1+2*NC, 3*NC, float(expand(E_JxB_x[i,j]))),
+      printf(fh,"    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + s*(~a), -B_field_fac*(~a)); ~%", i-1+2*NC, 3*NC, j-1+1*NC, 3*NC, float(expand(E_JxB_x[i,j]))),
+      printf(fh, " ~%"),
+
+      /* Lorentz force from By affects Jz and Jx (Jx*By and -Jz*By respectively) */
+      printf(fh,"    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + s*(~a), B_field_fac*(~a)); ~%", i-1+2*NC, 3*NC, j-1, 3*NC, float(expand(E_JxB_y[i,j]))),
+      printf(fh,"    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + s*(~a), -B_field_fac*(~a)); ~%", i-1, 3*NC, j-1+2*NC, 3*NC, float(expand(E_JxB_y[i,j]))),
+      printf(fh, " ~%"),
+
+      /* Lorentz force from Bz affects Jx and Jy (Jy*Bz and -Jx*Bz respectively) */
+      printf(fh,"    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + s*(~a), B_field_fac*(~a)); ~%", i-1, 3*NC, j-1+1*NC, 3*NC, float(expand(E_JxB_z[i,j]))),
+      printf(fh,"    gkyl_mat_set(&lhs, ~a + s*(~a), ~a + s*(~a), -B_field_fac*(~a)); ~%", i-1+1*NC, 3*NC, j-1, 3*NC, float(expand(E_JxB_z[i,j]))),
+      printf(fh, " ~%"),
+
+      /* Current accumulation in Ampere's Law */
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + num_species*(~a), ~a + s*(~a), 0.5*dt*(~a)); ~%", i-1, 3*NC, j-1, 3*NC, float(expand(E_A[i,j]))),
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + num_species*(~a), ~a + s*(~a), 0.5*dt*(~a)); ~%", i-1+1*NC, 3*NC, j-1+1*NC, 3*NC, float(expand(E_A[i,j]))),
+      printf(fh, "    gkyl_mat_set(&lhs, ~a + num_species*(~a), ~a + s*(~a), 0.5*dt*(~a)); ~%", i-1+2*NC, 3*NC, j-1+2*NC, 3*NC, float(expand(E_A[i,j]))),
+      printf(fh, " ~%")      
+    )
+  ),
+  printf(fh, "  } ~%"),
+
+  /* Final component of matrix (diagonal component of E^{n+1}) */
+  for i : 1 thru NC do (
+    for j : 1 thru NC do (
+      printf(fh, "  gkyl_mat_set(&lhs, ~a + num_species*(~a), ~a + num_species*(~a), ~a); ~%", i-1, 3*NC, j-1, 3*NC, float(expand(E_A[i,j]))),
+      printf(fh, "  gkyl_mat_set(&lhs, ~a + num_species*(~a), ~a + num_species*(~a), ~a); ~%", i-1+1*NC, 3*NC, j-1+1*NC, 3*NC, float(expand(E_A[i,j]))),
+      printf(fh, "  gkyl_mat_set(&lhs, ~a + num_species*(~a), ~a + num_species*(~a), ~a); ~%", i-1+2*NC, 3*NC, j-1+2*NC, 3*NC, float(expand(E_A[i,j]))),
+      printf(fh, " ~%")    
+    )
+  ),
+  printf(fh, "} ~%")
+)$  
+
+copyDGEMSourceSolve(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rho_e, 
+   nodesCorners, rhoCorners, rho_temp_e, 
+   expr_ux, expr_uy, expr_uz, 
+   ue, un, eq_rho, E_rho],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(int count, 
+  int num_species, double qbym[GKYL_MAX_SPECIES], double epsilon0, 
+  struct gkyl_nmat *x, double* GKYL_RESTRICT fluid[GKYL_MAX_SPECIES], double* GKYL_RESTRICT em) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // count: integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // x:      Input solution vector. ~%"),
+  printf(fh, "  // fluid:       [rho, rho ux, rho uy, rho uz...], Fluid output state vector.~%"),
+  printf(fh, "  //              Source solve only updates momentum of fluid system. ~%"),
+  printf(fh, "  //              (isothermal Euler, Euler, Ten moment). ~%"),
+  printf(fh, "  // em:          [Ex, Ey, Ez, Bx, By, Bz], EM output state vector.~%"),
+  printf(fh, "  //              Source solve only updates Ex, Ey, Ez. ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  struct gkyl_mat sol = gkyl_nmat_get(x, count); ~%"),
+
+  printf(fh, "  double rhoux_new[~a] = {0.0}; ~%", NC), 
+  printf(fh, "  double rhouy_new[~a] = {0.0}; ~%", NC), 
+  printf(fh, "  double rhouz_new[~a] = {0.0}; ~%", NC), 
+  printf(fh, "  double Ex_new[~a] = {0.0}; ~%", NC), 
+  printf(fh, "  double Ey_new[~a] = {0.0}; ~%", NC), 
+  printf(fh, "  double Ez_new[~a] = {0.0}; ~%", NC), 
+  printf(fh, "~%"),
+
+  printf(fh, "  for (int i = 0; i < num_species; ++i) { ~%"),
+  printf(fh, "    double *out_rhoux = &fluid[i][~a]; ~%", 1*NC),
+  printf(fh, "    double *out_rhouy = &fluid[i][~a]; ~%", 2*NC),
+  printf(fh, "    double *out_rhouz = &fluid[i][~a]; ~%", 3*NC),
+  printf(fh, "~%"),
+  for j : 1 thru NC do (
+    printf(fh, "    rhoux_new[~a] = gkyl_mat_get(&sol, ~a + i*(~a), 0); ~%", j-1, j-1, 3*NC),
+    printf(fh, "    rhouy_new[~a] = gkyl_mat_get(&sol, ~a + i*(~a), 0); ~%", j-1, j-1+1*NC, 3*NC),
+    printf(fh, "    rhouz_new[~a] = gkyl_mat_get(&sol, ~a + i*(~a), 0); ~%", j-1, j-1+2*NC, 3*NC),
+    printf(fh, "~%"),
+    /* We solved for J_s^{n+1}, so we need to divide solution by q/m to convert back to momentum */
+    printf(fh, "    out_rhoux[~a] = 2.0*rhoux_new[~a]/qbym[i] - out_rhoux[~a]; ~%", j-1, j-1, j-1), 
+    printf(fh, "    out_rhouy[~a] = 2.0*rhouy_new[~a]/qbym[i] - out_rhouy[~a]; ~%", j-1, j-1, j-1), 
+    printf(fh, "    out_rhouz[~a] = 2.0*rhouz_new[~a]/qbym[i] - out_rhouz[~a]; ~%", j-1, j-1, j-1), 
+    printf(fh, "~%")
+  ), 
+  printf(fh, "  } ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  double *out_Ex = &em[~a]; ~%", 0*NC),
+  printf(fh, "  double *out_Ey = &em[~a]; ~%", 1*NC),
+  printf(fh, "  double *out_Ez = &em[~a]; ~%", 2*NC),
+  for j : 1 thru NC do (
+    printf(fh, "  Ex_new[~a] = gkyl_mat_get(&sol, ~a + num_species*(~a), 0); ~%", j-1, j-1, 3*NC),
+    printf(fh, "  Ey_new[~a] = gkyl_mat_get(&sol, ~a + num_species*(~a), 0); ~%", j-1, j-1+1*NC, 3*NC),
+    printf(fh, "  Ez_new[~a] = gkyl_mat_get(&sol, ~a + num_species*(~a), 0); ~%", j-1, j-1+2*NC, 3*NC),
+    printf(fh, "~%"),
+    /* We solved for epsilon0*E^{n+1}, so we need to divide solution by epsilon0 to convert back to electric field */
+    printf(fh, "  out_Ex[~a] = 2.0*Ex_new[~a]/epsilon0 - out_Ex[~a]; ~%", j-1, j-1, j-1), 
+    printf(fh, "  out_Ey[~a] = 2.0*Ey_new[~a]/epsilon0 - out_Ey[~a]; ~%", j-1, j-1, j-1), 
+    printf(fh, "  out_Ez[~a] = 2.0*Ez_new[~a]/epsilon0 - out_Ez[~a]; ~%", j-1, j-1, j-1), 
+    printf(fh, "~%")
+  ), 
+  printf(fh, "} ~%")
+)$  
+
+DGEMSourceEnergySolve(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rho_e, 
+   nodesCorners, rhoCorners, rho_temp_e, 
+   expr_ux, expr_uy, expr_uz, 
+   ue, un, eq_rho, E_rho],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double* ke_old, const double* ke_new, double* GKYL_RESTRICT fluid) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // ke_old: Kinetic energy at the old time step.~%"),
+  printf(fh, "  // ke_new: Kinetic energy at the new time step.~%"),  
+  printf(fh, "  // fluid:  [rho, rho ux, rho uy, rho uz...], Fluid output state vector.~%"),
+  printf(fh, "  //         Computes the energy update from the old and new kinetic energy. ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  double *energy = &fluid[~a]; ~%", 4*NC), 
+  printf(fh, "~%"),
+
+  ke_old_e : doExpand1(ke_old, bC),
+  ke_new_e : doExpand1(ke_new, bC),
+ 
+  energy_c : calcInnerProdList(varsC, 1, bC, ke_new_e - ke_old_e), 
+
+  /* Increment the energy based on the difference between the new and old kinetic energy */
+  writeCIncrExprs1(energy, energy_c),
+  printf(fh, "} ~%")
+)$

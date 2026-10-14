@@ -1,0 +1,66 @@
+/* Generate kernels for squared expandsion of a DG field. */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+fpprec : 24$
+
+calcDGExpSq(fh, funcNm, cdim, basisFun, polyOrder) := block([bC, NC, 
+  A_e, A_c, eq, 
+  subList, newTempVar, lhsS, det_ES,
+  expr, ep, outStr],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH static inline void ~%"),
+  printf(fh, "~a(const double *A, double *ASq) ~%{ ~%", funcNm),
+  printf(fh, "  // A:   Input DG field. ~%"),
+  printf(fh, "  // ASq: Output DG field (expansion of A^2). ~%"),
+  printf(fh, " ~%"),
+
+  A_e : doExpand1(A, bC),
+  A_c : makelist(A[i],i,0,NC-1),
+
+  /*........... Matrix for inverse to compute A .............*/
+  eq : calcInnerProdList(varsC,1,bC,A_e*A_e),
+
+  /* Eliminate the exponents as needed. */
+  subList     : [],
+  maxExponent : 2,
+  for eI : 1 thru length(A_c) do (
+    /* Maximum number of elements of A_c (e.g. A_c[0], A_c[1], ...) whose
+       powers to search for. */
+
+    for f : 2 thru maxExponent do (
+      /* Define a separate variable. */
+      newTempVar : sconcat(string(op(A_c[eI])),args(A_c[eI])[1],"R",f),
+      lhsS : sconcat("  const double ",newTempVar),
+      det_ES : sconcat("pow(",string(A_c[eI]),",",f,");~%"),
+      printf(fh, sconcat(lhsS," = ",det_ES)),
+      /* Add to the string substitution list, used in writing file. */
+      subList : append(subList,[[sconcat(string(A_c[eI]), "^",f), sconcat(sconcat(string(op(A_c[eI])),args(A_c[eI])[1]),"R",f)]])
+    )
+  ),
+  printf(fh, "~%"),
+
+  expr : float(expand(eq)),
+  for i : 1 thru NC do (
+
+    ep : string(expr[i]),
+
+    outStr : ssubst(subList[1][2],subList[1][1],ep),
+    for s : 2 thru length(subList) do (
+      outStr : ssubst(subList[s][2],subList[s][1],outStr)
+    ),
+    printf(fh, "  ~a = ~a; ~%", ASq[i-1], outStr)
+  ),
+
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$

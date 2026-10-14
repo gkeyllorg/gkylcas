@@ -1,0 +1,123 @@
+/*
+   Generate hybrid basis that are p=1, and also have the product of v_i^2 times
+   the p=1 basis.
+   Also create a gkhyb basis which is p=2 only in vpar.
+*/
+
+load("core/basis-precalc/basis-pre-calc.mac");
+
+vars : [x,y,z,vx,vy,vz]$
+
+makevarsC(cdim) := makelist(vars[i],i,cdim)$
+makevarsV(vdim) := makelist(vars[3+i],i,vdim)$
+makevarsP(cdim,vdim) := append(makelist(vars[i],i,cdim), makelist(vars[i],i,4,3+vdim))$
+
+/* Compute and write hybrid basis to file */
+writeHybBasisToFile(cdim, vdim, fname) := block(
+  [varsC, varsV, varsP, basisC, basisP, bP, d],
+
+  varsC : makevarsC(cdim),
+  varsV : makevarsV(vdim),
+  varsP : makevarsP(cdim,vdim),
+
+  basisC : [ gsOrthoNorm(varsC, makeSerendipBasis(varsC, 1)) ],
+
+  bP : makeSerendipBasis(varsP, 1),
+  for d : 1 thru vdim do (
+    bP : append(bP, varsV[d]^2*makeSerendipBasis(delete(varsV[d],varsP),1))
+  ),
+  basisP : [ gsOrthoNorm(varsP, bP) ],
+  save(fname, varsC, varsP, basisC, basisP)
+)$
+
+/* Compute and write GK hybrid basis to file */
+writeGkHybBasisToFile(cdim, vdim, fname) := block([varsC, varsP, basisC, basisP],
+  varsC  : makevarsC(cdim),
+  varsP  : makevarsP(cdim,vdim),
+  basisC : [ gsOrthoNorm(varsC, makeSerendipBasis(varsC, 1)) ],
+  basisP : [ gsOrthoNorm(varsP,
+                         append(makeSerendipBasis(varsP, 1), vx^2*makeSerendipBasis(delete(vx, varsP), 1) )
+                        )
+           ],
+  save(fname, varsC, varsP, basisC, basisP)
+)$
+
+writeGkHybVelBasisToFile(vdim, fname) := block([varsC, varsP, basisC, basisP],
+  varsV  : makevarsV(vdim),
+  basisV : [ gsOrthoNorm(varsV,
+                         append(makeSerendipBasis(varsV, 1), vx^2*makeSerendipBasis(delete(vx, varsV), 1) )
+                        )
+           ],
+  save(fname, varsV, basisV)
+)$
+
+/* Compute list of monomials */
+calcHybMonoList(cdim, vdim) := block(
+  [varsC, varsP, basisC, basisP],
+  varsC : makevarsC(cdim),
+  varsV : makevarsV(vdim),
+  varsP : makevarsP(cdim,vdim),
+  bP : makeSerendipBasis(varsP, 1),
+  for d : 1 thru vdim do (
+    bP : append(bP, varsV[d]^2*makeSerendipBasis(delete(varsV[d],varsP),1))
+  ),
+  return (bP)
+)$  
+
+calcGkHybMonoList(cdim, vdim) := block(
+  [varsC, varsP, basisC, basisP],
+  varsC : makevarsC(cdim),
+  varsP : makevarsP(cdim,vdim),
+  return (append( makeSerendipBasis(varsP, 1),
+                  vx^2*makeSerendipBasis(delete(vx, varsP), 1) ))
+)$
+
+calcGkHybVelMonoList(vdim) := block(
+  [varsV, basisV],
+  varsV : makevarsV(vdim),
+  return (append( makeSerendipBasis(varsV, 1),
+                  vx^2*makeSerendipBasis(delete(vx, varsV), 1) ))
+)$
+
+/* Generate hybrid basis files. Every combination to account for
+   surface evaluations, GK and sims that are kinetic in 1v only. */
+for c : 1 thru 3 do (
+  for v : 1 thru 3 do (
+    writeHybBasisToFile(c, v, sconcat("~/max-out/basisHybrid",c,"x",v,"v.lisp"))
+  )
+)$
+
+/* Generate GK hybrid basis files. Other dimensionalities are needed
+   but they can be obtained from hybrid or serendipity basys. */
+gkVdims : [[1,2],[2],[2]]$
+for c : 1 thru 3 do (
+  for vs : 1 thru length(gkVdims[c]) do (
+    v : gkVdims[c][vs],
+    writeGkHybBasisToFile(c, v, sconcat("~/max-out/basisGkHybrid",c,"x",v,"v.lisp"))
+  )
+)$
+
+/* Generate GK hybrid velocity basis files. */
+for v : 1 thru 2 do (
+  writeGkHybVelBasisToFile(v, sconcat("~/max-out/basisGkHybridVel",v,"v.lisp"))
+)$
+
+/* MF 2022/07/03: I believe these are used by GINAC, but additional manual
+   steps are still needed. I'd prefer that we get rid of the GINAC stuff for
+   now and do everything in Maxima. */
+fh : openw("~/max-out/mono-list")$
+for c : 1 thru 3 do (
+  for v : 1 thru 3 do (
+    printf(fh, "~a", calcHybMonoList(c, v))
+  )
+)$
+for c : 1 thru 3 do (
+  for vs : 1 thru length(gkVdims[c]) do (
+    v : gkVdims[c][vs],
+    printf(fh, "~a", calcGkHybMonoList(c, v))
+  )
+)$
+for v : 1 thru 2 do (
+  printf(fh, "~a", calcGkHybVelMonoList(v))
+)$
+close(fh)$

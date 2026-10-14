@@ -1,0 +1,61 @@
+/* Generate kernels for an updater that computes the gyrokinetic polarization density.
+   Currently done by expanding phi in a p+1 tensor basis and doing this
+   calculation with a single inner product / volume term (no integration by parts or
+   recovery. It's presently only meant for ICs. */
+
+load("gyrokinetic/gk_pol_den/pol_density.mac")$
+load(stringproc)$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+/* Generate kernels of selected types. */
+for bInd : 1 thru length(bName) do (
+  fname : sconcat("~/max-out/gyrokinetic_pol_density_", bName[bInd], ".c"),
+  fh : openw(fname),
+
+  printf(fh, "#include <gkyl_gyrokinetic_pol_density_kernels.h>~%"),
+  printf(fh, "~%"),
+
+  for cd : minCdim[bInd] thru maxCdim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      disp(printf(false,sconcat("Creating gkyl_gyrokinetic_pol_density ~ax p~a ", bName[bInd]),cd,polyOrder)),
+
+      /* Represent phi with same basis and poly_order. */
+      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder,"_from_phi_",bName[bInd],"_p",polyOrder),
+      gen_pol_den_kernel(fh, funcName, cd, bName[bInd], polyOrder, bName[bInd], polyOrder),
+
+      /* Represent phi with same basis and poly_order+1. */
+      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder,"_from_phi_",bName[bInd],"_p",polyOrder+1),
+      gen_pol_den_kernel(fh, funcName, cd, bName[bInd], polyOrder, bName[bInd], polyOrder+1),
+
+      /* Represent phi with tensor basis and poly_order+1. */
+      funcName : sconcat("gkyl_gyrokinetic_pol_density_",cd,"x_",bName[bInd],"_p",polyOrder,"_from_phi_","tensor","_p",polyOrder+1),
+      gen_pol_den_kernel(fh, funcName, cd, bName[bInd], polyOrder, "tensor", polyOrder+1)
+    )
+  ),
+
+  close(fh)
+);

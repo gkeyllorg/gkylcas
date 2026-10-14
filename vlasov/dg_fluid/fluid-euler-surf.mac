@@ -1,0 +1,966 @@
+/* This script generates the kernels for the surface terms of Euler's equations */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+load("scifac")$
+load("core/nodal_operations/nodal_functions.mac")$
+fpprec : 24$
+
+cvars : [x, y, z]$
+dx11 : [dx10, dx11, dx12]$
+
+lhs : [outrho, outrhoux, outrhouy, outrhouz, outenergy]$
+
+let(uxl_r^2, uxl_r_sq)$
+let(uxc_l^2, uxc_l_sq)$
+let(uxc_r^2, uxc_r_sq)$
+let(uxr_l^2, uxr_l_sq)$
+
+/* 1D Euler special since only involves evaluations */
+calcEuler1xUpdateInDir(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [bC,NC,cv,surfVars,
+  rhouxl_e,rhouyl_e,rhouzl_e,rhol_e,energyl_e,
+  rhouxc_e,rhouyc_e,rhouzc_e,rhoc_e,energyc_e,
+  rhouxr_e,rhouyr_e,rhouzr_e,rhor_e,energyr_e,
+  rhouxl_r,rhouyl_r,rhouzl_r,rhol_r,energyl_r,
+  rhouxc_l,rhouyc_l,rhouzc_l,rhoc_l,energyc_l,
+  rhouxc_r,rhouyc_r,rhouzc_r,rhoc_r,energyc_r,
+  rhouxr_l,rhouyr_l,rhouzr_l,rhor_l,energyr_l,
+  avg_rho_l, avg_rho_r, avg_ux_l, avg_ux_r, avg_uy_l, avg_uy_r, avg_uz_l, avg_uz_r, avg_p_l, avg_p_r, avg_energy_l, avg_energy_r,
+  Ghat_rho_l_exp, Ghat_rho_r_exp, Ghat_rhoux_l_exp, Ghat_rhoux_r_exp, Ghat_rhouy_l_exp, Ghat_rhouy_r_exp, Ghat_rhouz_l_exp, Ghat_rhouz_r_exp, Ghat_energy_l_exp, Ghat_energy_r_exp,
+  incr_rho_l, incr_rho_r, incr_rhoux_l, incr_rhoux_r, incr_rhouy_l, incr_rhouy_r, incr_rhouz_l, incr_rhouz_r, incr_energy_l, incr_energy_r],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+  printf(fh, "GKYL_CU_DH double ~a~a_~ax_~a_p~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn, 
+    const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, 
+    const double *u_surf_l, const double *u_surf_c, const double *u_surf_r,
+    const double *p_surf_l, const double *p_surf_c, const double *p_surf_r,
+    const double *fluid_l, const double *fluid_c, const double *fluid_r, 
+    double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cvars[dir], cdim, basisFun, polyOrder),
+  printf(fh, "  // w[NDIM]:      Cell-center coordinates.~%"),
+  printf(fh, "  // dxv[NDIM]:    Cell spacing.~%"),
+  printf(fh, "  // wv_eqn:       Wave equation for computing fluctuations at the interface for upwinding.~%"),
+  printf(fh, "  // geom_l:       Geometry for the left surface update.~%"),
+  printf(fh, "  // geom_r:       Geometry for the right surface update.~%"),
+  printf(fh, "  // u_surf_l/c/r: Input surface expansion of flow velocity in left/center/right cells in each direction.~%"),
+  printf(fh, "  // p_surf_l/c/r: Input surface expansion of pressure in left/center/right cells in each direction.~%"),
+  printf(fh, "  //               [p_xl, p_xr, p_yl, p_yr, p_zl, p_zr] ~%"),
+  printf(fh, "  // fluid_l/c/r:  [rho, rho ux, rho uy, rho uz, energy], Fluid input state vector in left/center/right cells.~%"),
+  printf(fh, "  // out:          Incremented output.~%"),
+  printf(fh, "~%"),
+
+  /* cv = variable in direction of surface update. */
+  cv : varsC[dir],
+
+  /* Surface variables to integrate over. */
+  surfVars : delete(cv,varsC),
+  NSurf : 1, 
+
+  printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho_l = &fluid_l[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux_l = &fluid_l[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy_l = &fluid_l[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz_l = &fluid_l[~a]; ~%", 3*NC),
+  printf(fh, "  const double *energy_l = &fluid_l[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho_c = &fluid_c[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux_c = &fluid_c[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy_c = &fluid_c[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz_c = &fluid_c[~a]; ~%", 3*NC),
+  printf(fh, "  const double *energy_c = &fluid_c[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho_r = &fluid_r[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux_r = &fluid_r[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy_r = &fluid_r[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz_r = &fluid_r[~a]; ~%", 3*NC),
+  printf(fh, "  const double *energy_r = &fluid_r[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  /* Surface primitive variables are organized as:
+     [ux_xl, ux_xr, uy_xl, uy_xr, uz_xl, uz_xr, 
+      ux_yl, ux_yr, uy_yl, uy_yr, uz_yl, uz_yr, 
+      ux_zl, ux_zr, uy_zl, uy_zr, uz_zl, uz_zr] */
+  printf(fh, "  const double *ux_surf_lr = &u_surf_l[~a]; ~%", (1 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uy_surf_lr = &u_surf_l[~a]; ~%", (3 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uz_surf_lr = &u_surf_l[~a]; ~%", (5 + (dir-1)*6)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux_surf_cl = &u_surf_c[~a]; ~%", (0 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uy_surf_cl = &u_surf_c[~a]; ~%", (2 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uz_surf_cl = &u_surf_c[~a]; ~%", (4 + (dir-1)*6)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux_surf_cr = &u_surf_c[~a]; ~%", (1 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uy_surf_cr = &u_surf_c[~a]; ~%", (3 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uz_surf_cr = &u_surf_c[~a]; ~%", (5 + (dir-1)*6)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux_surf_rl = &u_surf_r[~a]; ~%", (0 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uy_surf_rl = &u_surf_r[~a]; ~%", (2 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uz_surf_rl = &u_surf_r[~a]; ~%", (4 + (dir-1)*6)*NSurf),
+  printf(fh, "~%"),
+
+  /* p for div(p), only */
+  printf(fh, "  const double *p_surf_lr = &p_surf_l[~a]; ~%", (1 + (dir-1)*2)*NSurf),
+  printf(fh, "  const double *p_surf_cl = &p_surf_c[~a]; ~%", (0 + (dir-1)*2)*NSurf),
+  printf(fh, "  const double *p_surf_cr = &p_surf_c[~a]; ~%", (1 + (dir-1)*2)*NSurf),
+  printf(fh, "  const double *p_surf_rl = &p_surf_r[~a]; ~%", (0 + (dir-1)*2)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  double *outrho = &out[~a]; ~%", 0*NC),
+  printf(fh, "  double *outrhoux = &out[~a]; ~%", 1*NC),
+  printf(fh, "  double *outrhouy = &out[~a]; ~%", 2*NC),
+  printf(fh, "  double *outrhouz = &out[~a]; ~%", 3*NC),
+  printf(fh, "  double *outenergy = &out[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  rhouxl_e : doExpand1(rhoux_l, bC),
+  rhouyl_e : doExpand1(rhouy_l, bC),
+  rhouzl_e : doExpand1(rhouz_l, bC),
+
+  rhouxc_e : doExpand1(rhoux_c, bC),
+  rhouyc_e : doExpand1(rhouy_c, bC),
+  rhouzc_e : doExpand1(rhouz_c, bC),
+
+  rhouxr_e : doExpand1(rhoux_r, bC),
+  rhouyr_e : doExpand1(rhouy_r, bC),
+  rhouzr_e : doExpand1(rhouz_r, bC),
+
+  rhol_e : doExpand1(rho_l, bC), 
+  rhoc_e : doExpand1(rho_c, bC), 
+  rhor_e : doExpand1(rho_r, bC), 
+
+  rhol_r : subst(cv=1, rhol_e),
+  rhoc_l : subst(cv=-1, rhoc_e),
+  rhoc_r : subst(cv=1, rhoc_e),
+  rhor_l : subst(cv=-1, rhor_e),
+
+  energyl_e : doExpand1(energy_l, bC), 
+  energyc_e : doExpand1(energy_c, bC), 
+  energyr_e : doExpand1(energy_r, bC), 
+
+  energyl_r : subst(cv=1, energyl_e),
+  energyc_l : subst(cv=-1, energyc_e),
+  energyc_r : subst(cv=1, energyc_e),
+  energyr_l : subst(cv=-1, energyr_e),
+
+  printf(fh, "  double Ghat_rho_l = 0.0; ~%"),
+  printf(fh, "  double Ghat_rho_r = 0.0; ~%"),
+  printf(fh, "  double Ghat_rhoux_l = 0.0; ~%"),
+  printf(fh, "  double Ghat_rhoux_r = 0.0; ~%"),
+  printf(fh, "  double Ghat_rhouy_l = 0.0; ~%"),
+  printf(fh, "  double Ghat_rhouy_r = 0.0; ~%"),
+  printf(fh, "  double Ghat_rhouz_l = 0.0; ~%"),
+  printf(fh, "  double Ghat_rhouz_r = 0.0; ~%"),  
+  printf(fh, "  double Ghat_energy_l = 0.0; ~%"),
+  printf(fh, "  double Ghat_energy_r = 0.0; ~%"),
+
+  rhouxl_r : subst(cv=1, rhouxl_e),
+  rhouyl_r : subst(cv=1, rhouyl_e),
+  rhouzl_r : subst(cv=1, rhouzl_e),
+
+  rhouxc_l : subst(cv=-1, rhouxc_e),
+  rhouyc_l : subst(cv=-1, rhouyc_e),
+  rhouzc_l : subst(cv=-1, rhouzc_e),
+
+  rhouxc_r : subst(cv=1, rhouxc_e),
+  rhouyc_r : subst(cv=1, rhouyc_e),
+  rhouzc_r : subst(cv=1, rhouzc_e),
+
+  rhouxr_l : subst(cv=-1, rhouxr_e),
+  rhouyr_l : subst(cv=-1, rhouyr_e),
+  rhouzr_l : subst(cv=-1, rhouzr_e),
+
+  /* Fetch u and p */
+  printf(fh, "  double uxl_r = ux_surf_lr[0]; ~%"),
+  printf(fh, "  double uxc_l = ux_surf_cl[0]; ~%"),
+  printf(fh, "  double uxc_r = ux_surf_cr[0]; ~%"),
+  printf(fh, "  double uxr_l = ux_surf_rl[0]; ~%"),
+  printf(fh, "~%"),
+  printf(fh, "  double pl_r = p_surf_lr[0]; ~%"),
+  printf(fh, "  double pc_l = p_surf_cl[0]; ~%"),
+  printf(fh, "  double pc_r = p_surf_cr[0]; ~%"),
+  printf(fh, "  double pr_l = p_surf_rl[0]; ~%"),
+  printf(fh, "~%"),
+  printf(fh, "  double uxl_r_sq = uxl_r*uxl_r; ~%"),
+  printf(fh, "  double uxc_l_sq = uxc_l*uxc_l; ~%"),
+  printf(fh, "  double uxc_r_sq = uxc_r*uxc_r; ~%"),
+  printf(fh, "  double uxr_l_sq = uxr_l*uxr_l; ~%"),
+  printf(fh, "~%"),  
+  printf(fh, "  double uyl_r = uy_surf_lr[0]; ~%"),
+  printf(fh, "  double uyc_l = uy_surf_cl[0]; ~%"),
+  printf(fh, "  double uyc_r = uy_surf_cr[0]; ~%"),
+  printf(fh, "  double uyr_l = uy_surf_rl[0]; ~%"),
+  printf(fh, "~%"), 
+  printf(fh, "  double uzl_r = uz_surf_lr[0]; ~%"),
+  printf(fh, "  double uzc_l = uz_surf_cl[0]; ~%"),
+  printf(fh, "  double uzc_r = uz_surf_cr[0]; ~%"),
+  printf(fh, "  double uzr_l = uz_surf_rl[0]; ~%"),
+  printf(fh, "~%"), 
+
+  avg_rho_l : 0.5*(rhoc_l + rhol_r),
+  avg_rho_r : 0.5*(rhor_l + rhoc_r),
+
+  avg_ux_l : 0.5*(uxc_l + uxl_r),
+  avg_ux_r : 0.5*(uxr_l + uxc_r),
+
+  avg_uy_l : 0.5*(uyc_l + uyl_r),
+  avg_uy_r : 0.5*(uyr_l + uyc_r),
+
+  avg_uz_l : 0.5*(uzc_l + uzl_r),
+  avg_uz_r : 0.5*(uzr_l + uzc_r),
+
+  avg_p_l : 0.5*(pc_l + pl_r),
+  avg_p_r : 0.5*(pr_l + pc_r),
+
+  avg_energy_l : 0.5*(energyc_l + energyl_r),
+  avg_energy_r : 0.5*(energyr_l + energyc_r),
+
+  /* State vector at interface */
+  printf(fh, "  double q_lr[5] = {0.0}; ~%"),
+  printf(fh, "  double q_cl[5] = {0.0}; ~%"),
+  printf(fh, "  double q_cr[5] = {0.0}; ~%"),
+  printf(fh, "  double q_rl[5] = {0.0}; ~%"),
+
+  printf(fh, "  q_lr[0] = ~a; ~%", float(expand(rhol_r))),
+  printf(fh, "  q_lr[1] = ~a; ~%", float(expand(rhouxl_r))),
+  printf(fh, "  q_lr[2] = ~a; ~%", float(expand(rhouyl_r))),
+  printf(fh, "  q_lr[3] = ~a; ~%", float(expand(rhouzl_r))),
+  printf(fh, "  q_lr[4] = ~a; ~%", float(expand(energyl_r))),
+
+  printf(fh, "  q_cl[0] = ~a; ~%", float(expand(rhoc_l))),
+  printf(fh, "  q_cl[1] = ~a; ~%", float(expand(rhouxc_l))),
+  printf(fh, "  q_cl[2] = ~a; ~%", float(expand(rhouyc_l))),
+  printf(fh, "  q_cl[3] = ~a; ~%", float(expand(rhouzc_l))),
+  printf(fh, "  q_cl[4] = ~a; ~%", float(expand(energyc_l))),
+
+  printf(fh, "  q_cr[0] = ~a; ~%", float(expand(rhoc_r))),
+  printf(fh, "  q_cr[1] = ~a; ~%", float(expand(rhouxc_r))),
+  printf(fh, "  q_cr[2] = ~a; ~%", float(expand(rhouyc_r))),
+  printf(fh, "  q_cr[3] = ~a; ~%", float(expand(rhouzc_r))),
+  printf(fh, "  q_cr[4] = ~a; ~%", float(expand(energyc_r))),
+
+  printf(fh, "  q_rl[0] = ~a; ~%", float(expand(rhor_l))),
+  printf(fh, "  q_rl[1] = ~a; ~%", float(expand(rhouxr_l))),
+  printf(fh, "  q_rl[2] = ~a; ~%", float(expand(rhouyr_l))),
+  printf(fh, "  q_rl[3] = ~a; ~%", float(expand(rhouzr_l))),
+  printf(fh, "  q_rl[4] = ~a; ~%", float(expand(energyr_l))),
+  printf(fh, "~%"),
+
+  /* Rotate to local coordinates at left and right interface */
+  printf(fh, "  double q_lr_local[5] = {0.0}; ~%"),
+  printf(fh, "  double q_cl_local[5] = {0.0}; ~%"),
+  printf(fh, "  double q_cr_local[5] = {0.0}; ~%"),
+  printf(fh, "  double q_rl_local[5] = {0.0}; ~%"),
+  printf(fh, "  rot_to_local(wv_eqn, geom_l->tau1[~a], geom_l->tau2[~a], geom_l->norm[~a], q_lr, q_lr_local); ~%", dir-1, dir-1, dir-1),
+  printf(fh, "  rot_to_local(wv_eqn, geom_l->tau1[~a], geom_l->tau2[~a], geom_l->norm[~a], q_cl, q_cl_local); ~%", dir-1, dir-1, dir-1),
+
+  printf(fh, "  rot_to_local(wv_eqn, geom_r->tau1[~a], geom_r->tau2[~a], geom_r->norm[~a], q_cr, q_cr_local); ~%", dir-1, dir-1, dir-1),
+  printf(fh, "  rot_to_local(wv_eqn, geom_r->tau1[~a], geom_r->tau2[~a], geom_r->norm[~a], q_rl, q_rl_local); ~%", dir-1, dir-1, dir-1),
+  printf(fh, "~%"),
+
+  /* Compute jumps for calculating fluctuations */
+  printf(fh, "  double delta_l[5] = {0.0}; ~%"),
+  printf(fh, "  double delta_r[5] = {0.0}; ~%"),
+
+  printf(fh, "  delta_l[0] = q_cl_local[0] - q_lr_local[0]; ~%"),
+  printf(fh, "  delta_l[1] = q_cl_local[1] - q_lr_local[1]; ~%"),
+  printf(fh, "  delta_l[2] = q_cl_local[2] - q_lr_local[2]; ~%"),
+  printf(fh, "  delta_l[3] = q_cl_local[3] - q_lr_local[3]; ~%"),
+  printf(fh, "  delta_l[4] = q_cl_local[4] - q_lr_local[4]; ~%"),
+
+  printf(fh, "  delta_r[0] = q_rl_local[0] - q_cr_local[0]; ~%"),
+  printf(fh, "  delta_r[1] = q_rl_local[1] - q_cr_local[1]; ~%"),
+  printf(fh, "  delta_r[2] = q_rl_local[2] - q_cr_local[2]; ~%"),
+  printf(fh, "  delta_r[3] = q_rl_local[3] - q_cr_local[3]; ~%"),
+  printf(fh, "  delta_r[4] = q_rl_local[4] - q_cr_local[4]; ~%"),
+  printf(fh, "~%"),
+
+  /* Compute local waves and speeds at interface */
+  printf(fh, "  double waves_l[15] = {0.0}; ~%"),
+  printf(fh, "  double waves_r[15] = {0.0}; ~%"),  
+  printf(fh, "  double speeds_l[3] = {0.0}; ~%"),
+  printf(fh, "  double speeds_r[3] = {0.0}; ~%"),  
+
+  printf(fh, "  double my_max_speed_l = wave_roe(wv_eqn, delta_l, q_lr_local, q_cl_local, waves_l, speeds_l); ~%"),
+  printf(fh, "  double my_max_speed_r = wave_roe(wv_eqn, delta_r, q_cr_local, q_rl_local, waves_r, speeds_r); ~%"), 
+  printf(fh, "~%"),
+
+  /* rescale speeds */
+  printf(fh, "  double lenr_l = geom_l->lenr[~a]; ~%", dir-1),
+  printf(fh, "  speeds_l[0] *= lenr_l; ~%"),
+  printf(fh, "  speeds_l[1] *= lenr_l; ~%"),
+  printf(fh, "  speeds_l[2] *= lenr_l; ~%"),
+
+  printf(fh, "  double lenr_r = geom_r->lenr[~a]; ~%", dir-1),
+  printf(fh, "  speeds_r[0] *= lenr_r; ~%"),
+  printf(fh, "  speeds_r[1] *= lenr_r; ~%"),
+  printf(fh, "  speeds_r[2] *= lenr_r; ~%"),
+  printf(fh, "~%"),
+
+  /* Compute local fluctuations at interface */
+  printf(fh, "  double amdq_l_local[5] = {0.0}; ~%"),
+  printf(fh, "  double apdq_l_local[5] = {0.0}; ~%"),
+  printf(fh, "  double amdq_r_local[5] = {0.0}; ~%"),
+  printf(fh, "  double apdq_r_local[5] = {0.0}; ~%"),
+
+  printf(fh, "  qfluct_roe(wv_eqn, q_lr_local, q_cl_local, waves_l, speeds_l, amdq_l_local, apdq_l_local); ~%"),
+  printf(fh, "  qfluct_roe(wv_eqn, q_cr_local, q_rl_local, waves_r, speeds_r, amdq_r_local, apdq_r_local); ~%"),  
+  printf(fh, "~%"),
+
+  /* Rotate local fluctuations at interface back to compute final update */
+  printf(fh, "  double amdq_l[5] = {0.0}; ~%"),
+  printf(fh, "  double apdq_l[5] = {0.0}; ~%"),
+  printf(fh, "  double amdq_r[5] = {0.0}; ~%"),
+  printf(fh, "  double apdq_r[5] = {0.0}; ~%"),
+
+  printf(fh, "  rot_to_global(wv_eqn, geom_l->tau1[~a], geom_l->tau2[~a], geom_l->norm[~a], amdq_l_local, amdq_l); ~%", dir-1, dir-1, dir-1),
+  printf(fh, "  rot_to_global(wv_eqn, geom_l->tau1[~a], geom_l->tau2[~a], geom_l->norm[~a], apdq_l_local, apdq_l); ~%", dir-1, dir-1, dir-1),
+  printf(fh, "  rot_to_global(wv_eqn, geom_r->tau1[~a], geom_r->tau2[~a], geom_r->norm[~a], amdq_r_local, amdq_r); ~%", dir-1, dir-1, dir-1),
+  printf(fh, "  rot_to_global(wv_eqn, geom_r->tau1[~a], geom_r->tau2[~a], geom_r->norm[~a], apdq_r_local, apdq_r); ~%", dir-1, dir-1, dir-1),
+  printf(fh, "~%"),
+
+  Ghat_rho_l_exp : avg_rho_l*avg_ux_l - 0.5*(apdq_l[0] - amdq_l[0]),
+  Ghat_rho_r_exp : avg_rho_r*avg_ux_r - 0.5*(apdq_r[0] - amdq_r[0]),
+
+  Ghat_rhoux_l_exp : Ghat_rho_l*avg_ux_l + avg_p_l - 0.5*(apdq_l[1] - amdq_l[1]),
+  Ghat_rhoux_r_exp : Ghat_rho_r*avg_ux_r + avg_p_r - 0.5*(apdq_r[1] - amdq_r[1]),
+
+  Ghat_rhoux_l_exp : map(letsimp, Ghat_rhoux_l_exp),
+  Ghat_rhoux_r_exp : map(letsimp, Ghat_rhoux_r_exp),
+
+  Ghat_rhouy_l_exp : Ghat_rho_l*avg_uy_l - 0.5*(apdq_l[2] - amdq_l[2]),
+  Ghat_rhouy_r_exp : Ghat_rho_r*avg_uy_r - 0.5*(apdq_r[2] - amdq_r[2]),
+
+  Ghat_rhouz_l_exp : Ghat_rho_l*avg_uz_l - 0.5*(apdq_l[3] - amdq_l[3]),
+  Ghat_rhouz_r_exp : Ghat_rho_r*avg_uz_r - 0.5*(apdq_r[3] - amdq_r[3]),
+
+  Ghat_energy_l_exp : (avg_energy_l + avg_p_l)*avg_ux_l - 0.5*(apdq_l[4] - amdq_l[4]),
+  Ghat_energy_r_exp : (avg_energy_r + avg_p_r)*avg_ux_r - 0.5*(apdq_r[4] - amdq_r[4]), 
+
+  printf(fh, "  Ghat_rho_l = ~a; ~%", float(expand(Ghat_rho_l_exp))),
+  printf(fh, "  Ghat_rhoux_l = ~a; ~%", float(expand(Ghat_rhoux_l_exp))),
+  printf(fh, "  Ghat_rhouy_l = ~a; ~%", float(expand(Ghat_rhouy_l_exp))),
+  printf(fh, "  Ghat_rhouz_l = ~a; ~%", float(expand(Ghat_rhouz_l_exp))),
+  printf(fh, "  Ghat_energy_l = ~a; ~%", float(expand(Ghat_energy_l_exp))),
+
+  printf(fh, "  Ghat_rho_r = ~a; ~%", float(expand(Ghat_rho_r_exp))),
+  printf(fh, "  Ghat_rhoux_r = ~a; ~%", float(expand(Ghat_rhoux_r_exp))),
+  printf(fh, "  Ghat_rhouy_r = ~a; ~%", float(expand(Ghat_rhouy_r_exp))),
+  printf(fh, "  Ghat_rhouz_r = ~a; ~%", float(expand(Ghat_rhouz_r_exp))), 
+  printf(fh, "  Ghat_energy_r = ~a; ~%", float(expand(Ghat_energy_r_exp))),
+  printf(fh, "~%"),
+
+  incr_rho_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), Ghat_rho_l),
+  incr_rho_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), Ghat_rho_r),
+
+  incr_rhoux_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), Ghat_rhoux_l),
+  incr_rhoux_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), Ghat_rhoux_r),
+
+  incr_rhouy_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), Ghat_rhouy_l),
+  incr_rhouy_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), Ghat_rhouy_r),
+
+  incr_rhouz_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), Ghat_rhouz_l),
+  incr_rhouz_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), Ghat_rhouz_r),
+
+  incr_energy_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), Ghat_energy_l),
+  incr_energy_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), Ghat_energy_r),
+
+  surfTerms : [incr_rho_l + incr_rho_r,incr_rhoux_l + incr_rhoux_r,incr_rhouy_l + incr_rhouy_r,incr_rhouz_l + incr_rhouz_r,incr_energy_l + incr_energy_r],
+  for m : 1 thru 5 do (
+    surf : surfTerms[m],
+    writeCIncrExprsCollect1lhsc(lhs[m], dx1*surf),
+    printf(fh, "~%")
+  ),
+  printf(fh, "  return 0.;~%"),  /* Return CFL frequency from volume kernel. */
+  printf(fh, "~%"),
+  printf(fh, "} ~%")
+);
+
+calcEulerUpdateInDir(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [bC,NC,cv,surfVars,bSurf,nSurf,surfNodes,numNodes,
+   ux_surf_lr_e, ux_surf_cl_e, ux_surf_cr_e, ux_surf_rl_e, 
+   uy_surf_lr_e, uy_surf_cl_e, uy_surf_cr_e, uy_surf_rl_e, 
+   uz_surf_lr_e, uz_surf_cl_e, uz_surf_cr_e, uz_surf_rl_e, 
+   pkpm_lax_l_e, pkpm_lax_r_e, 
+   rhouxl_e,rhouyl_e,rhouzl_e,rhol_e,
+   rhouxc_e,rhouyc_e,rhouzc_e,rhoc_e,
+   rhouxr_e,rhouyr_e,rhouzr_e,rhor_e,
+   rhouxl_r,rhouyl_r,rhouzl_r,rhol_r,
+   rhouxc_l,rhouyc_l,rhouzc_l,rhoc_l,
+   rhouxc_r,rhouyc_r,rhouzc_r,rhoc_r,
+   rhouxr_l,rhouyr_l,rhouzr_l,rhor_l,
+   flux_rho_l_c, flux_rho_r_c, flux_rho_l_e, flux_rho_r_e, 
+   incr_rhoux_l,incr_rhoux_r,incr_rhouy_l,incr_rhouy_r,incr_rhouz_l,incr_rhouz_r],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "GKYL_CU_DH double ~a~a_~ax_~a_p~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn, 
+    const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, 
+    const double *u_surf_l, const double *u_surf_c, const double *u_surf_r,
+    const double *p_surf_l, const double *p_surf_c, const double *p_surf_r,
+    const double *fluid_l, const double *fluid_c, const double *fluid_r, 
+    double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cvars[dir], cdim, basisFun, polyOrder),
+  printf(fh, "  // w[NDIM]:      Cell-center coordinates.~%"),
+  printf(fh, "  // dxv[NDIM]:    Cell spacing.~%"),
+  printf(fh, "  // wv_eqn:       Wave equation for computing fluctuations at the interface for upwinding.~%"),
+  printf(fh, "  // geom_l:       Geometry for the left surface update.~%"),
+  printf(fh, "  // geom_r:       Geometry for the right surface update.~%"),
+  printf(fh, "  // u_surf_l/c/r: Input surface expansion of flow velocity in left/center/right cells in each direction.~%"),
+  printf(fh, "  // p_surf_l/c/r: Input surface expansion of pressure in left/center/right cells in each direction.~%"),
+  printf(fh, "  //               [p_xl, p_xr, p_yl, p_yr, p_zl, p_zr] ~%"),
+  printf(fh, "  // fluid_l/c/r:  [rho, rho ux, rho uy, rho uz, energy], Fluid input state vector in left/center/right cells.~%"),
+  printf(fh, "  // out:          Incremented output.~%"),
+  printf(fh, "~%"),
+
+  /* cv = variable in direction of surface update. */
+  cv : varsC[dir],
+
+  /* Surface variables to integrate over. */
+  surfVars : delete(cv,varsC),
+
+  /* Generate surface basis. this produces the ndim-1 orthogonal basis with no cv dependence. */
+  bSurf : basisFromVars(basisFun,surfVars,polyOrder),
+  NSurf : length(bSurf),
+
+  basisStr : sconcat(basisFun, "_", cdim, "x", "_p", polyOrder),
+
+  /* Surface nodes given by tensor product of Gauss-Legendre quadrature points */
+  surfNodes : gaussOrd(polyOrder+1, cdim-1),
+  numNodes : length(surfNodes),
+
+  printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho_l = &fluid_l[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux_l = &fluid_l[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy_l = &fluid_l[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz_l = &fluid_l[~a]; ~%", 3*NC),
+  printf(fh, "  const double *energy_l = &fluid_l[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho_c = &fluid_c[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux_c = &fluid_c[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy_c = &fluid_c[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz_c = &fluid_c[~a]; ~%", 3*NC),
+  printf(fh, "  const double *energy_c = &fluid_c[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho_r = &fluid_r[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux_r = &fluid_r[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy_r = &fluid_r[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz_r = &fluid_r[~a]; ~%", 3*NC),
+  printf(fh, "  const double *energy_r = &fluid_r[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  /* Surface primitive variables are organized as:
+     [ux_xl, ux_xr, uy_xl, uy_xr, uz_xl, uz_xr, 
+      ux_yl, ux_yr, uy_yl, uy_yr, uz_yl, uz_yr, 
+      ux_zl, ux_zr, uy_zl, uy_zr, uz_zl, uz_zr] */
+  printf(fh, "  const double *ux_surf_lr = &u_surf_l[~a]; ~%", (1 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uy_surf_lr = &u_surf_l[~a]; ~%", (3 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uz_surf_lr = &u_surf_l[~a]; ~%", (5 + (dir-1)*6)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux_surf_cl = &u_surf_c[~a]; ~%", (0 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uy_surf_cl = &u_surf_c[~a]; ~%", (2 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uz_surf_cl = &u_surf_c[~a]; ~%", (4 + (dir-1)*6)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux_surf_cr = &u_surf_c[~a]; ~%", (1 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uy_surf_cr = &u_surf_c[~a]; ~%", (3 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uz_surf_cr = &u_surf_c[~a]; ~%", (5 + (dir-1)*6)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux_surf_rl = &u_surf_r[~a]; ~%", (0 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uy_surf_rl = &u_surf_r[~a]; ~%", (2 + (dir-1)*6)*NSurf),
+  printf(fh, "  const double *uz_surf_rl = &u_surf_r[~a]; ~%", (4 + (dir-1)*6)*NSurf),
+  printf(fh, "~%"),
+
+  /* Surface p for grad(p) */
+  printf(fh, "  const double *p_surf_lr = &p_surf_l[~a]; ~%", (1 + (dir-1)*2)*NSurf),
+  printf(fh, "  const double *p_surf_cl = &p_surf_c[~a]; ~%", (0 + (dir-1)*2)*NSurf),
+  printf(fh, "  const double *p_surf_cr = &p_surf_c[~a]; ~%", (1 + (dir-1)*2)*NSurf),
+  printf(fh, "  const double *p_surf_rl = &p_surf_r[~a]; ~%", (0 + (dir-1)*2)*NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  double *outrho = &out[~a]; ~%", 0*NC),
+  printf(fh, "  double *outrhoux = &out[~a]; ~%", 1*NC),
+  printf(fh, "  double *outrhouy = &out[~a]; ~%", 2*NC),
+  printf(fh, "  double *outrhouz = &out[~a]; ~%", 3*NC),
+  printf(fh, "  double *outenergy = &out[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  /* Expand fluid variables */
+  rhol_e : doExpand1(rho_l, bC), 
+  rhoc_e : doExpand1(rho_c, bC), 
+  rhor_e : doExpand1(rho_r, bC), 
+
+  rhouxl_e : doExpand1(rhoux_l, bC),
+  rhouyl_e : doExpand1(rhouy_l, bC),
+  rhouzl_e : doExpand1(rhouz_l, bC),
+
+  rhouxc_e : doExpand1(rhoux_c, bC),
+  rhouyc_e : doExpand1(rhouy_c, bC),
+  rhouzc_e : doExpand1(rhouz_c, bC),
+
+  rhouxr_e : doExpand1(rhoux_r, bC),
+  rhouyr_e : doExpand1(rhouy_r, bC),
+  rhouzr_e : doExpand1(rhouz_r, bC),
+
+  energyl_e : doExpand1(energy_l, bC), 
+  energyc_e : doExpand1(energy_c, bC), 
+  energyr_e : doExpand1(energy_r, bC), 
+
+  /* Expand surface basis quantities u and p */
+  ux_surf_lr_e : doExpand1(ux_surf_lr, bSurf),
+  ux_surf_cl_e : doExpand1(ux_surf_cl, bSurf),
+  ux_surf_cr_e : doExpand1(ux_surf_cr, bSurf),
+  ux_surf_rl_e : doExpand1(ux_surf_rl, bSurf),
+
+  uy_surf_lr_e : doExpand1(uy_surf_lr, bSurf),
+  uy_surf_cl_e : doExpand1(uy_surf_cl, bSurf),
+  uy_surf_cr_e : doExpand1(uy_surf_cr, bSurf),
+  uy_surf_rl_e : doExpand1(uy_surf_rl, bSurf),
+
+  uz_surf_lr_e : doExpand1(uz_surf_lr, bSurf),
+  uz_surf_cl_e : doExpand1(uz_surf_cl, bSurf),
+  uz_surf_cr_e : doExpand1(uz_surf_cr, bSurf),
+  uz_surf_rl_e : doExpand1(uz_surf_rl, bSurf),
+
+  p_surf_lr_e : doExpand1(p_surf_lr, bSurf),
+  p_surf_cl_e : doExpand1(p_surf_cl, bSurf),
+  p_surf_cr_e : doExpand1(p_surf_cr, bSurf),
+  p_surf_rl_e : doExpand1(p_surf_rl, bSurf),
+
+  /* Evaluate rho and energy at surface */
+  rhol_r : subst(cv=1, rhol_e),
+  rhoc_l : subst(cv=-1, rhoc_e),
+  rhoc_r : subst(cv=1, rhoc_e),
+  rhor_l : subst(cv=-1, rhor_e),
+
+  energyl_r : subst(cv=1, energyl_e),
+  energyc_l : subst(cv=-1, energyc_e),
+  energyc_r : subst(cv=1, energyc_e),
+  energyr_l : subst(cv=-1, energyr_e),
+
+  /* Average values at interface */
+  avg_rho_l : 0.5*(rhol_r + rhoc_l),
+  avg_rho_r : 0.5*(rhoc_r + rhor_l),
+
+  avg_ux_l : 0.5*(ux_surf_cl_e + ux_surf_lr_e), 
+  avg_ux_r : 0.5*(ux_surf_rl_e + ux_surf_cr_e), 
+
+  avg_uy_l : 0.5*(uy_surf_cl_e + uy_surf_lr_e), 
+  avg_uy_r : 0.5*(uy_surf_rl_e + uy_surf_cr_e), 
+
+  avg_uz_l : 0.5*(uz_surf_cl_e + uz_surf_lr_e), 
+  avg_uz_r : 0.5*(uz_surf_rl_e + uz_surf_cr_e), 
+
+  avg_p_l : 0.5*(p_surf_cl_e + p_surf_lr_e), 
+  avg_p_r : 0.5*(p_surf_rl_e + p_surf_cr_e), 
+
+  avg_energy_l : 0.5*(energyl_r + energyc_l),
+  avg_energy_r : 0.5*(energyc_r + energyr_l),
+
+  /* Evaluate fluctuations at quadrature points */
+  printf(fh, "  double amdq_rho_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_rho_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double amdq_rhoux_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_rhoux_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double amdq_rhouy_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_rhouy_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double amdq_rhouz_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_rhouz_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double amdq_energy_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_energy_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  double amdq_rho_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_rho_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double amdq_rhoux_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_rhoux_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double amdq_rhouy_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_rhouy_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double amdq_rhouz_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_rhouz_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double amdq_energy_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double apdq_energy_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "~%"),
+
+  printf(fh, "  double amdq_rho_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_rho_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double amdq_rhoux_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_rhoux_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double amdq_rhouy_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_rhouy_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double amdq_rhouz_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_rhouz_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double amdq_energy_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_energy_quad_l[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "~%"),
+
+  printf(fh, "  double amdq_rho_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_rho_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double amdq_rhoux_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_rhoux_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double amdq_rhouy_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_rhouy_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double amdq_rhouz_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_rhouz_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double amdq_energy_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "  double apdq_energy_quad_r[~a] = {0.0}; ~%", numNodes),
+  printf(fh, "~%"),
+
+  /* Temporary variables for quadrature point evaluation */
+  printf(fh, "  double q_lr[5] = {0.0}; ~%"),
+  printf(fh, "  double q_cl[5] = {0.0}; ~%"),
+  printf(fh, "  double q_cr[5] = {0.0}; ~%"),
+  printf(fh, "  double q_rl[5] = {0.0}; ~%"),
+
+  printf(fh, "  double q_lr_local[5] = {0.0}; ~%"),
+  printf(fh, "  double q_cl_local[5] = {0.0}; ~%"),
+  printf(fh, "  double q_cr_local[5] = {0.0}; ~%"),
+  printf(fh, "  double q_rl_local[5] = {0.0}; ~%"),
+
+  printf(fh, "  double delta_l[5] = {0.0}; ~%"),
+  printf(fh, "  double delta_r[5] = {0.0}; ~%"),
+
+  printf(fh, "  double my_max_speed_l = 0.0; ~%"),
+  printf(fh, "  double my_max_speed_r = 0.0; ~%"),
+  printf(fh, "  double lenr_l = 0.0; ~%"),
+  printf(fh, "  double lenr_r = 0.0; ~%"),
+
+  printf(fh, "  double waves_l[15] = {0.0}; ~%"),
+  printf(fh, "  double waves_r[15] = {0.0}; ~%"),  
+  printf(fh, "  double speeds_l[3] = {0.0}; ~%"),
+  printf(fh, "  double speeds_r[3] = {0.0}; ~%"),  
+
+  printf(fh, "  double amdq_l_local[5] = {0.0}; ~%"),
+  printf(fh, "  double apdq_l_local[5] = {0.0}; ~%"),
+  printf(fh, "  double amdq_r_local[5] = {0.0}; ~%"),
+  printf(fh, "  double apdq_r_local[5] = {0.0}; ~%"),
+
+  printf(fh, "  double amdq_l[5] = {0.0}; ~%"),
+  printf(fh, "  double apdq_l[5] = {0.0}; ~%"),
+  printf(fh, "  double amdq_r[5] = {0.0}; ~%"),
+  printf(fh, "  double apdq_r[5] = {0.0}; ~%"),
+  printf(fh, "~%"),
+
+  for i : 1 thru numNodes do (
+    /* Evaluate state variable at quadrature point */
+    printf(fh, "  q_lr[0] = ~a_surfx~a_eval_quad_node_~a_r(rho_l); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_lr[1] = ~a_surfx~a_eval_quad_node_~a_r(rhoux_l); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_lr[2] = ~a_surfx~a_eval_quad_node_~a_r(rhouy_l); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_lr[3] = ~a_surfx~a_eval_quad_node_~a_r(rhouz_l); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_lr[4] = ~a_surfx~a_eval_quad_node_~a_r(energy_l); ~%", basisStr, dir, i-1),
+
+    printf(fh, "  q_cl[0] = ~a_surfx~a_eval_quad_node_~a_l(rho_c); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_cl[1] = ~a_surfx~a_eval_quad_node_~a_l(rhoux_c); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_cl[2] = ~a_surfx~a_eval_quad_node_~a_l(rhouy_c); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_cl[3] = ~a_surfx~a_eval_quad_node_~a_l(rhouz_c); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_cl[4] = ~a_surfx~a_eval_quad_node_~a_l(energy_c); ~%", basisStr, dir, i-1),
+
+    printf(fh, "  q_cr[0] = ~a_surfx~a_eval_quad_node_~a_r(rho_c); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_cr[1] = ~a_surfx~a_eval_quad_node_~a_r(rhoux_c); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_cr[2] = ~a_surfx~a_eval_quad_node_~a_r(rhouy_c); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_cr[3] = ~a_surfx~a_eval_quad_node_~a_r(rhouz_c); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_cr[4] = ~a_surfx~a_eval_quad_node_~a_r(energy_c); ~%", basisStr, dir, i-1),
+
+    printf(fh, "  q_rl[0] = ~a_surfx~a_eval_quad_node_~a_l(rho_r); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_rl[1] = ~a_surfx~a_eval_quad_node_~a_l(rhoux_r); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_rl[2] = ~a_surfx~a_eval_quad_node_~a_l(rhouy_r); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_rl[3] = ~a_surfx~a_eval_quad_node_~a_l(rhouz_r); ~%", basisStr, dir, i-1),
+    printf(fh, "  q_rl[4] = ~a_surfx~a_eval_quad_node_~a_l(energy_r); ~%", basisStr, dir, i-1),
+    printf(fh, "~%"),
+
+    /* Rotate to local coordinates at left and right interface */
+    printf(fh, "  rot_to_local(wv_eqn, geom_l->tau1[~a], geom_l->tau2[~a], geom_l->norm[~a], q_lr, q_lr_local); ~%", dir-1, dir-1, dir-1),
+    printf(fh, "  rot_to_local(wv_eqn, geom_l->tau1[~a], geom_l->tau2[~a], geom_l->norm[~a], q_cl, q_cl_local); ~%", dir-1, dir-1, dir-1),
+    printf(fh, "  rot_to_local(wv_eqn, geom_r->tau1[~a], geom_r->tau2[~a], geom_r->norm[~a], q_cr, q_cr_local); ~%", dir-1, dir-1, dir-1),
+    printf(fh, "  rot_to_local(wv_eqn, geom_r->tau1[~a], geom_r->tau2[~a], geom_r->norm[~a], q_rl, q_rl_local); ~%", dir-1, dir-1, dir-1),
+    printf(fh, "~%"),
+
+    /* Compute jumps for calculating fluctuations */
+    printf(fh, "  delta_l[0] = q_cl_local[0] - q_lr_local[0]; ~%"),
+    printf(fh, "  delta_l[1] = q_cl_local[1] - q_lr_local[1]; ~%"),
+    printf(fh, "  delta_l[2] = q_cl_local[2] - q_lr_local[2]; ~%"),
+    printf(fh, "  delta_l[3] = q_cl_local[3] - q_lr_local[3]; ~%"),
+    printf(fh, "  delta_l[4] = q_cl_local[4] - q_lr_local[4]; ~%"),
+
+    printf(fh, "  delta_r[0] = q_rl_local[0] - q_cr_local[0]; ~%"),
+    printf(fh, "  delta_r[1] = q_rl_local[1] - q_cr_local[1]; ~%"),
+    printf(fh, "  delta_r[2] = q_rl_local[2] - q_cr_local[2]; ~%"),
+    printf(fh, "  delta_r[3] = q_rl_local[3] - q_cr_local[3]; ~%"),
+    printf(fh, "  delta_r[4] = q_rl_local[4] - q_cr_local[4]; ~%"),
+    printf(fh, "~%"),
+
+    /* Compute local waves and speeds at interface */
+    printf(fh, "  my_max_speed_l = wave_roe(wv_eqn, delta_l, q_lr_local, q_cl_local, waves_l, speeds_l); ~%"),
+    printf(fh, "  my_max_speed_r = wave_roe(wv_eqn, delta_r, q_cr_local, q_rl_local, waves_r, speeds_r); ~%"), 
+
+    /* rescale speeds */
+    printf(fh, "  lenr_l = geom_l->lenr[~a]; ~%", dir-1),
+    printf(fh, "  speeds_l[0] *= lenr_l; ~%"),
+    printf(fh, "  speeds_l[1] *= lenr_l; ~%"),
+    printf(fh, "  speeds_l[2] *= lenr_l; ~%"),
+
+    printf(fh, "  lenr_r = geom_r->lenr[~a]; ~%", dir-1),
+    printf(fh, "  speeds_r[0] *= lenr_r; ~%"),
+    printf(fh, "  speeds_r[1] *= lenr_r; ~%"),
+    printf(fh, "  speeds_r[2] *= lenr_r; ~%"),
+    printf(fh, "~%"),
+
+    /* Compute local fluctuations at interface */
+    printf(fh, "  qfluct_roe(wv_eqn, q_lr_local, q_cl_local, waves_l, speeds_l, amdq_l_local, apdq_l_local); ~%"),
+    printf(fh, "  qfluct_roe(wv_eqn, q_cr_local, q_rl_local, waves_r, speeds_r, amdq_r_local, apdq_r_local); ~%"),  
+    printf(fh, "~%"),
+
+    /* Rotate local fluctuations back to global coordinates */
+    printf(fh, "  rot_to_global(wv_eqn, geom_l->tau1[~a], geom_l->tau2[~a], geom_l->norm[~a], amdq_l_local, amdq_l); ~%", dir-1, dir-1, dir-1),
+    printf(fh, "  rot_to_global(wv_eqn, geom_l->tau1[~a], geom_l->tau2[~a], geom_l->norm[~a], apdq_l_local, apdq_l); ~%", dir-1, dir-1, dir-1),
+    printf(fh, "  rot_to_global(wv_eqn, geom_r->tau1[~a], geom_r->tau2[~a], geom_r->norm[~a], amdq_r_local, amdq_r); ~%", dir-1, dir-1, dir-1),
+    printf(fh, "  rot_to_global(wv_eqn, geom_r->tau1[~a], geom_r->tau2[~a], geom_r->norm[~a], apdq_r_local, apdq_r); ~%", dir-1, dir-1, dir-1),
+    printf(fh, "~%"),
+
+    printf(fh, "  amdq_rho_quad_l[~a] = amdq_l[0]; ~%", i-1),
+    printf(fh, "  apdq_rho_quad_l[~a] = apdq_l[0]; ~%", i-1),
+    printf(fh, "  amdq_rhoux_quad_l[~a] = amdq_l[1]; ~%", i-1),
+    printf(fh, "  apdq_rhoux_quad_l[~a] = apdq_l[1]; ~%", i-1),
+    printf(fh, "  amdq_rhouy_quad_l[~a] = amdq_l[2]; ~%", i-1),
+    printf(fh, "  apdq_rhouy_quad_l[~a] = apdq_l[2]; ~%", i-1),
+    printf(fh, "  amdq_rhouz_quad_l[~a] = amdq_l[3]; ~%", i-1),
+    printf(fh, "  apdq_rhouz_quad_l[~a] = apdq_l[3]; ~%", i-1),
+    printf(fh, "  amdq_energy_quad_l[~a] = amdq_l[4]; ~%", i-1),
+    printf(fh, "  apdq_energy_quad_l[~a] = apdq_l[4]; ~%", i-1),
+    printf(fh, "~%"),
+
+    printf(fh, "  amdq_rho_quad_r[~a] = amdq_r[0]; ~%", i-1),
+    printf(fh, "  apdq_rho_quad_r[~a] = apdq_r[0]; ~%", i-1),
+    printf(fh, "  amdq_rhoux_quad_r[~a] = amdq_r[1]; ~%", i-1),
+    printf(fh, "  apdq_rhoux_quad_r[~a] = apdq_r[1]; ~%", i-1),
+    printf(fh, "  amdq_rhouy_quad_r[~a] = amdq_r[2]; ~%", i-1),
+    printf(fh, "  apdq_rhouy_quad_r[~a] = apdq_r[2]; ~%", i-1),
+    printf(fh, "  amdq_rhouz_quad_r[~a] = amdq_r[3]; ~%", i-1),
+    printf(fh, "  apdq_rhouz_quad_r[~a] = apdq_r[3]; ~%", i-1),
+    printf(fh, "  amdq_energy_quad_r[~a] = amdq_r[4]; ~%", i-1),
+    printf(fh, "  apdq_energy_quad_r[~a] = apdq_r[4]; ~%", i-1),
+    printf(fh, "~%")
+  ), 
+  /* Create modal expansions of upwinded characteristics at quadrature points */
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_rho_quad_l, amdq_rho_l); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_rhoux_quad_l, amdq_rhoux_l); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_rhouy_quad_l, amdq_rhouy_l); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_rhouz_quad_l, amdq_rhouz_l); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_energy_quad_l, amdq_energy_l); ~%", basisStr),
+  printf(fh, "~%"),
+
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_rho_quad_l, apdq_rho_l); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_rhoux_quad_l, apdq_rhoux_l); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_rhouy_quad_l, apdq_rhouy_l); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_rhouz_quad_l, apdq_rhouz_l); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_energy_quad_l, apdq_energy_l); ~%", basisStr),
+  printf(fh, "~%"),
+
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_rho_quad_r, amdq_rho_r); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_rhoux_quad_r, amdq_rhoux_r); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_rhouy_quad_r, amdq_rhouy_r); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_rhouz_quad_r, amdq_rhouz_r); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(amdq_energy_quad_r, amdq_energy_r); ~%", basisStr),
+  printf(fh, "~%"),
+
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_rho_quad_r, apdq_rho_r); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_rhoux_quad_r, apdq_rhoux_r); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_rhouy_quad_r, apdq_rhouy_r); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_rhouz_quad_r, apdq_rhouz_r); ~%", basisStr),
+  printf(fh, "  ~a_upwind_quad_to_modal(apdq_energy_quad_r, apdq_energy_r); ~%", basisStr),
+  printf(fh, "~%"),
+
+  /* Expand fluctuations in the surface basis */
+  amdq_rho_l_e : doExpand1(amdq_rho_l, bSurf),
+  amdq_rhoux_l_e : doExpand1(amdq_rhoux_l, bSurf),
+  amdq_rhouy_l_e : doExpand1(amdq_rhouy_l, bSurf),
+  amdq_rhouz_l_e : doExpand1(amdq_rhouz_l, bSurf),
+  amdq_energy_l_e : doExpand1(amdq_energy_l, bSurf),
+
+  apdq_rho_l_e : doExpand1(apdq_rho_l, bSurf),
+  apdq_rhoux_l_e : doExpand1(apdq_rhoux_l, bSurf),
+  apdq_rhouy_l_e : doExpand1(apdq_rhouy_l, bSurf),
+  apdq_rhouz_l_e : doExpand1(apdq_rhouz_l, bSurf),
+  apdq_energy_l_e : doExpand1(apdq_energy_l, bSurf),
+
+  amdq_rho_r_e : doExpand1(amdq_rho_r, bSurf),
+  amdq_rhoux_r_e : doExpand1(amdq_rhoux_r, bSurf),
+  amdq_rhouy_r_e : doExpand1(amdq_rhouy_r, bSurf),
+  amdq_rhouz_r_e : doExpand1(amdq_rhouz_r, bSurf),
+  amdq_energy_r_e : doExpand1(amdq_energy_r, bSurf),
+
+  apdq_rho_r_e : doExpand1(apdq_rho_r, bSurf),
+  apdq_rhoux_r_e : doExpand1(apdq_rhoux_r, bSurf),
+  apdq_rhouy_r_e : doExpand1(apdq_rhouy_r, bSurf),
+  apdq_rhouz_r_e : doExpand1(apdq_rhouz_r, bSurf),
+  apdq_energy_r_e : doExpand1(apdq_energy_r, bSurf),
+
+  /* Expand surface fluxes */
+  flux_rho_l_e : doExpand1(flux_rho_l, bSurf),
+  flux_rho_r_e : doExpand1(flux_rho_r, bSurf),
+  flux_rhoux_l_e : doExpand1(flux_rhoux_l, bSurf),
+  flux_rhoux_r_e : doExpand1(flux_rhoux_r, bSurf),
+  flux_rhouy_l_e : doExpand1(flux_rhouy_l, bSurf),
+  flux_rhouy_r_e : doExpand1(flux_rhouy_r, bSurf),
+  flux_rhouz_l_e : doExpand1(flux_rhouz_l, bSurf),
+  flux_rhouz_r_e : doExpand1(flux_rhouz_r, bSurf),
+  flux_energy_l_e : doExpand1(flux_energy_l, bSurf),
+  flux_energy_r_e : doExpand1(flux_energy_r, bSurf),
+
+  /* Compute surface fluxes using averages and upwinded fluctuations */
+  if (dir = 1) then (
+    /* Compute the flux of mass at the interface using split-form averaging in the x-direction */
+    flux_rho_l_c : calcInnerProdList(surfVars, 1, bSurf, avg_rho_l*avg_ux_l - 0.5*(apdq_rho_l_e - amdq_rho_l_e)),
+    flux_rho_r_c : calcInnerProdList(surfVars, 1, bSurf, avg_rho_r*avg_ux_r - 0.5*(apdq_rho_r_e - amdq_rho_r_e)), 
+
+    flux_rhoux_l_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_l_e*avg_ux_l + avg_p_l - 0.5*(apdq_rhoux_l_e - amdq_rhoux_l_e)),
+    flux_rhoux_r_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_r_e*avg_ux_r + avg_p_r - 0.5*(apdq_rhoux_r_e - amdq_rhoux_r_e)), 
+
+    flux_rhouy_l_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_l_e*avg_uy_l - 0.5*(apdq_rhouy_l_e - amdq_rhouy_l_e)),
+    flux_rhouy_r_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_r_e*avg_uy_r - 0.5*(apdq_rhouy_r_e - amdq_rhouy_r_e)), 
+
+    flux_rhouz_l_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_l_e*avg_uz_l - 0.5*(apdq_rhouz_l_e - amdq_rhouz_l_e)),
+    flux_rhouz_r_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_r_e*avg_uz_r - 0.5*(apdq_rhouz_r_e - amdq_rhouz_r_e)), 
+
+    flux_energy_l_c : calcInnerProdList(surfVars, 1, bSurf, (avg_energy_l + avg_p_l)*avg_ux_l - 0.5*(apdq_energy_l_e - amdq_energy_l_e)),
+    flux_energy_r_c : calcInnerProdList(surfVars, 1, bSurf, (avg_energy_r + avg_p_r)*avg_ux_r - 0.5*(apdq_energy_r_e - amdq_energy_r_e))
+  )
+  else if (dir = 2) then (
+    /* Compute the flux of mass at the interface using split-form averaging in the y-direction */
+    flux_rho_l_c : calcInnerProdList(surfVars, 1, bSurf, avg_rho_l*avg_uy_l - 0.5*(apdq_rho_l_e - amdq_rho_l_e)),
+    flux_rho_r_c : calcInnerProdList(surfVars, 1, bSurf, avg_rho_r*avg_uy_r - 0.5*(apdq_rho_r_e - amdq_rho_r_e)),
+
+    flux_rhoux_l_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_l_e*avg_ux_l - 0.5*(apdq_rhoux_l_e - amdq_rhoux_l_e)),
+    flux_rhoux_r_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_r_e*avg_ux_r - 0.5*(apdq_rhoux_r_e - amdq_rhoux_r_e)), 
+
+    flux_rhouy_l_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_l_e*avg_uy_l + avg_p_l - 0.5*(apdq_rhouy_l_e - amdq_rhouy_l_e)),
+    flux_rhouy_r_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_r_e*avg_uy_r + avg_p_r - 0.5*(apdq_rhouy_r_e - amdq_rhouy_r_e)), 
+
+    flux_rhouz_l_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_l_e*avg_uz_l - 0.5*(apdq_rhouz_l_e - amdq_rhouz_l_e)),
+    flux_rhouz_r_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_r_e*avg_uz_r - 0.5*(apdq_rhouz_r_e - amdq_rhouz_r_e)), 
+
+    flux_energy_l_c : calcInnerProdList(surfVars, 1, bSurf, (avg_energy_l + avg_p_l)*avg_uy_l - 0.5*(apdq_energy_l_e - amdq_energy_l_e)),
+    flux_energy_r_c : calcInnerProdList(surfVars, 1, bSurf, (avg_energy_r + avg_p_r)*avg_uy_r - 0.5*(apdq_energy_r_e - amdq_energy_r_e))
+  )
+  else (
+    /* Compute the flux of mass at the interface using split-form averaging in the z-direction */
+    flux_rho_l_c : calcInnerProdList(surfVars, 1, bSurf, avg_rho_l*avg_uz_l - 0.5*(apdq_rho_l_e - amdq_rho_l_e)),
+    flux_rho_r_c : calcInnerProdList(surfVars, 1, bSurf, avg_rho_r*avg_uz_r - 0.5*(apdq_rho_r_e - amdq_rho_r_e)), 
+
+    flux_rhoux_l_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_l_e*avg_ux_l - 0.5*(apdq_rhoux_l_e - amdq_rhoux_l_e)),
+    flux_rhoux_r_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_r_e*avg_ux_r - 0.5*(apdq_rhoux_r_e - amdq_rhoux_r_e)), 
+
+    flux_rhouy_l_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_l_e*avg_uy_l - 0.5*(apdq_rhouy_l_e - amdq_rhouy_l_e)),
+    flux_rhouy_r_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_r_e*avg_uy_r - 0.5*(apdq_rhouy_r_e - amdq_rhouy_r_e)), 
+
+    flux_rhouz_l_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_l_e*avg_uz_l + avg_p_l - 0.5*(apdq_rhouz_l_e - amdq_rhouz_l_e)),
+    flux_rhouz_r_c : calcInnerProdList(surfVars, 1, bSurf, flux_rho_r_e*avg_uz_r + avg_p_r - 0.5*(apdq_rhouz_r_e - amdq_rhouz_r_e)), 
+
+    flux_energy_l_c : calcInnerProdList(surfVars, 1, bSurf, (avg_energy_l + avg_p_l)*avg_uz_l - 0.5*(apdq_energy_l_e - amdq_energy_l_e)),
+    flux_energy_r_c : calcInnerProdList(surfVars, 1, bSurf, (avg_energy_r + avg_p_r)*avg_uz_r - 0.5*(apdq_energy_r_e - amdq_energy_r_e))
+  ),
+  /* Write out surface expansions of fluxes */
+  printf(fh, "  double flux_rho_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double flux_rho_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "~%"),
+  writeCExprs1(flux_rho_l, flux_rho_l_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  writeCExprs1(flux_rho_r, flux_rho_r_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "  double flux_rhoux_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double flux_rhoux_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "~%"),
+  writeCExprs1(flux_rhoux_l, flux_rhoux_l_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  writeCExprs1(flux_rhoux_r, flux_rhoux_r_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "  double flux_rhouy_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double flux_rhouy_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "~%"),
+  writeCExprs1(flux_rhouy_l, flux_rhouy_l_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  writeCExprs1(flux_rhouy_r, flux_rhouy_r_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "  double flux_rhouz_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double flux_rhouz_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "~%"),
+  writeCExprs1(flux_rhouz_l, flux_rhouz_l_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  writeCExprs1(flux_rhouz_r, flux_rhouz_r_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "  double flux_energy_l[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "  double flux_energy_r[~a] = {0.0}; ~%", NSurf),
+  printf(fh, "~%"),
+  writeCExprs1(flux_energy_l, flux_energy_l_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  writeCExprs1(flux_energy_r, flux_energy_r_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Compute the increments on the left and right from Ghat expansions */
+  incr_rho_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), flux_rho_l_e),
+  incr_rho_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), flux_rho_r_e),
+
+  incr_rhoux_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), flux_rhoux_l_e),
+  incr_rhoux_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), flux_rhoux_r_e),
+
+  incr_rhouy_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), flux_rhouy_l_e),
+  incr_rhouy_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), flux_rhouy_r_e),
+
+  incr_rhouz_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), flux_rhouz_l_e),
+  incr_rhouz_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), flux_rhouz_r_e),
+
+  incr_energy_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), flux_energy_l_e),
+  incr_energy_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), flux_energy_r_e),
+
+  surfTerms : [incr_rho_l + incr_rho_r,incr_rhoux_l + incr_rhoux_r,incr_rhouy_l + incr_rhouy_r,incr_rhouz_l + incr_rhouz_r,incr_energy_l + incr_energy_r],
+  for m : 1 thru 5 do (
+    surf : surfTerms[m],
+    writeCIncrExprsCollect1lhsc(lhs[m], dx1*surf),
+    printf(fh, "~%")
+  ),
+  printf(fh, "  return 0.;~%"),  /* Return CFL frequency from volume kernel. */
+  printf(fh, "~%"),
+  printf(fh, "} ~%")
+);

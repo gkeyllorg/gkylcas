@@ -1,0 +1,51 @@
+load("vlasov/lbo_vlasov/vmLBOFuncs-drag-vol.mac")$
+load(stringproc)$
+
+/* This script calls the functions which calculate the
+   updates from the drag portion of the volume contributions. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor product basis. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$
+maxCdim_Tensor : 0$
+maxVdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for v : max(c,minVdim[bInd]) thru maxVdim[bInd] do (
+      maxPolyOrderB : maxPolyOrder[bInd],
+      minPolyOrderB : minPolyOrder[bInd],
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        disp(printf(false,sconcat("Creating lbo_vlasov_drag_vol_~ax~av_",bName[bInd]," _p~a"),c,v,polyOrder)),
+        funcName : sconcat("lbo_vlasov_drag_vol_", c, "x", v, "v_", bName[bInd],"_p",polyOrder),
+        fname : sconcat("~/max-out/",funcName, ".c"),
+        fh : openw(fname),
+        calcVmLBODragVolUpdater(fh, funcName, c, v, bName[bInd], polyOrder),
+        close(fh) 
+      )
+    )
+  )
+);

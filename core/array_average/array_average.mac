@@ -1,0 +1,144 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+
+writeCIncrExprsNoExpand1atomicadd(lhs, rhs) := block([expr],
+  expr : float(rhs),
+  for i : 1 thru length(expr) do (
+    if expr[i] # 0.0 then printf(fh, "  atomicAdd(&~a, ~a); ~%", lhs[i-1], expr[i])
+  )
+)$
+
+array_average(polyOrder_max,basisType,cfname,hfname) := block(
+
+  [headerf,fh,dims,single_elements,double_elements,triple_elements,
+  all_elements,intdims,dimNames,vars,basis,outVars,
+  intdim_s,funcName,int_dim,b_reduced,f_e,w_e,f_c],
+
+  headerf : openw(hfname),
+  /* write prologue of header file*/
+  printf(headerf,"#pragma once~%~%"),
+  printf(headerf,"#include <gkyl_util.h>~%"),
+  printf(headerf,"EXTERN_C_BEG~%~%"),
+
+  fh : openw(cfname),
+  /* write prologue of c file*/
+  printf(fh,"#include <gkyl_array_average_kernels.h>~%~%"),
+
+  for dim : 1 thru 3 do (
+
+    /* add a mapping between dimensionality and symbols */
+    if dim = 3 then (dimNames : ["x","y","z"]),
+    if dim = 2 then (dimNames : ["x","y"]),
+    if dim = 1 then (dimNames : ["x"]),
+
+    dims : makelist(k, k, 1, dim),
+
+    /* Generate all single elements */
+    single_elements : dims,
+
+    /* Generate all pairs (combinations of size 2) */
+    double_elements : if length(dims) > 1 then 
+    create_list([dims[i], dims[j]], i, 1, length(dims), j, i+1, length(dims)) 
+    else [],
+
+    /* Generate all triplets (combinations of size 3) */
+    triple_elements : if length(dims) > 2 then 
+    create_list([dims[i], dims[j], dims[k]], i, 1, length(dims), j, i+1, length(dims), k, j+1, length(dims)) 
+    else [],
+
+    /* Combine single, double, and triple elements to create a list of type x,y,z,xy,xz,yz,xyz */
+    all_elements : append(
+      append(create_list([x], x, single_elements), double_elements),
+      triple_elements
+    ),
+    
+    /*  Example for dim = 3 (3x case):
+        -the single_element is [1,2,3]
+        -the double_element is [[1,2],[1,3],[2,3]]
+        -the triple_element is [[1,2,3]]
+        -the all_elements list is [[1],[2],[1,2],[1,3],[2,3],[1,2,3]] corresponding to average along first, second or both dimensions.
+    */
+    for i : 1 thru length(all_elements) do (
+      intdims : all_elements[i],
+
+      /* We build the name extension of the kernel to indicate the avg dimensions */
+      intdim_s : "",
+      for j : 1 thru length(all_elements[i]) do(
+        /* we add the corresponding symbol for each elements in the all_elements sublist */
+        intdim_s : sconcat(intdim_s,dimNames[intdims[j]])
+      ),
+
+      /*  Example for dim = 3 and i = 5:
+          -the fifth element of all_element is [2,3]
+          -intdim_s is now "yz"
+      */
+
+      for polyOrder : 1 thru polyOrder_max do(
+
+        /* Original basis */
+        [vars, basis] : loadBasis(basisType, dim, polyOrder),
+
+        /* Define strings that keep track of dimensions after averaging */
+        outVars  : vars,
+
+        /* Remove the averaged dimensions symbols */
+        for j : 1 thru length(intdims) do(
+          outVars  : delete(vars[intdims[j]],outVars)
+        ),
+
+        /*  Example for dim = 3 and i = 5:
+            -the fifth element of all_element is [2,3]
+            -intdim_s is now "yz"
+            -outVars is just x
+        */
+
+        /* name of the kernel */
+        funcName : sconcat("gkyl_array_average_",dim,"x_", basisType,"_p", polyOrder, "_avg", intdim_s),
+
+        /* integral dimensionality */
+        int_dim : dim - length(intdims),
+
+        /* Output sub basis */
+        b_reduced : basisFromVars(basisType, outVars, polyOrder),
+
+        /* We expand our conf field on the full basis */
+        f_e : doExpand1(fin, basis),
+        w_e : doExpand1(win, basis),
+
+        /* We integrate it on our output basis over the complementary variables */
+        if length(b_reduced) > 0 then(
+          f_c  : calcInnerProdList(vars, w_e, b_reduced, f_e)
+        ) else (
+          /* handle the full average case */
+          f_c  : [innerProd(vars, w_e, 1, f_e)]
+        ),
+
+        /* write the .c file */
+        printf(fh, "GKYL_CU_DH void ~a(const double subvol, const double *win, const double *fin, double* GKYL_RESTRICT out) ~%{ ~%", funcName),
+        
+        printf(fh, "#ifdef __CUDA_ARCH__~%"),
+        /* Version for GPU (to handle concurrent memory access) */
+        writeCIncrExprsNoExpand1atomicadd(out, subvol*expand(f_c)),
+
+        printf(fh, "#else~%"),
+        /* CPU sequential version*/
+        writeCIncrExprsNoExpand1(out, subvol*expand(f_c)),
+
+        /* close accolade and CUDA case */
+        printf(fh, "#endif~%"),
+        printf(fh, "} ~%"),
+
+        /* write the .h file */
+        printf(headerf, "GKYL_CU_DH void ~a(const double subvol, const double *win, const double *fin, double* GKYL_RESTRICT out);~%", funcName),
+
+        print("Kernel ",funcName," generated.")
+      )
+    )
+  ),
+
+  /* finalize header file*/
+  printf(headerf,"~%EXTERN_C_END"),
+  close(headerf),
+  close(fh)
+)$

@@ -1,0 +1,68 @@
+/* Generate kernels that compute the moments of the distribution function. */
+
+load("vlasov/vlasov/vlasovMomentsFuncs.mac")$
+load(stringproc)$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel); pure p=1 tensor
+   kernels still do not exist anywhere. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* see begining of v loop below though. */
+maxCdim_Tensor : 3$
+maxVdim_Tensor : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    minVdimB : max(c,minVdim[bInd]), 
+    maxVdimB : maxVdim[bInd], 
+    if (c = 2) then minVdimB : 1, /* We support 2x1v. */
+    for v : minVdimB thru maxVdimB do (
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      /* Tensor 2x3v/3x3v: only the p=1 hybrid (p>1 tensor kernels at these
+         dimensionalities are unused by the kernel tables and very expensive
+         to generate). */
+      if (bName[bInd] = "tensor" and c+v >= 5) then maxPolyOrderB : 1,
+      /* Vlasov moment calculators. */
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        disp(printf(false,sconcat("Creating Vlasov Moments ~ax~av ", bName[bInd]),c,v)),
+        fname : sconcat("~/max-out/mom_vlasov_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        funcName : sconcat("mom_vlasov"),
+        /* We do not generate 5D and 6D p>1 phase-space Hamiltonian kernels. */
+        if (c+v>=5 and polyOrder>1) then (
+          calcMoments(fh, funcName, c, v, bName[bInd], polyOrder, false)
+        )
+        else (
+          calcMoments(fh, funcName, c, v, bName[bInd], polyOrder, true)
+        ),
+        close(fh)
+      )
+    )
+  )
+);

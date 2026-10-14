@@ -1,0 +1,70 @@
+/* Generate the shared nodal surface-evaluation table headers
+   gkyl_vlasov_surf_tables_<c>x<v>v_<b>_p<p>.h used by the velocity-flux
+   alpha_quad producers and lax_flux_nodal kernels. Combo coverage mirrors
+   ms-vlasovVelFluxSurf.mac. */
+load("vlasov/vlasov/vlasov-basis.mac");
+load("vlasov/vlasov/surf-eval-tables.mac");
+load("core/nodal_operations/nodal_functions.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel); pure p=1 tensor
+   kernels still do not exist anywhere. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* see begining of v loop below though. */
+maxCdim_Tensor : 3$
+maxVdim_Tensor : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+if not(symbolp(tablesOutdir)) then tablesOutdir : tablesOutdir else tablesOutdir : "~/max-out/"$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    minVdimB : max(c,minVdim[bInd]),
+    maxVdimB : maxVdim[bInd],
+    if (c = 2) then minVdimB : 1, /* We support 2x1v. */
+    for v : minVdimB thru maxVdimB do (
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1,
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        /* Modal->nodal (producer) tables, for vlasov/ker/flux_vlasov. */
+        fname : sconcat(tablesOutdir, "gkyl_vlasov_flux_surf_mod2nod_tables_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".h"),
+        disp(printf(false,"tables: ~a",fname)),
+        fh : openw(fname),
+        writeFluxSurfTabHeader(fh, c, v, bName[bInd], polyOrder),
+        close(fh),
+        /* Nodal->modal (consumer projection) tables, for vlasov/ker/vlasov. */
+        fname : sconcat(tablesOutdir, "gkyl_vlasov_surf_nod2mod_tables_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".h"),
+        disp(printf(false,"tables: ~a",fname)),
+        fh : openw(fname),
+        writePrjTabHeader(fh, c, v, bName[bInd], polyOrder),
+        close(fh)
+      )
+    )
+  )
+)$

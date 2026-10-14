@@ -1,0 +1,97 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+fpprec : 24$
+
+statevec : [rhoux, rhouy, rhouz, energy]$
+
+calcEulerPKPMPressureRelax(fh, funcNm, cdim, basisFun, pOrder) := block([modNm,bC,NC,
+  rhol,rhouxl,rhouyl,rhouzl,energyl,uvarxl,uvaryl,uvarzl,pvarl,varsC,basisC],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+
+  printf(fh, "GKYL_CU_DH void ~a_p~a(const double nu, const double dt, const double *vth_sq, const double *u_i, const double *vlasov_pkpm_moms, double *statevec) ~%{ ~%", funcNm, pOrder),
+  printf(fh, "  // nu: Collisionality (assumed to be scalar).~%"),
+  printf(fh, "  // dt: Size of time step.~%"),
+  printf(fh, "  // vth_sq: vth^2 = T/m.~%"),
+  printf(fh, "  // u_i: [ux, uy, uz], Fluid flow.~%"),
+  printf(fh, "  // vlasov_pkpm_moms: [rho, p_parallel, q_parallel], Moments computed from kinetic equation in pkpm model.~%"),
+  printf(fh, "  // statevec: [rho ux, rho uy, rho uz, energy], Fluid input state vector. Kernel modifies energy~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  double edt = exp(nu*dt); ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rhoux = &statevec[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhouy = &statevec[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouz = &statevec[~a]; ~%", 2*NC),
+  printf(fh, "  double *energy = &statevec[~a]; ~%", 3*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *ux = &u_i[~a]; ~%", 0),
+  printf(fh, "  const double *uy = &u_i[~a]; ~%", NC),
+  printf(fh, "  const double *uz = &u_i[~a]; ~%", NC*2),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho = &vlasov_pkpm_moms[~a]; ~%", 0),
+  printf(fh, "  const double *p_parallel = &vlasov_pkpm_moms[~a]; ~%", NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  // temp = 0.5*(rho*u^2 + p_parallel) (these components already known at t^{n+1}).~%"),
+  printf(fh, "  double temp[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double p_perp[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double p[~a] = {0.0}; ~%", NC),
+  printf(fh, "~%"),
+
+  vth_sq_e : doExpand1(vth_sq, bC),
+
+  rhoux_e : doExpand1(rhoux, bC),
+  rhouy_e : doExpand1(rhouy, bC),
+  rhouz_e : doExpand1(rhouz, bC),
+  energy_e : doExpand1(energy, bC),
+
+  /* Expansions of the fluid flow */
+  ux_e : doExpand1(ux, bC),
+  uy_e : doExpand1(uy, bC),
+  uz_e : doExpand1(uz, bC),
+
+  /* Expansion of mass density and parallel pressure */
+  rho_e : doExpand1(rho, bC),
+  ppar_e : doExpand1(p_parallel, bC),
+
+  temp_c : calcInnerProdList(varsC, 1, bC, 0.5*(rhoux_e*ux_e + rhouy_e*uy_e + rhouz_e*uz_e + ppar_e)),
+  /* Write out 0.5*(rho*u^2 + p_parallel) expansion */
+  writeCExprs1(temp, temp_c),
+  temp_e : doExpand1(temp, bC),
+  printf(fh, "~%"),
+
+  p_perp_c : calcInnerProdList(varsC, 1, bC, energy_e - temp_e),
+  /* Write out the perpendicular pressure's expansion */
+  writeCExprs1(p_perp, p_perp_c),
+  p_perp_e : doExpand1(p_perp, bC),
+  printf(fh, "~%"),
+
+  p_c : calcInnerProdList(varsC, 1, bC, rho_e*vth_sq_e), 
+
+  /* Write out equilibrium pressure expansion */
+  writeCExprs1(p, p_c),
+  p_e : doExpand1(p, bC),
+  printf(fh, "~%"),
+
+  /* Only need to relax p_perp. p_parallel already relaxed by kinetic equation 
+     Divide out integrating factor from collisional relaxation
+     (p_perp - pI) = exp(-nu*dt)*(p_perp - pI); where p = rho*vth^2 is the isotropic pressure */
+  out_energy_c : calcInnerProdList(varsC, 1, bC, temp_e + (p_perp_e - p_e)/edt + p_e),
+
+  writeCExprs1(energy, out_energy_c),
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+)$

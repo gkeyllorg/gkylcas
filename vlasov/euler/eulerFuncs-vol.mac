@@ -1,0 +1,136 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+fpprec : 24$
+
+statevec : [rho, rhou0, rhou1, rhou2, energy]$
+dx1  : [dx10, dx11, dx12]$
+
+lhs : [outrho, outrhou0, outrhou1, outrhou2, outenergy]$
+
+uvar : [uvar0,uvar1,uvar2]$
+
+cidx(cdim) := makelist(i,i,0,cdim-1)$
+
+calcEulerVolUpdater(fh, funcNm, cdim, basisFun, pOrder) := block([modNm,bC,NC,cid,
+  rhol,rhouxl,rhouyl,rhouzl,energyl,rhoul,uvarxl,uvaryl,uvarzl,iel,
+  t1,t2,t3,t4,t5,volTerms,vol,expr,varsC,basisC],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+
+  /* specify a point to evaluate maximum speed at for use in computing CFL */
+  cflPt : makelist(varsC[d]=0, d, 1, length(varsC)),
+
+  printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, const double gas_gamma, const double *uvar, const double *pvar, const double *statevec, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, pOrder),
+  printf(fh, "  // w[NDIM]: Cell-center coordinates.~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing.~%"),
+  printf(fh, "  // gas_gamma: Adiabatic index.~%"),
+  printf(fh, "  // uvar: [ux, uy, uz], Fluid flow.~%"),
+  printf(fh, "  // pvar: Fluid pressure.~%"),
+  printf(fh, "  // statevec: [rho, rho ux, rho uy, rho uz, energy], Fluid input state vector.~%"),
+  printf(fh, "  // out: Incremented output.~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho = &statevec[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhou0 = &statevec[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhou1 = &statevec[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhou2 = &statevec[~a]; ~%", 3*NC),
+  printf(fh, "  const double *energy = &statevec[~a]; ~%", 4*NC),
+
+  printf(fh, "  const double *uvar0 = &uvar[~a]; ~%", 0*NC),
+  printf(fh, "  const double *uvar1 = &uvar[~a]; ~%", 1*NC),
+  printf(fh, "  const double *uvar2 = &uvar[~a]; ~%", 2*NC),
+
+  printf(fh, "  double *outrho = &out[~a]; ~%", 0*NC),
+  printf(fh, "  double *outrhou0 = &out[~a]; ~%", 1*NC),
+  printf(fh, "  double *outrhou1 = &out[~a]; ~%", 2*NC),
+  printf(fh, "  double *outrhou2 = &out[~a]; ~%", 3*NC),
+  printf(fh, "  double *outenergy = &out[~a]; ~%", 4*NC),
+
+  cid : cidx(cdim),
+  for dir : 1 thru cdim do (
+    printf(fh, "  double dx1~a = 2./dxv[~a]; ~%", dir-1, dir-1)
+  ),
+  printf(fh, "~%"),
+
+  /* cflFreq_mid is our approximation of sum_i max(abs(alpha_i))/(dx_i/(2p+1)) */
+  printf(fh, "  double cflFreq_mid = 0.0; ~%"),
+
+  rhol : doExpand1(statevec[1], bC),
+  rhouxl : doExpand1(statevec[2], bC),
+  rhouyl : doExpand1(statevec[3], bC),
+  rhouzl : doExpand1(statevec[4], bC),
+  energyl : doExpand1(statevec[5], bC),
+
+  rhoul : [rhouxl,rhouyl,rhouzl],
+
+  /* Expansions of the fluid flow */
+  uvarxl : doExpand1(uvar[1], bC),
+  uvaryl : doExpand1(uvar[2], bC),
+  uvarzl : doExpand1(uvar[3], bC),
+  uvarl : [uvarxl,uvaryl,uvarzl],
+
+  /* Expansion of the fluid pressure */
+  pvarl : doExpand1(pvar, bC),
+
+  /* compute stable time step, max speed = |u| + cs, cs = sqrt(gas_gamma*p/rho) */
+  for dir : 1 thru cdim do (
+    /* evaluate velocity and sound speed at center of cell */
+    umid : gcfac(float(expand(subst(cflPt, uvarl[dir])))),
+    rhomid : gcfac(float(expand(subst(cflPt, rhol)))),
+    pmid : gcfac(float(expand(subst(cflPt, pvarl)))),
+    printf(fh, "  cflFreq_mid += 0.5*~a*(fabs(~a)+sqrt(~a)); ~%", float(2*polyOrder+1)*dx1[dir], umid, gas_gamma*pmid/rhomid)
+  ),
+  printf(fh, "~%"),
+
+  /* Density update, flux = rho*u */
+  t1 : (t1 : 0, for dir : 1 thru cdim do (
+     t1 : t1 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhoul[dir])
+     ),
+  t1),
+  /* Momentum update, flux = rho*u*u + p*I, where I is the identity matrix */
+  t2 : (t2 : 0, for dir : 1 thru cdim do (
+     if (dir = 1) then (t2 : t2 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhouxl*uvarxl) 
+                                + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), pvarl)),
+     if (dir = 2) then (t2 : t2 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhouxl*uvaryl)),
+     if (dir = 3) then (t2 : t2 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhouxl*uvarzl))
+     ),
+  t2),
+  t3 : (t3 : 0, for dir : 1 thru cdim do (
+     if (dir = 1) then (t3 : t3 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhouyl*uvarxl)),
+     if (dir = 2) then (t3 : t3 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhouyl*uvaryl)
+                                + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), pvarl)),
+     if (dir = 3) then (t3 : t3 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhouyl*uvarzl))
+     ),
+  t3),
+  t4 : (t4 : 0, for dir : 1 thru cdim do (
+     if (dir = 1) then (t4 : t4 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhouzl*uvarxl)),
+     if (dir = 2) then (t4 : t4 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhouzl*uvaryl)),
+     if (dir = 3) then (t4 : t4 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), rhouzl*uvarzl)
+                                + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), pvarl))
+     ),
+  t4),
+  /* Energy update, flux = (E + p)*u */
+  t5 : (t5 : 0, for dir : 1 thru cdim do (
+     t5 : t5 + dx1[dir]*calcInnerProdList(varsC, 1, diff(bC, varsC[dir]), (energyl + pvarl)*uvarl[dir])
+     ),
+  t5),
+
+  volTerms : [t1,t2,t3,t4,t5],
+  for m : 1 thru 5 do (
+    vol : volTerms[m],
+    writeCIncrExprs1(lhs[m], vol),
+    printf(fh, "~%")
+  ),
+
+  printf(fh, "  return cflFreq_mid; ~%"),
+  printf(fh, "} ~%")
+
+)$

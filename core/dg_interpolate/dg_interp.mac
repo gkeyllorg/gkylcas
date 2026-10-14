@@ -1,0 +1,116 @@
+/* Generate kernels for dg_interpolate updater. */
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+fpprec : 24$
+
+writeCIncrExprsCollect1noPowersAtomicAdd(lhs, rhs, clst, qPow, alreadyDecl) := block(
+  [i,subList,expr,ep,outStr],
+
+  [subList,alreadyDecl] : findReplacePowers(rhs, qPow, 1, alreadyDecl),
+
+  expr : float(expand(rhs)),
+  for i : 1 thru length(rhs) do (
+    if expr[i] # 0.0 then (
+      expr[i] : apply(collectterms, cons(expr[i], clst)),
+      ep : string(expr[i]),
+      if (length(subList) > 0) then (
+        outStr : ssubst(subList[1][2],subList[1][1],ep),
+        for s : 2 thru length(subList) do (
+          outStr : ssubst(subList[s][2],subList[s][1],outStr)
+        )
+      ) else (
+        outStr : ep
+      ),
+      printf(fh, "  atomicAdd(&~a, ~a); ~%", lhs[i-1], outStr)
+    )
+  ),
+  return(alreadyDecl)
+)$
+
+gen_dg_interp_kern(fh, funcNm, cdim, vdim, basisFun, polyOrder, isGK) := block(
+  /* Interpolation operator transfering a field defined on one grid to
+     another grid. This kernel is called to compute contribution from a single
+     origin-grid cell, to a single target-grid cell. */
+  [varsC,bC,vars,basis,vSub,ndim,numB,interpDims,numInterpDims,intLims,
+   dI,d,cFld_e,cFld_c,fFld_e,fFld_c,varMap,intLimsX,intLimsV,subList,subListX,
+   subListV,IcFld_c,IcFld_cx,IcFld_cv,tempPowVars],
+
+  ndim : cdim + vdim,
+ 
+  /* Get desired basis. */
+  if (vdim = 0) then (
+    [vars, basis] : loadBasis(basisFun, cdim, polyOrder)
+  ) else (
+    if (isGK) then (
+      [varsC,bC,vars,basis,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder)
+    )
+    else (
+      [varsC,bC,vars,basis] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+    )
+  ),
+  numB : length(basis),
+
+  /* Generate a kernel for interpolating along each direction. */
+  for dir : 1 thru ndim do (
+
+    /* Function declaration with input/output variables. */
+    printf(fh, "GKYL_CU_DH void ~a_~a(const double *wDo, const double *wTar, const double *dxDo, const double *dxTar, const double *fldDo, double *fldTar) ~%{ ~%", funcNm, vars[dir]),
+    printf(fh, "  // wDo: cell center of donor cell.~%"),
+    printf(fh, "  // wTar: cell center of target cell.~%"),
+    printf(fh, "  // dxDo: cell length of donor cell.~%"),
+    printf(fh, "  // dxTar: cell length of target cell.~%"),
+    printf(fh, "  // fldDo: donor field.~%"),
+    printf(fh, "  // fldTar: target field in cells pointed to by the stencil.~%"),
+    printf(fh, "~%"),
+  
+    intLims : makelist([-1,1], d, 1, ndim),
+    intLims[dir] : [ 1-(2/dxTar[dir-1])*(wTar[dir-1]+dxTar[dir-1]/2-(wDo[dir-1]-dxDo[dir-1]/2)),
+                    -1+(2/dxTar[dir-1])*(wDo[dir-1]+dxDo[dir-1]/2-(wTar[dir-1]-dxTar[dir-1]/2)) ],
+    /* Create a variable saving limits of integration. */
+    printf(fh, "  double eLo = fmax(-1.0,~a);~%", float(intLims[dir][1])),
+    printf(fh, "  double eUp = fmin( 1.0,~a);~%", float(intLims[dir][2])),
+    printf(fh, "~%"),
+    
+    /* Field expansions and list of coefficients. */
+    cFld_c : makelist(fldDo[i],i,0,numB-1),
+    fFld_c : makelist(fldTar[i],i,0,numB-1),
+    cFld_e : doExpand(cFld_c,basis),
+    fFld_e : doExpand(fFld_c,basis),
+    
+    /* Create a table of the relationship between the logical coordinates
+       in each direction of the donor and target grids, that is, the linear map
+         xi_c = L(xi_f)
+       where xi_c and xi_f are the is the donor and target logical coordinates. */
+    varMap : makelist(vars[i],i,1,ndim),
+    varMap[dir] : (2/dxDo[dir-1])*(wTar[dir-1]-wDo[dir-1]+(dxTar[dir-1]/2)*vars[dir]),
+    
+    /* Compute the inner product, on target grid of current cell,
+       of the donor field times the basis target-grid functions. */
+    intLims : makelist([-1, 1],d,1,ndim),
+    intLims[dir] : [eLo, eUp],
+    subList : makelist(vars[i]=varMap[i],i,1,ndim),
+    IcFld_c : fullratsimp(calcInnerProdListGen(vars,intLims,1.0,basis,subst(subList,cFld_e))),
+    
+    /* In general these expressions are very complex. It would be beneficial to
+       perform some kind of common subexpression elimination. For now we'll just eliminate the exponents. */
+    powVars : [],
+    powVars : endcons(makelist( wDo[i-1],i,1,ndim),powVars),
+    powVars : endcons(makelist( wTar[i-1],i,1,ndim),powVars),
+    powVars : endcons(makelist(dxDo[i-1],i,1,ndim),powVars),
+    powVars : endcons(makelist(dxTar[i-1],i,1,ndim),powVars),
+    powVars : endcons(eLo,powVars),
+    powVars : endcons(eUp,powVars),
+    printf(fh, "#ifdef __CUDA_ARCH__~%"),
+    tempPowVars : [],
+    writeCIncrExprsCollect1noPowersAtomicAdd(fldTar, IcFld_c, [dxDo,dxTar], powVars, tempPowVars),
+    printf(fh, "#else~%"),
+    tempPowVars : [],
+    writeCIncrExprsCollect1noPowers(fldTar, IcFld_c, [dxDo,dxTar], powVars, tempPowVars),
+    printf(fh, "#endif~%"),
+    printf(fh, "~%"),
+  
+    printf(fh, "}~%"),
+    printf(fh, "~%")
+  )
+  
+)$

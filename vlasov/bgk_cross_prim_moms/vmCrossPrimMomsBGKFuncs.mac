@@ -1,0 +1,123 @@
+/* Generate kernels for the updater that computes the cross primitive moments 
+   u_ei and vtsq_ei (or u_ie and vtsq_ie) used in the cross collision 
+   terms, given the moments of electrons and ions. */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac");
+load(stringproc)$
+fpprec : 24$
+
+calcVMCrossPrimMomsBGK(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  print(cdim,"x", vdim, "v", polyOrder, "p"),
+  
+  /* Include the header files. */
+  printf(fh, "#include <gkyl_vlasov_cross_prim_moms_bgk_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+  printf(fh, " ~%"),
+  
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH void ~a(const double delta_sr, const double betaGreenep1, const double m_self, const double *prim_moms_self, const double m_other, const double *prim_moms_other, double *prim_moms_cross) ~%{ ~%", funcNm),
+  printf(fh, "  // delta_sr: Free parameter in relation between nu_sr and alpha_E. ~%"),
+  printf(fh, "  // betaGreenep1: Greene's beta + 1. ~%"),
+  printf(fh, "  // m_self: mass of this species. ~%"),
+  printf(fh, "  // prim_moms_self: primitive moments of this species. ~%"),
+  printf(fh, "  // m_other: mass of other species. ~%"),
+  printf(fh, "  // prim_moms_other: primitive moments of other species. ~%"),
+  printf(fh, "  // prim_moms_cross: cross primitive moments. ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  const double m_s = m_self; ~%"),
+  printf(fh, "  const double m_r = m_other; ~%"),
+  /* Create pointers to the moments of each species. */
+  printf(fh, "  const double *n_s = &prim_moms_self[~a]; ~%", 0),
+  printf(fh, "  const double *u_s = &prim_moms_self[~a]; ~%", NC),
+  printf(fh, "  const double *vtsq_s = &prim_moms_self[~a]; ~%", NC*(vdim+1)),
+  printf(fh, "  const double *n_r = &prim_moms_other[~a]; ~%", 0),
+  printf(fh, "  const double *u_r = &prim_moms_other[~a]; ~%", NC),
+  printf(fh, "  const double *vtsq_r = &prim_moms_other[~a]; ~%", NC*(vdim+1)),
+  printf(fh, " ~%"),
+  /* Create pointers to the cross moments. */
+  printf(fh, "  double *n_sr = &prim_moms_cross[~a]; ~%", 0),
+  printf(fh, "  double *u_sr = &prim_moms_cross[~a]; ~%", NC),
+  printf(fh, "  double *vtsq_sr = &prim_moms_cross[~a]; ~%", NC*(vdim+1)),
+  printf(fh, "~%"),
+
+  /* Calculate cross density n_sr. */
+  for i : 1 thru NC do (
+    printf(fh, "  n_sr[~a] = n_s[~a]; ~%", i-1, i-1)
+  ),
+  printf(fh, " ~%"),
+
+  /* Calculate cross velocity u_sr in each direction. */
+  printf(fh, "  const double deltaTbetap1 = delta_sr*betaGreenep1;~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double dU[~a]; ~%", NC), 
+  printf(fh, "  double dUSq[~a] = {0.0}; ~%", NC), 
+  printf(fh, "  double dUSq_sum[~a] = {0.0}; ~%", NC), 
+  for d : 1 thru vdim do (
+    for i : 1 thru NC do (
+      printf(fh, "  dU[~a] = u_r[~a] - u_s[~a]; ~%", i-1, i-1 + (d-1)*NC, i-1 + (d-1)*NC)
+    ),
+    if (polyOrder = 1 or cdim = 1) then (
+      printf(fh, "  binop_mul_~ad_ser_p~a(dU, dU, dUSq); ~%", cdim, polyOrder)
+    )
+    else (
+      printf(fh, "  binop_mul_~ad_~a_p~a(dU, dU, dUSq); ~%", cdim, basisFun, polyOrder)
+    ),
+    for i : 1 thru NC do (
+      printf(fh, "  dUSq_sum[~a] += dUSq[~a]; ~%", i-1, i-1)
+    ),    
+    for i : 1 thru NC do (
+      printf(fh, "  u_sr[~a] = u_s[~a] + 0.5*deltaTbetap1*dU[~a]; ~%", i-1 + (d-1)*NC, i-1 + (d-1)*NC, i-1)
+    ),
+    printf(fh, " ~%")
+  ),
+  
+  /* Calculate cross thermal velocity square vtsq_sr. */
+  printf(fh, "  const double vdimPhys = ~a; ~%", vdim),
+  printf(fh, "  const double mSum = m_self + m_other;~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double dTemp[~a] = {0.0}; ~%", NC), 
+  for i : 1 thru NC do (
+    printf(fh, "  dTemp[~a] = vdimPhys * (m_r*vtsq_r[~a]-m_s*vtsq_s[~a]); ~%", i-1, i-1, i-1)
+  ),
+
+  printf(fh, "  const double dUSq_fac = (m_r-0.25*deltaTbetap1*mSum/vdimPhys);~%"),
+  for i : 1 thru NC do (
+    printf(fh, "  vtsq_sr[~a] = vtsq_s[~a] + deltaTbetap1/(vdimPhys*mSum)*(dTemp[~a]+dUSq_fac*dUSq[~a]); ~%", i-1, i-1, i-1, i-1)
+  ),
+  printf(fh, " ~%"),
+
+  /* Turn collisions off when vtsq_sr is not positive-definite. */
+  printf(fh, "  // If vtsq_sr is negative at a corner, turn off collisions.~%"),
+  printf(fh, "  bool negative_cross_temp = false; ~%"),
+  nodes : getNodes(basisFun, cdim, 1),
+  vtsq_sr_e : doExpand1(vtsq_sr,bC),
+  vtsq_sr_corners : gcfac(float(fullratsimp( evAtNodes(vtsq_sr_e,nodes,varsC) ))),
+  for i : 1 thru length(nodes) do (
+    printf(fh, "  if (~a < 0.0) negative_cross_temp = true; ~%", vtsq_sr_corners[i])
+  ),
+  printf(fh, "  if (negative_cross_temp) { ~%"),
+  for d : 1 thru vdim do (
+    for j : 1 thru NC do (
+      printf(fh, "    u_sr[~a] = u_s[~a]; ~%", j-1 + (d-1)*NC, j-1 + (d-1)*NC)
+    )    
+  ),
+  for j : 1 thru NC do (
+    printf(fh, "    vtsq_sr[~a] = vtsq_s[~a]; ~%", j-1, j-1)
+  ),
+  printf(fh, "  } ~%"),
+
+  printf(fh, "} ~%")
+)$

@@ -1,0 +1,50 @@
+/*
+  Auxiliary functions for gyrokinetics.
+*/
+load("core/modal-basis.mac")$
+load("util_maxima/utilities.mac")$
+
+getAxisymmetricConfBasis(confBasis) := block(
+  /* Load a basis that only has the variables B depends on (we assume it
+     doesn't depend on y in 3x (axi- or azimuthal- symmetry). */
+  [numBasisC,i],
+  numBasisC : length(confBasis),
+  axisymmBasis : copylist(confBasis),
+  for i : 1 thru numBasisC do (
+    if not freeof(y,confBasis[i]) then ( axisymmBasis[i] : 0 )
+  ),
+  return(axisymmBasis)
+)$
+
+expandVmapFields(varsP) := block(
+  /* Expand velocity map fields. */
+  [pDim,vdim,cdim,jnk,vmapBasis,vmapSqBasis,vmapBnum,vmapSqBnum,
+   vmap_e,vmapSq_e,vmap_prim_e,d,vmap_c,vmapSq_c],
+
+  pDim : length(varsP),
+  vdim : 1,
+  if isInList(mu,varsP) then vdim : 2,
+  cdim : pDim-vdim,
+
+  /* Basis for the velocity space mapping. */
+  [jnk,vmapBasis] : loadBasis("Ser", 1, 1),  [jnk,vmapSqBasis] : loadBasis("Ser", 1, 2),
+  vmapBnum        : length(vmapBasis),       vmapSqBnum        : length(vmapSqBasis),
+
+  vmap_e : [],  vmapSq_e : [],  vmap_prime_e : [],
+  for d : 1 thru vdim do (
+    vmap_c : makelist(vmap[(d-1)*vmapBnum+i-1],i,1,vmapBnum),
+    vmap_e : endcons(doExpand(vmap_c,subst(x=varsP[cdim+d],vmapBasis)), vmap_e),
+
+    vmapSq_c : makelist(vmapSq[(d-1)*vmapSqBnum+i-1],i,1,vmapSqBnum),
+    vmapSq_e : endcons(doExpand(vmapSq_c,subst(x=varsP[cdim+d],vmapSqBasis)), vmapSq_e),
+
+    vmap_prime_e : endcons(vmap_prime[d-1], vmap_prime_e)
+  ),
+
+  /* Make mu'=1 if vdim=1 to avoid other if-statements in other Maxima scripts. */
+  if (vdim=1) then (
+    vmap_prime_e : endcons(1, vmap_prime_e)
+  ),
+
+  return([vmap_e,vmapSq_e,vmap_prime_e])
+)$

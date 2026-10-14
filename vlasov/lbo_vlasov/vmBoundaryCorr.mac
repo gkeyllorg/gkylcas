@@ -1,0 +1,117 @@
+/* Generate kernels to that evaluate f and v*f at the boundaries
+   and integrate it (the integral is global).
+   This is used to correct u and vtSq in the primMoments updater. */
+
+/* IMPORTANT: p=1 code below assumes vMin is negative and vMax positive. */
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+fpprec : 24$
+
+vvarsAll : [vx, vy, vz]$
+
+writeCIncrExprsCollect1s(lhs, rhs, clst) := block([i,e,expr,param],
+  expr : float(expand(rhs)),
+  for i : 1 thru length(expr) do (
+    if expr[i] # 0.0 then (
+      param : cons(expr[i], clst),
+      e : apply(collectterms, param),
+      printf(fh, "    ~a += ~a; ~%", lhs[i-1], e)
+    )
+  )
+)$
+
+calcBoundaryIntegral(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,i,e,modNm,vv,surfVars,dv,fbIn_lower_e,fbIn_upper_e,
+   mBlo_e,mBup_e,fBlo_c,fBup_c,dvSurf,surfExpr,expr,expr_v,param,param_v],
+    
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NP : length(bP),  NC : length(bC),
+        
+  printf(fh, "GKYL_CU_DH void ~a(const int *idx, enum gkyl_vel_edge edge, const double *vBoundary, const double *dxv, const double *fIn, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // edge:      indicator of which velocity grid edge is being considered (VX/VPAR, VY/MU, VZ). ~%"),
+  printf(fh, "  // vBoundary: velocity at the boundary of the velocity grid. ~%"),
+  printf(fh, "  // dxv[~a]:   cell length in each direction. ~%", cdim+vdim),
+  printf(fh, "  // fIn[~a]:   distribution function at lower/upper velocity boundaries. ~%", NP),
+  printf(fh, "  // out:       \int dS of f|^(vmax)_(vmin) [first vdim components] and vf^(vmax)_(vmin) [last component]. ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  double dS = 0.0; ~%"),
+  printf(fh, " ~%"),
+
+  /* Quantity to be integrated over velocity boundary surface.
+     if atLower=true  this is -f_(vmin) or -(vf)_(vmin),
+     if atLower=false this is f^(vmax) or (vf)^(vmax). */
+  for dir : 1 thru vdim do (
+    vv       : vvarsAll[dir],
+    surfVars : delete(vv,varsP),
+    dv       : makelist(dxv[cdim+i], i, 0, vdim-1),
+
+    /* Expand the distribution function in the cells at the
+       lower and upper boundaries of the velocity domain. */
+    fbIn_lower_e : doExpand1(fIn,bP),
+    fbIn_upper_e : doExpand1(fIn,bP),
+    /* if atLower=true this is -f_(vmin) or -(vf)_(vmin),
+       if atLower=false this is f^(vmax) or (vf)^(vmax).
+       integrated over the velocity boundary surface, and
+       projected onto the configuration space basis function. */
+    /* Vlasov Maxwell. */
+    mBlo_e : -subst(vv=-1,fbIn_lower_e),
+    mBup_e :  subst(vv=1,fbIn_upper_e),
+
+    fBlo_c : calcInnerProdList(surfVars,1,bC,mBlo_e),
+    fBup_c : calcInnerProdList(surfVars,1,bC,mBup_e),
+
+    dvSurf   : delete(dxv[cdim+dir-1],dv),
+    surfExpr : float(prod(dvSurf[i],i,1,vdim-1)),
+
+    /* Surface integral above was done in [-1,1] computational space. Surface
+       factor needs to be multiplied to obtain result from physical grid. */
+    printf(fh, "  if (edge == GKYL_~a_LOWER) {~%", supcase(string(vvarsAll[dir]))),
+    printf(fh, " ~%"),
+    printf(fh, "    dS = ~a; ~%", float(1/(2^(vdim-1)))*surfExpr),
+    expr : float(expand(dS*fBlo_c)),
+    for i : 1 thru length(expr) do (
+      if expr[i] # 0.0 then (
+	param : cons(expr[i], [dS]),
+	e : apply(collectterms, param),
+	printf(fh, "    ~a += ~a; ~%", out[(dir-1)*NC+i-1], e)
+      )
+    ),
+    expr_v : float(expand(dS*(vBoundary[dir-1]*fBlo_c))),
+    for i : 1 thru length(expr) do (
+      if expr[i] # 0.0 then (
+	param_v : cons(expr_v[i], [dS, vBoundary]),
+	e : apply(collectterms, param_v),
+	printf(fh, "    ~a += ~a; ~%", out[vdim*NC+i-1], e)
+      )
+    ),
+    printf(fh, " ~%"),
+    printf(fh, "  } else if (edge == GKYL_~a_UPPER) {~%", supcase(string(vvarsAll[dir]))),
+    printf(fh, " ~%"),
+    printf(fh, "    dS = ~a; ~%", float(1/(2^(vdim-1)))*surfExpr),
+    expr : float(expand(dS*fBup_c)),
+    for i : 1 thru length(expr) do (
+      if expr[i] # 0.0 then (
+	param : cons(expr[i], [dS]),
+	e : apply(collectterms, param),
+	printf(fh, "    ~a += ~a; ~%", out[(dir-1)*NC+i-1], e)
+      )
+    ),
+    expr_v : float(expand(dS*(vBoundary[dir+vdim-1]*fBup_c))),
+    for i : 1 thru length(expr) do (
+      if expr[i] # 0.0 then (
+	param_v : cons(expr_v[i], [dS, vBoundary]),
+	e : apply(collectterms, param_v),
+	printf(fh, "    ~a += ~a; ~%", out[vdim*NC+i-1], e)
+      )
+    ),
+    printf(fh, "  }~%"),
+    printf(fh, " ~%")
+  ),
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$

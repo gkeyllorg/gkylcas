@@ -1,0 +1,360 @@
+/* This script generates the kernels for calculating the primitive variables
+   using weak division required to update the PKPM system. Primitive variables include:
+   1. u_i (flow velocity) 
+   2. T_perp_over_m (T_perp/m)
+   3. T_perp_over_m_inv (m/T_perp) 
+   Along with div(p_par b)/rho for use in the pressure force. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+load("scifac")$
+load("core/nodal_operations/nodal_functions.mac")$
+fpprec : 24$
+
+/* Special set of kernels which analytically invert the matrix for 1/rho and (T_perp/m)^-1 
+   for p=1 using the basis_inv operator. Significantly faster than the bin_op operator,
+   but only works for p=1 */
+setPKPMPrimVars_p1(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rho_e, p_perp_e, 
+   nodesCorners, rhoCorners, p_perpCorners, 
+   expr_ux, expr_uy, expr_uz, 
+   expr_pkpm_div_ppar, expr_T_perp_over_m, expr_T_perp_over_m_inv],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
+  printf(fh, "#include <gkyl_basis_~a_~ax_p~a_inv.h> ~%", basisFun, cdim, polyOrder),
+  printf(fh, "GKYL_CU_DH int ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, 
+  const double *vlasov_pkpm_moms, const double *euler_pkpm, const double *pkpm_div_ppar) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // count:            integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // A:                preallocated LHS matrix. ~%"),
+  printf(fh, "  // rhs:              preallocated RHS vector. ~%"),
+  printf(fh, "  // vlasov_pkpm_moms: [rho, p_parallel, p_perp], Moments computed from kinetic equation in pkpm model.~%"),
+  printf(fh, "  // euler_pkpm:       [rho ux, rho uy, rho uz], Fluid input state vector.~%"),
+  printf(fh, "  // pkpm_div_ppar:    div(p_par b) computed from kinetic equation for consistency.~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  // For poly_order = 1, we can analytically invert the matrix and just store the solution ~%"),
+  printf(fh, "  struct gkyl_mat rhs_ux = gkyl_nmat_get(rhs, count); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_uy = gkyl_nmat_get(rhs, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_uz = gkyl_nmat_get(rhs, count+2); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_pkpm_div_ppar = gkyl_nmat_get(rhs, count+3); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_T_perp_over_m = gkyl_nmat_get(rhs, count+4); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_T_perp_over_m_inv = gkyl_nmat_get(rhs, count+5); ~%"),
+
+  printf(fh, "  // Clear rhs for each component of primitive variables being solved for ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_ux, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_uy, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_uz, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_pkpm_div_ppar, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_T_perp_over_m, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs_T_perp_over_m_inv, 0.0); ~%"),
+
+  printf(fh, "  const double *rhoux = &euler_pkpm[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhouy = &euler_pkpm[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouz = &euler_pkpm[~a]; ~%", 2*NC),
+
+  printf(fh, "  const double *rho = &vlasov_pkpm_moms[~a]; ~%", 0*NC),
+  printf(fh, "  const double *p_perp = &vlasov_pkpm_moms[~a]; ~%", 2*NC),
+
+  /* Expand rho, p_par, and p_perp and check for positivity */
+  rho_e : doExpand1(rho, bC),
+  p_par_e : doExpand1(p_par, bC),
+  p_perp_e : doExpand1(p_perp, bC),
+
+  printf(fh, "  int cell_avg = 0;~%"),
+  /* For p = 1 rho, p_perp guaranteed to be positive if they're positive 
+     at the corners. For p = 2, we use the positivity control points (-1, 0, 1) */
+  nodesCorners : getNodes(basisFun, cdim, polyOrder),
+  printf(fh, "  // Check if rho, p_par, or p_perp < 0 at control points. ~%"),
+  rhoCorners : expand(float(evAtNodes(rho_e,nodesCorners,varsC))),
+  p_perpCorners : expand(float(evAtNodes(p_perp_e,nodesCorners,varsC))),
+  for i : 1 thru length(nodesCorners) do (
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", rhoCorners[i]),
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", p_perpCorners[i])
+  ),
+
+  /* Arrays for storing inverse of rho and p_perp */
+  printf(fh, "  double rho_inv[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double p_perp_inv[~a] = {0.0}; ~%", NC),
+  printf(fh, "  if (cell_avg) { ~%"),
+  printf(fh, "  // If rho or p_perp < 0 at control points, only use cell average. ~%"),
+  unit : calcInnerProdList(varsC, 1, bC, 1.0),
+  printf(fh, "  rho_inv[0] = ~a/rho[0]; ~%", float(expand(unit[1]*unit[1]))),
+  printf(fh, "  p_perp_inv[0] = ~a/p_perp[0]; ~%", float(expand(unit[1]*unit[1]))),
+  printf(fh, "  } else { ~%"),
+  printf(fh, "  ~a_~ax_p~a_inv(rho, rho_inv); ~%", basisFun, cdim, polyOrder),
+  printf(fh, "  ~a_~ax_p~a_inv(p_perp, p_perp_inv); ~%", basisFun, cdim, polyOrder),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  // Calculate expansions of primitive variables, which can be calculated free of aliasing errors. ~%"),
+  printf(fh, "  double ux[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double uy[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double uz[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double p_force[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double T_perp_over_m[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double T_perp_over_m_inv[~a] = {0.0}; ~%", NC),
+  printf(fh, " ~%"),
+
+  printf(fh, "  binop_mul_~ad_~a_p~a(rho_inv, rhoux, ux); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rho_inv, rhouy, uy); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rho_inv, rhouz, uz); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rho_inv, pkpm_div_ppar, p_force); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(rho_inv, p_perp, T_perp_over_m); ~%", cdim, basisFun, polyOrder),
+  printf(fh, "  binop_mul_~ad_~a_p~a(p_perp_inv, rho, T_perp_over_m_inv); ~%", cdim, basisFun, polyOrder),
+  printf(fh, " ~%"),
+
+  printf(fh, "  if (cell_avg) { ~%"),
+  /* Zero out higher order components if using only cell averages */
+  expr_ux : float(expand(append([ux[0]],makelist(0.0,i,1,NC-1)))),
+  expr_uy : float(expand(append([uy[0]],makelist(0.0,i,1,NC-1)))),
+  expr_uz : float(expand(append([uz[0]],makelist(0.0,i,1,NC-1)))),
+  expr_pkpm_div_ppar : float(expand(append([p_force[0]],makelist(0.0,i,1,NC-1)))),
+  expr_T_perp_over_m : float(expand(append([T_perp_over_m[0]],makelist(0.0,i,1,NC-1)))),
+  expr_T_perp_over_m_inv : float(expand(append([T_perp_over_m_inv[0]],makelist(0.0,i,1,NC-1)))),
+
+  for i : 1 thru length(expr_ux) do (
+    printf(fh,"    gkyl_mat_set(&rhs_ux,~a,0,~a); ~%", i-1, expr_ux[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_uy,~a,0,~a); ~%", i-1, expr_uy[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_uz,~a,0,~a); ~%", i-1, expr_uz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_pkpm_div_ppar,~a,0,~a); ~%", i-1, expr_pkpm_div_ppar[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_T_perp_over_m,~a,0,~a); ~%", i-1, expr_T_perp_over_m[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_T_perp_over_m_inv,~a,0,~a); ~%", i-1, expr_T_perp_over_m_inv[i])
+  ),
+  printf(fh, "  } else { ~%"),
+
+  expr_ux : float(expand(makelist(ux[i],i,0,NC-1))),
+  expr_uy : float(expand(makelist(uy[i],i,0,NC-1))),
+  expr_uz : float(expand(makelist(uz[i],i,0,NC-1))),
+  expr_pkpm_div_ppar : float(expand(makelist(p_force[i],i,0,NC-1))),
+  expr_T_perp_over_m : float(expand(makelist(T_perp_over_m[i],i,0,NC-1))),
+  expr_T_perp_over_m_inv : float(expand(makelist(T_perp_over_m_inv[i],i,0,NC-1))),
+
+  for i : 1 thru length(expr_ux) do (
+    printf(fh,"    gkyl_mat_set(&rhs_ux,~a,0,~a); ~%", i-1, expr_ux[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_uy,~a,0,~a); ~%", i-1, expr_uy[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_uz,~a,0,~a); ~%", i-1, expr_uz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_pkpm_div_ppar,~a,0,~a); ~%", i-1, expr_pkpm_div_ppar[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_T_perp_over_m,~a,0,~a); ~%", i-1, expr_T_perp_over_m[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_T_perp_over_m_inv,~a,0,~a); ~%", i-1, expr_T_perp_over_m_inv[i])
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  return cell_avg;~%"),
+  printf(fh, "} ~%")
+)$
+
+setPKPMPrimVars(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rho_e, p_par_e, p_perp_e, 
+   nodesCorners, rhoCorners, p_parCorners, p_perpCorners, 
+   rho_temp_e, p_perp_temp_e, 
+   expr_ux, expr_uy, expr_uz, expr_Txx, expr_Tyy, expr_Tzz, 
+   expr_pkpm_div_ppar, expr_T_perp_over_m, expr_T_perp_over_m_inv, 
+   ue, un, eq_rho, E_rho, eq_p_perp, E_p_perp],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH int ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, 
+  const double *vlasov_pkpm_moms, const double *euler_pkpm, const double *pkpm_div_ppar) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // count:            integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // A:                preallocated LHS matrix. ~%"),
+  printf(fh, "  // rhs:              preallocated RHS vector. ~%"),
+  printf(fh, "  // vlasov_pkpm_moms: [rho, p_parallel, p_perp], Moments computed from kinetic equation in pkpm model.~%"),
+  printf(fh, "  // euler_pkpm:       [rho ux, rho uy, rho uz], Fluid input state vector.~%"),
+  printf(fh, "  // pkpm_div_ppar:    div(p_par b) computed from kinetic equation for consistency.~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  struct gkyl_mat A_ux = gkyl_nmat_get(A, count); ~%"),
+  printf(fh, "  struct gkyl_mat A_uy = gkyl_nmat_get(A, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat A_uz = gkyl_nmat_get(A, count+2); ~%"),
+  printf(fh, "  struct gkyl_mat A_pkpm_div_ppar = gkyl_nmat_get(A, count+3); ~%"),
+  printf(fh, "  struct gkyl_mat A_T_perp_over_m = gkyl_nmat_get(A, count+4); ~%"),
+  printf(fh, "  struct gkyl_mat A_T_perp_over_m_inv = gkyl_nmat_get(A, count+5); ~%"),
+
+  printf(fh, "  struct gkyl_mat rhs_ux = gkyl_nmat_get(rhs, count); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_uy = gkyl_nmat_get(rhs, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_uz = gkyl_nmat_get(rhs, count+2); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_pkpm_div_ppar = gkyl_nmat_get(rhs, count+3); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_T_perp_over_m = gkyl_nmat_get(rhs, count+4); ~%"),
+  printf(fh, "  struct gkyl_mat rhs_T_perp_over_m_inv = gkyl_nmat_get(rhs, count+5); ~%"),
+
+  printf(fh, "  // Clear matrix and rhs for each component of primitive variables being solved for ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_ux, 0.0); gkyl_mat_clear(&rhs_ux, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_uy, 0.0); gkyl_mat_clear(&rhs_uy, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_uz, 0.0); gkyl_mat_clear(&rhs_uz, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_pkpm_div_ppar, 0.0); gkyl_mat_clear(&rhs_pkpm_div_ppar, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_T_perp_over_m, 0.0); gkyl_mat_clear(&rhs_T_perp_over_m, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&A_T_perp_over_m_inv, 0.0); gkyl_mat_clear(&rhs_T_perp_over_m_inv, 0.0); ~%"),
+
+  printf(fh, "  const double *rhoux = &euler_pkpm[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhouy = &euler_pkpm[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouz = &euler_pkpm[~a]; ~%", 2*NC),
+
+  printf(fh, "  const double *rho = &vlasov_pkpm_moms[~a]; ~%", 0*NC),
+  printf(fh, "  const double *p_perp = &vlasov_pkpm_moms[~a]; ~%", 2*NC),
+
+  /* Expand rho and p_perp and check for positivity */
+  rho_e : doExpand1(rho, bC),
+  p_perp_e : doExpand1(p_perp, bC),
+
+  printf(fh, "  int cell_avg = 0;~%"),
+  /* For p = 1 rho and p_perp guaranteed to be positive if they're positive 
+     at the corners. For p = 2, we use the positivity control points (-1, 0, 1) */
+  nodesCorners : getNodes(basisFun, cdim, polyOrder),
+  printf(fh, "  // Check if rho, p_par, or p_perp < 0 at control points. ~%"),
+  rhoCorners : expand(float(evAtNodes(rho_e,nodesCorners,varsC))),
+  p_perpCorners : expand(float(evAtNodes(p_perp_e,nodesCorners,varsC))),
+  for i : 1 thru length(nodesCorners) do (
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", rhoCorners[i]),
+    printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", p_perpCorners[i])
+  ),
+
+  /* Temporary arrays for use if rho, p_par, or p_perp are negative */
+  printf(fh, "  double rho_temp[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double p_perp_temp[~a] = {0.0}; ~%", NC),
+  printf(fh, "  if (cell_avg) { ~%"),
+  /* Use only the cell average of rho, p_parallel, p_perp. */
+  printf(fh, "    rho_temp[0] = rho[0]; ~%"),
+  printf(fh, "    p_perp_temp[0] = p_perp[0]; ~%"),  
+  printf(fh, "  } else { ~%"),
+  for i : 1 thru NC do (
+    printf(fh, "    rho_temp[~a] = rho[~a]; ~%", i-1, i-1),
+    printf(fh, "    p_perp_temp[~a] = p_perp[~a]; ~%", i-1, i-1)
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+
+  rho_temp_e : doExpand1(rho_temp, bC),
+  p_perp_temp_e : doExpand1(p_perp_temp, bC),
+
+  printf(fh, "  if (cell_avg) { ~%"),
+  /* Zero out higher order components if using only cell averages */
+  expr_ux : float(expand(append([rhoux[0]],makelist(0.0,i,1,NC-1)))),
+  expr_uy : float(expand(append([rhouy[0]],makelist(0.0,i,1,NC-1)))),
+  expr_uz : float(expand(append([rhouz[0]],makelist(0.0,i,1,NC-1)))),
+  expr_pkpm_div_ppar : float(expand(append([pkpm_div_ppar[0]],makelist(0.0,i,1,NC-1)))),
+  expr_T_perp_over_m : float(expand(append([p_perp[0]],makelist(0.0,i,1,NC-1)))),
+  expr_T_perp_over_m_inv : float(expand(append([rho[0]],makelist(0.0,i,1,NC-1)))),
+
+  for i : 1 thru length(expr_ux) do (
+    printf(fh,"    gkyl_mat_set(&rhs_ux,~a,0,~a); ~%", i-1, expr_ux[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_uy,~a,0,~a); ~%", i-1, expr_uy[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_uz,~a,0,~a); ~%", i-1, expr_uz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_pkpm_div_ppar,~a,0,~a); ~%", i-1, expr_pkpm_div_ppar[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_T_perp_over_m,~a,0,~a); ~%", i-1, expr_T_perp_over_m[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_T_perp_over_m_inv,~a,0,~a); ~%", i-1, expr_T_perp_over_m_inv[i])
+  ),
+  printf(fh, "  } else { ~%"),
+
+  expr_ux : float(expand(makelist(rhoux[i],i,0,NC-1))),
+  expr_uy : float(expand(makelist(rhouy[i],i,0,NC-1))),
+  expr_uz : float(expand(makelist(rhouz[i],i,0,NC-1))),
+  expr_pkpm_div_ppar : float(expand(makelist(pkpm_div_ppar[i],i,0,NC-1))),
+  expr_T_perp_over_m : float(expand(makelist(p_perp[i],i,0,NC-1))),
+  expr_T_perp_over_m_inv : float(expand(makelist(rho[i],i,0,NC-1))),
+
+  for i : 1 thru length(expr_ux) do (
+    printf(fh,"    gkyl_mat_set(&rhs_ux,~a,0,~a); ~%", i-1, expr_ux[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_uy,~a,0,~a); ~%", i-1, expr_uy[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_uz,~a,0,~a); ~%", i-1, expr_uz[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_pkpm_div_ppar,~a,0,~a); ~%", i-1, expr_pkpm_div_ppar[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_T_perp_over_m,~a,0,~a); ~%", i-1, expr_T_perp_over_m[i]),
+    printf(fh,"    gkyl_mat_set(&rhs_T_perp_over_m_inv,~a,0,~a); ~%", i-1, expr_T_perp_over_m_inv[i])
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+
+  /* Generate matrix of unknown coefficients */
+  ue : doExpand1(u,bC),
+  un : makelist(u[i],i,0,NC-1),
+  eq_rho : calcInnerProdList(varsC,ue,bC,rho_temp_e),
+  E_rho : fullratsimp(coefmatrix(eq_rho,un)),
+  eq_p_perp : calcInnerProdList(varsC,ue,bC,p_perp_temp_e),
+  E_p_perp : fullratsimp(coefmatrix(eq_p_perp,un)),
+
+  /* declare temp_rho and temp_p_perp since matrix entries in A are the same for all operations */
+  printf(fh, "  double temp_rho = 0.0; ~%"),
+  printf(fh, "  double temp_p_perp = 0.0; ~%"),
+  /* Matrix is dense so just do a simple write routine */
+  for i : 1 thru NC do (
+    for j : 1 thru NC do (
+      printf(fh,"  temp_rho = ~a; ~%", float(expand(E_rho[i,j]))),
+      printf(fh,"  gkyl_mat_set(&A_ux,~a,~a,~a); ~%", i-1, j-1, temp_rho),
+      printf(fh,"  gkyl_mat_set(&A_uy,~a,~a,~a); ~%", i-1, j-1, temp_rho),
+      printf(fh,"  gkyl_mat_set(&A_uz,~a,~a,~a); ~%", i-1, j-1, temp_rho),
+      printf(fh,"  gkyl_mat_set(&A_pkpm_div_ppar,~a,~a,~a); ~%", i-1, j-1, temp_rho),
+      printf(fh,"  gkyl_mat_set(&A_T_perp_over_m,~a,~a,~a); ~%~%", i-1, j-1, temp_rho),
+      printf(fh,"  temp_p_perp = ~a; ~%", float(expand(E_p_perp[i,j]))),
+      printf(fh,"  gkyl_mat_set(&A_T_perp_over_m_inv,~a,~a,~a); ~%~%", i-1, j-1, temp_p_perp)
+    )
+  ),
+  printf(fh, "  return cell_avg;~%"),
+  printf(fh, "} ~%")
+)$
+
+copyPKPMPrimVars(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC],
+
+  kill(varsC, basisC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  NC  : length(bC),
+
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  /* Function declaration with input/output variables. */
+  printf(fh, "GKYL_CU_DH void ~a(int count, struct gkyl_nmat *x, double* GKYL_RESTRICT prim) ~%{ ~%", funcNm),
+  printf(fh, "  // count: integer to indicate which matrix being fetched. ~%"),
+  printf(fh, "  // x:     Input solution vector. ~%"),
+  printf(fh, "  // prim:  [ux, uy, uz, 1/rho div(p_par b), T_perp/m, m/T_perp].~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  struct gkyl_mat x_ux = gkyl_nmat_get(x, count); ~%"),
+  printf(fh, "  struct gkyl_mat x_uy = gkyl_nmat_get(x, count+1); ~%"),
+  printf(fh, "  struct gkyl_mat x_uz = gkyl_nmat_get(x, count+2); ~%"),
+  printf(fh, "  struct gkyl_mat x_pkpm_div_ppar = gkyl_nmat_get(x, count+3); ~%"),
+  printf(fh, "  struct gkyl_mat x_T_perp_over_m = gkyl_nmat_get(x, count+4); ~%"),
+  printf(fh, "  struct gkyl_mat x_T_perp_over_m_inv = gkyl_nmat_get(x, count+5); ~%"),
+
+  printf(fh, "  double *ux = &prim[~a]; ~%", 0*NC),
+  printf(fh, "  double *uy = &prim[~a]; ~%", 1*NC),
+  printf(fh, "  double *uz = &prim[~a]; ~%", 2*NC),
+  /* p_force = 1/rho div(p_par b) - T_perp/m*div(b)
+     We have only computed 1/rho div(p_par b) at this point */
+  printf(fh, "  double *p_force = &prim[~a]; ~%", 3*NC),
+  printf(fh, "  double *T_perp_over_m = &prim[~a]; ~%", 4*NC),
+  printf(fh, "  double *T_perp_over_m_inv = &prim[~a]; ~%", 5*NC),
+  printf(fh, "~%"),
+
+  for i : 1 thru NC do (
+    printf(fh,"  ux[~a] = gkyl_mat_get(&x_ux,~a,0); ~%", i-1, i-1),
+    printf(fh,"  uy[~a] = gkyl_mat_get(&x_uy,~a,0); ~%", i-1, i-1),
+    printf(fh,"  uz[~a] = gkyl_mat_get(&x_uz,~a,0); ~%", i-1, i-1),
+    printf(fh,"  p_force[~a] = gkyl_mat_get(&x_pkpm_div_ppar,~a,0); ~%", i-1, i-1),
+    printf(fh,"  T_perp_over_m[~a] = gkyl_mat_get(&x_T_perp_over_m,~a,0); ~%", i-1, i-1),
+    printf(fh,"  T_perp_over_m_inv[~a] = gkyl_mat_get(&x_T_perp_over_m_inv,~a,0); ~%", i-1, i-1)
+  ),
+
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$

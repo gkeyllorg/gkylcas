@@ -1,0 +1,43 @@
+load("core/basis-precalc/basisSer2x.lisp")$
+load("core/modal-basis.mac")$
+
+bc3 : basisC[3]$
+nodes : [ [-1,-1], [-1,1], [1,-1], [1,1] ]$
+
+getExpansion(hval,hxval,hyval) := block([gh,eqnList,sol,__g__],
+  gh : doExpand(__g__,bc3),
+  eqnList : append(
+    makelist(subst([x=nodes[i][1],y=nodes[i][2]], gh=hval[i]), i,1,4),
+    makelist(subst([x=nodes[i][1],y=nodes[i][2]], diff(gh,x)=hxval[i]),i,1,4),
+    makelist(subst([x=nodes[i][1],y=nodes[i][2]], diff(gh,y)=hyval[i]),i,1,4)
+    ),
+  sol : linsolve(eqnList, makelist(__g__[i],i,1,12)),
+  return (subst(sol, gh))
+  )$
+
+/* Some tests */
+
+/* Left cell */
+fval : [ f[1], f[2], f[3], f[4] ]$
+fxval : [ fx[1], fx[2], fx[3], fx[4] ]$
+fyval : [ fy[1], fy[2], fy[3], fy[4] ]$
+
+/* Right cell (note shared values and slopes) */
+gval : [ f[3], f[4], g[3], g[4] ]$
+gxval : [ fx[3], fx[4], gx[3], gx[4] ]$
+gyval : [ fy[3], fy[4], gy[3], gy[4] ]$
+
+leftSol : getExpansion(fval,fxval,fyval)$
+rightSol : getExpansion(gval,gxval,gyval)$
+
+leftSolRightEdge : subst([x=1],leftSol)$
+rightSolLeftEdge : subst([x=-1],rightSol)$
+isZero : expand(leftSolRightEdge-rightSolLeftEdge)$
+
+leftSolRightEdgeX : subst([x=1],diff(leftSol,x))$
+rightSolLeftEdgeX : subst([x=-1],diff(rightSol,x))$
+isZeroX : expand(leftSolRightEdgeX-rightSolLeftEdgeX)$
+
+leftSolRightEdgeY : subst([x=1],diff(leftSol,y))$
+rightSolLeftEdgeY : subst([x=-1],diff(rightSol,y))$
+isZeroY : expand(leftSolRightEdgeY-rightSolLeftEdgeY)$

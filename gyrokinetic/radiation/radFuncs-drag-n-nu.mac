@@ -1,0 +1,117 @@
+/*
+   Create kernels for the density weighted surface and volume expansions of the radiation drag. 
+   Takes the input surface and volume expansions of the radiation drag, which at most are a function
+   of nu = nu(x,z,vpar,mu) and accumulates the weak multiplication of n_I(x,y,z)*nu(x,z,vpar,mu) to
+   obtain the final phase space field.
+*/
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+load("scifac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("util_maxima/utilities.mac")$
+fpprec : 24$
+
+buildGKRadNiNuKernel(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,varsP,bC,bP,pDim,varsV,cid,vid,varsSub,
+   surfVar,surfIntVars,surf_vvars,volNodes,surfNodes,bSurf,basisVolNodal,basisSurfNodal,
+   numC,numVolNodes,numSurfNodes,
+   vars_bmag,bC_bmag,bmag_full_e,bmag_c,bmag_e,bmag_surf_n,bmag_vol_n,
+   basis_vpar,vpar_c,vpar_e,vpar_vol_n,vpar_surf,vpar_surf_n,
+   basis_mu,mu_c,mu_e,mu_vol_n,mu_surf,mu_surf_n,
+   vnu_surf_nodal_e,vnu_surf_ModProj_e,vnu_nodal_e,vnu_ModProj_e,
+   vsqnu_surf_nodal_e,vsqnu_surf_ModProj_e,vsqnu_nodal_e,vsqnu_ModProj_e],
+
+  kill(varsC,varsP,bC,bP),
+
+  if (cdim = 3) then (
+    [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, 2, vdim, polyOrder),
+    pDim : 2+vdim
+  )
+  else (
+    [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+    pDim : cdim+vdim
+  ),
+
+  /* make two different surface expansions, 
+     one for the vparallel surface expansions and one for mu surface expansions */
+  surfVarVpar : vpar,         
+  surfIntVarsVpar : delete(surfVarVpar,varsP),
+  surfVarMu : mu,         
+  surfIntVarsMu : delete(surfVarMu,varsP),
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    bSurfVpar : basisFromVars("gkhyb",surfIntVarsVpar,polyOrder),
+    bSurfMu : basisFromVars("gkhyb",surfIntVarsMu,polyOrder)
+  ) else (
+    bSurfVpar : basisFromVars(basisFun,surfIntVarsVpar,polyOrder),
+    bSurfMu : basisFromVars(basisFun,surfIntVarsMu,polyOrder)
+  ),
+
+  print("Working on ", funcNm),
+  printf(fh, "GKYL_CU_DH void ~a(const double *vnu_surf, const double *vnu,
+    const double *vsqnu_surf, const double *vsqnu, const double *nI, 
+    double* GKYL_RESTRICT nvnu_surf, double* GKYL_RESTRICT nvnu, 
+    double* GKYL_RESTRICT nvsqnu_surf, double* GKYL_RESTRICT nvsqnu) ~%{ ~%", funcNm),
+  printf(fh, "  // vnu_surf/vnu: Input radiation drag in vparallel direction, surface and volume expansions.~%"),
+  printf(fh, "  // vsqnu_surf/vsqnu: Input radiation drag in mu direction, surface and volume expansions.~%"),
+  printf(fh, "  // nI: Input ion density.~%"),
+  printf(fh, "  // nvnu_surf/nvnu: Accumulated output density-weighted radiation drag in vparallel direction, surface and volume expansions.~%"),
+  printf(fh, "  // nvsqnu_surf/nvsqnu: Accumulated output density-weighted radiation drag in mu direction, surface and volume expansions.~%"),
+  printf(fh, "~%"),
+
+  /* Expand input radiation drag */
+  vnu_surf_e : doExpand1(vnu_surf, bSurfVpar),
+  vnu_e : doExpand1(vnu, bP),
+  vsqnu_surf_e : doExpand1(vsqnu_surf, bSurfMu),
+  vsqnu_e : doExpand1(vsqnu, bP),
+
+  if (cdim = 3) then (
+    /* create a temporary gyrokinetic basis if cdim=3 to get integration variables 
+       and full configuration space basis for density expansion nI = nI(x,y,z) */
+    [varsC_nI,bC_nI,varsInt,bP_5D,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+    /* make two additional different surface expansions including the y coordinate, 
+       one for the vparallel surface expansions and one for mu surface expansions */       
+    surfIntVarsYVpar : delete(surfVarVpar,varsInt),   
+    surfIntVarsYMu : delete(surfVarMu,varsInt),
+    if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+      bSurfYVpar : basisFromVars("gkhyb",surfIntVarsYVpar,polyOrder),
+      bSurfYMu : basisFromVars("gkhyb",surfIntVarsYMu,polyOrder)
+    ) else (
+      bSurfYVpar : basisFromVars(basisFun,surfIntVarsYVpar,polyOrder),
+      bSurfYMu : basisFromVars(basisFun,surfIntVarsYMu,polyOrder)
+    ),
+    nI_e : doExpand1(nI, bC_nI),
+    
+    nvnu_surf_c : calcInnerProdList(surfIntVarsYVpar, 1, bSurfYVpar, nI_e*vnu_surf_e),
+    nvnu_c : calcInnerProdList(varsInt, 1, bP_5D, nI_e*vnu_e),
+    nvsqnu_surf_c : calcInnerProdList(surfIntVarsYMu, 1, bSurfYMu, nI_e*vsqnu_surf_e),
+    nvsqnu_c : calcInnerProdList(varsInt, 1, bP_5D, nI_e*vsqnu_e)
+  )
+  else (
+    nI_e : doExpand1(nI, bC),
+    nvnu_surf_c : calcInnerProdList(surfIntVarsVpar, 1, bSurfVpar, nI_e*vnu_surf_e),
+    nvnu_c : calcInnerProdList(varsP, 1, bP, nI_e*vnu_e),
+    nvsqnu_surf_c : calcInnerProdList(surfIntVarsMu, 1, bSurfMu, nI_e*vsqnu_surf_e),
+    nvsqnu_c : calcInnerProdList(varsP, 1, bP, nI_e*vsqnu_e)
+  ),
+
+  writeCIncrExprsNoExpand1(nvnu_surf, gcfac(float(expand(nvnu_surf_c)))),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  writeCIncrExprsNoExpand1(nvnu, gcfac(float(expand(nvnu_c)))),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  writeCIncrExprsNoExpand1(nvsqnu_surf, gcfac(float(expand(nvsqnu_surf_c)))),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  writeCIncrExprsNoExpand1(nvsqnu, gcfac(float(expand(nvsqnu_c)))),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "} ~%")
+)$

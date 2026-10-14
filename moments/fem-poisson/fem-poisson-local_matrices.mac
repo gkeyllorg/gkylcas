@@ -1,0 +1,87 @@
+/*
+   Compute the local mass matrix of the nodal basis,
+   the mass matrix times the modal-to-nodal matrix,
+   and the nodal-to-modal matrix.
+*/
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("moments/fem/fem-util.mac");
+fpprec : 24$
+
+generate_fem_poisson_stiff(fh, funcNm, dim, basisFun, pMax) := block(
+  [polyOrder, massM, i, j],
+
+  for polyOrder : 1 thru pMax do (
+    printf(fh, "GKYL_CU_DH void ~a_p~a(const double *dx, struct gkyl_mat *matout) ~%{ ~%", funcNm, polyOrder),
+    printf(fh, "  // dx: cell length in each direction.~%"),
+    printf(fh, "  // matout: local stiffness matrix.~%"),
+    printf(fh, "~%"),
+
+    printf(fh, "  double rdx2Sq[~a];~%", dim),
+    for d : 1 thru dim do (
+      printf(fh, "  rdx2Sq[~a] = 4.0/(dx[~a]*dx[~a]);~%", d-1, d-1, d-1)
+    ),
+    printf(fh, "~%"),
+    dxFac : makelist(rdx2Sq[d-1],d,1,dim),
+
+    out   : calcStiffUnweighted(dim, basisFun, polyOrder, dxFac),
+
+    for i : 1 thru length(out) do (
+      for j : 1 thru length(out) do (
+        printf(fh,"  gkyl_mat_set(matout,~a,~a,~a); ~%", i-1, j-1, float(out[i][j]))
+      )
+    ),
+
+    printf(fh, "}~%"),
+    printf(fh, "~%")
+  )
+  
+)$
+
+generate_fem_poisson_mass_times_modtonod(fh, funcNm, dim, basisFun, pMax) := block(
+  [polyOrder, massM, i, j, mod2nod, out],
+
+  for polyOrder : 1 thru pMax do (
+    printf(fh, "GKYL_CU_DH void ~a_p~a(struct gkyl_mat *matout) ~%{ ~%", funcNm, polyOrder),
+    printf(fh, "  // matout: mass matrix times modal to nodal matrix.~%"),
+    printf(fh, "~%"),
+
+    massM : calcMassUnweighted(dim, basisFun, polyOrder),
+    mod2nod : calcModToNod(basisFun, dim, polyOrder),
+
+    out : massM . mod2nod,
+
+    for i : 1 thru length(out) do (
+      for j : 1 thru length(out) do (
+        printf(fh,"  gkyl_mat_set(matout,~a,~a,~a); ~%", i-1, j-1, float(out[i][j]))
+      )
+    ),
+
+    printf(fh, "}~%"),
+    printf(fh, "~%")
+  )
+  
+)$
+
+generate_fem_poisson_nodtomod(fh, funcNm, dim, basisFun, pMax) := block(
+  [polyOrder, massM, i, j, mod2nod, out],
+
+  for polyOrder : 1 thru pMax do (
+    printf(fh, "GKYL_CU_DH void ~a_p~a(struct gkyl_mat *matout) ~%{ ~%", funcNm, polyOrder),
+    printf(fh, "  // matout: nodal to modal matrix.~%"),
+    printf(fh, "~%"),
+
+    out : calcNodToMod(basisFun, dim, polyOrder),
+
+    for i : 1 thru length(out) do (
+      for j : 1 thru length(out) do (
+        printf(fh,"  gkyl_mat_set(matout,~a,~a,~a); ~%", i-1, j-1, float(out[i][j]))
+      )
+    ),
+
+    printf(fh, "}~%"),
+    printf(fh, "~%")
+  )
+  
+)$

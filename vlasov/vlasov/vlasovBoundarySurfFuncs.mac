@@ -1,0 +1,270 @@
+/* Functions which compute the components of the **boundary** surface update of the Vlasov 
+   equation using a discontinuous Galerkin (DG) method. Advection in
+   configuration space is computed as velocity gradients of a Hamiltonian. 
+   In the case when the Hamiltonian that only depends on velocity space,
+   **we assume the origin (v=0) is at a velocity-space cell edge** and thus
+   we can just check the sign of the cell center value for the upwind 
+   direction. In the case when the Hamiltonian depends on phase space
+   we utilize a standard Lax-Friedrichs flux for continuous characteristics: 
+   G = alpha/2*(f^+ + f^-) - |alpha|/2*(f^+ - f^-)
+   evaluated at nodes and converted back to a modal expansion. Note that 
+   we do not make any assumptions on the order of the phase space expansion
+   and thus to evaluate G, we must utilize enough Gauss-Legendre quadrature points
+   to integrate a 3*p polynomial (cubic for p=1, sixth order for p=2, ninth order for p=3). 
+   We thus must use 2, 4, and 5 Gauss-Legendre points respectively. 
+
+   We do similar evaluations for the **boundary** velocity-space update, but for the velocity-space
+   update, we pre-compute the modal expansion of the flux to allow for ease of 
+   accumulation of different forces (Hamiltonian, electromagnetic, scalar potentials, etc.). 
+   Thus, the velocity-space update simply evaluates the final surface integral with the
+   computed modal expansion of the flux at that interface. 
+*/
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("vlasov/vlasov/vlasov-basis.mac");
+load("vlasov/vlasov/surf-eval-tables.mac");
+load(stringproc)$
+fpprec : 24$
+
+clabels : ["x","y","z"]$
+dx11 : [dx10, dx11, dx12]$
+dv11 : [dv10, dv11, dv12]$
+/* Symbols for the constant per-direction inverse Jacobian of the C^0 linear
+   map (Serendipity); kernels read the first entry of each direction's
+   jacob_vel block. */
+jacobConstInv_vi : [jacob_vx_inv, jacob_vy_inv, jacob_vz_inv]$
+/* Constant per-direction inverse configuration-space Jacobian of the C^0 linear
+   position map, for the skin and edge (ghost) cells: at a domain boundary the
+   skin and edge are different conf cells, each divided by its own
+   normal-direction conf Jacobian. (After ghost sync the edge holds the
+   neighbor's interior value at inter-rank boundaries, or the skin copy at
+   physical boundaries.) */
+jacobConstInv_ci_edge : [jacob_cx_edge_inv, jacob_cy_edge_inv, jacob_cz_edge_inv]$
+jacobConstInv_ci_skin : [jacob_cx_skin_inv, jacob_cy_skin_inv, jacob_cz_skin_inv]$
+cidx(cdim) := makelist(i,i,0,cdim-1)$
+vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+
+/* Velocity-space Hamiltonian surface streaming */
+calcHamilVelBoundarySurfStream(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, hamil_rep, rep) := block(
+  [varsC,bC,varsV,bV,varsP,bP,
+   bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi,
+   cid,vid,hamil,cv,vv,surfVars,bSurf,NSurf,
+   fedge_e,fskin_e,incr],
+
+  [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
+  [bV_vi,NV_1D,jacobNodes,numJacobNodes,jacobNodes_vi,basisNodal_vi] = loadVelJacobianBasis(vlasovPVel(basisFun, polyOrder)), 
+
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const double *jacob_pos_edge, const double *jacob_pos_skin, const double *jacob_vel,
+  const double *poisson_tensor_conf, const double *hamil,
+  const int edge, const double *fedge, const double *fskin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+
+  cid : cidx(cdim),
+  vid : vidx(cdim,vdim),
+  printf(fh, "  double dx1~a = 2.0/dxv[~a]; ~%", dir-1, cid[dir]),
+  printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
+  printf(fh, "  double wv = w[~a]; ~%", vid[dir], vid[dir]),
+  printf(fh, "~%"),
+  /* Velocity-space Hamiltonian. The sparse (separable) representation keeps
+     the dense storage layout but only references the constant and
+     single-velocity-variable coefficients (cross terms are exactly zero). */
+  hamil : hamilExpand(hamil, bV, varsV, hamil_rep = "vel_sparse"),
+
+  /* Surface contribution is defined as integral(phi^- Ghat) over the surface. */
+  /* cv = variable in direction of surface update. */
+  cv : varsP[dir],
+  vv : varsV[dir],
+
+  /* Surface variables to integrate over. */
+  surfVars : delete(cv,varsP),
+  bSurf : basisFromVars(vlasovBtype(basisFun, polyOrder),surfVars,polyOrder),
+  NSurf : length(bSurf), 
+
+  /* Create expansions of f_left, f_center, and f_right on volume basis. */
+  fedge_e : doExpand1(fedge, bP),
+  fskin_e : doExpand1(fskin, bP),
+  printf(fh, "  double fUpwind[~a]; ~%", NSurf),
+  printf(fh, "  double Ghat[~a]; ~%", NSurf),
+  printf(fh, "~%"),
+
+  /* Function that computes the surface increment 
+     (without a 2/dx factor or 2/dv factor from the Hamiltonian derivative)
+     with upwinding based on the grid velocity. */
+  evSurfIncr(fL_e, fR_e, evAt, jacInvL, jacInvR) := block(
+    [jacob_vi,basisJacobNodal,f_l_v,f_l_v_ne,f_r_v,f_r_v_ne,
+     clst,fUpwind_c,fUpwind_e,Ghat_c,Ghat_e,incrOut],
+    if (rep = "cubic") then (
+      printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", clabels[dir], numJacobNodes*(dir-1)), 
+      /* Fetch Jacobian and nodal basis in surface direction */
+      jacob_vi : jacobNodes_vi[dir], 
+      basisJacobNodal : basisNodal_vi[dir], 
+
+      /* Project the distribution function in each cell onto the nodal basis 
+        to divide out the Jacobian in direction dir. We will only write to a 
+        temporary variables the evaluations we need based on the sign of the cell center. */
+      f_l_v : evAtNodes(fL_e,jacobNodes,[varsV[dir]]), 
+      f_l_v_ne : 0, 
+      for i : 1 thru numJacobNodes do (
+        f_l_v_ne : f_l_v_ne + f_l_v[i]/jacob_vi[i]*basisJacobNodal[i]
+      ), 
+      f_r_v : evAtNodes(fR_e,jacobNodes,[varsV[dir]]),
+      f_r_v_ne : 0,
+      for i : 1 thru numJacobNodes do (
+        f_r_v_ne : f_r_v_ne + f_r_v[i]/jacob_vi[i]*basisJacobNodal[i]
+      )
+    )
+    else (
+      /* C^0 linear map (Serendipity): constant Jacobian, exact scalar
+         multiplication by 1/J (same velocity cell for skin and edge cells
+         at configuration-space boundaries). Declarations are printed once
+         in the main body. */
+      f_l_v_ne : jacobConstInv_vi[dir]*fL_e,
+      f_r_v_ne : jacobConstInv_vi[dir]*fR_e
+    ),
+    /* Additionally divide each cell's distribution by its own normal-direction
+       configuration-space Jacobian (C^0 linear position map). The conf pointer
+       declarations are printed once in the main body. */
+    f_l_v_ne : jacInvL*f_l_v_ne,
+    f_r_v_ne : jacInvR*f_r_v_ne,
+    clst : [jacob_vx[0], jacob_vx[1], jacob_vx[2], jacob_vx[3], jacob_vy[0], jacob_vy[1], jacob_vy[2], jacob_vy[3], jacob_vz[0], jacob_vz[1], jacob_vz[2], jacob_vz[3], jacob_vx_inv, jacob_vy_inv, jacob_vz_inv, jacob_cx_edge_inv, jacob_cy_edge_inv, jacob_cz_edge_inv, jacob_cx_skin_inv, jacob_cy_skin_inv, jacob_cz_skin_inv],
+    printf(fh, "  if (~a>0) { ~%~%",wv),
+
+    /* Evaluate surface projection of fUpwind = f_left(cv=1). */
+    fUpwind_c : calcInnerProdList(surfVars, 1, bSurf, subst(cv=1, f_l_v_ne)), 
+    writeCExprsCollect1(fUpwind, fUpwind_c, clst),
+    printf(fh, "~%"),
+    flush_output(fh),
+
+    printf(fh, "  } else { ~%~%"),
+    /* Evaluate surface projection of fUpwind = f_right(cv=-1). */
+    fUpwind_c : calcInnerProdList(surfVars, 1, bSurf, subst(cv=-1, f_r_v_ne)), 
+    writeCExprsCollect1(fUpwind, fUpwind_c, clst),
+    printf(fh, "~%"),
+    flush_output(fh),
+    printf(fh, "  } ~%"),
+
+    fUpwind_e : doExpand1(fUpwind, bSurf),
+    Ghat_c : calcInnerProdList(surfVars, diff(hamil, vv), bSurf, fUpwind_e),
+    writeCExprs1(Ghat, Ghat_c), 
+    printf(fh, "~%"),
+    flush_output(fh),    
+    Ghat_e : doExpand1(Ghat, bSurf),
+    /* Compute surface contribution integral(phi^- Ghat) on the left/right. */
+    incrOut : calcInnerProdList(surfVars, -evAt, subst(cv=evAt, bP), Ghat_e),
+    return(incrOut)
+  ),
+
+  if (rep = "linear") then (
+    printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", clabels[dir], numJacobNodes*(dir-1)),
+    printf(fh, "  const double jacob_v~a_inv = 1.0/jacob_v~a[0]; ~%", clabels[dir], clabels[dir]),
+    printf(fh, "~%")
+  ),
+  /* Configuration-space Jacobian (per-cell constant) of the skin and edge cells,
+     printed once and used in both edge branches below. */
+  printf(fh, "  const double *jacob_c~a_edge = &jacob_pos_edge[~a]; ~%", clabels[dir], numJacobNodes*(dir-1)),
+  printf(fh, "  const double *jacob_c~a_skin = &jacob_pos_skin[~a]; ~%", clabels[dir], numJacobNodes*(dir-1)),
+  printf(fh, "  const double jacob_c~a_edge_inv = 1.0/jacob_c~a_edge[0]; ~%", clabels[dir], clabels[dir]),
+  printf(fh, "  const double jacob_c~a_skin_inv = 1.0/jacob_c~a_skin[0]; ~%", clabels[dir], clabels[dir]),
+  printf(fh, "~%"),
+  /* NOTE: WE ARE USING L TO DENOTE THE LEFT EDGE UPDATE AND R TO DENOTE RIGHT EDGE UPDATE OF GLOBAL DOMAIN */
+  /* if edge == -1, we are doing the left edge boundary and the skin cell needs to be evauluated at +1 */
+  printf(fh, "  if (edge == -1) { ~%~%"),
+
+  /* skin is the L cell, edge (ghost) is the R cell. */
+  incr : evSurfIncr(fskin_e, fedge_e, 1.0, jacobConstInv_ci_skin[dir], jacobConstInv_ci_edge[dir]),
+  writeCIncrExprsCollect1lhsc(out, dx11[dir]*dv11[dir]*incr),
+
+  /* otherwise edge == +1, we are doing the right edge boundary and the skin cell needs to be evauluated at -1 */
+  printf(fh, "~%  } else { ~%~%"),
+
+  /* edge (ghost) is the L cell, skin is the R cell. */
+  incr : evSurfIncr(fedge_e, fskin_e, -1.0, jacobConstInv_ci_edge[dir], jacobConstInv_ci_skin[dir]),
+  writeCIncrExprsCollect1lhsc(out, dx11[dir]*dv11[dir]*incr),
+
+  printf(fh, "~%  } ~%"),
+
+  /* CFL frequency in configuration space returned by interior surface updates. */
+  printf(fh, "  return 0.0;~%"),  
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+)$  
+/* Velocity-space boundary surface update from the pre-computed surface flux
+   (stored by the producers already projected onto the surface modal basis,
+   consumer projection tables vst_<tag>_prj_v<d>_*). One-sided version of
+   calcVelSurf in vlasovSurfFuncs.mac (see the full derivation and the
+   two-framings pairing convention there). The skin cell sees a single
+   interface, selected by `edge` -- edge == -1 is the LEFT domain boundary
+   (skin cell evaluated at vv=+1, the right-interface coefficients),
+   edge == +1 the RIGHT boundary (skin at vv=-1, the left-interface
+   coefficients). Never hand-edit one form in isolation; regenerate. */
+calcVelBoundarySurf(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
+  [varsC,bC,varsV,bV,varsP,bP, vid,vv, surfVars,surfVVars,
+   bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,
+   surfNodes, num_nodes_conf,num_nodes_vel,numNodes,
+   bSurfP,NK,fact,NA,NMV,tag,pre,off],
+
+  [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
+  vid : vidx(cdim,vdim),
+  vv : varsV[dir],
+  surfVars : delete(vv,varsP), /* Surface variables at constant vv surface. */
+  surfVVars : delete(vv,varsV),
+  [bSurf,nodes_conf,basisNodalConf,nodes_vel,basisNodalVel,surfNodes] : loadVlasovVelSurfBasis(cdim, vdim, basisFun, polyOrder, surfVars, surfVVars, varsC, useHigherOrder),
+  num_nodes_conf : length(nodes_conf),
+  num_nodes_vel : length(nodes_vel),
+  numNodes : length(surfNodes),
+
+  /* Sizes must reproduce the table generator's (deterministic: same
+     factorization/dedup path on the same p=polyOrder surface basis). */
+  bSurfP : basisFromVars(vlasovBtype(basisFun, polyOrder), surfVars, polyOrder),
+  NK : length(bSurfP),
+  fact : laxFactorizeBasis(bSurfP,
+    varsC,
+    if length(surfVVars) = 0 then [prjdummy] else surfVVars),
+  NA : length(fact[1]),
+  NMV : length(fact[2]),
+  tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
+  pre : sconcat("vst_", tag, "_prj_v", dir-1),
+  off : (dir-1)*NK, /* Modal offset of this direction in the stored flux. */
+
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  surfTabIncludeNod2Mod(fh, cdim, vdim, basisFun, polyOrder),
+
+  /* Per-volume-mode form for the FUTURE (cells x np) GPU launcher: thread m
+     owns out[m] exclusively. Gated off until that work starts -- see
+     emitConsumerModeFns in surf-eval-tables.mac. */
+  if emitConsumerModeFns then (
+    printf(fh, "GKYL_CU_DH void ~a_mode(int m, int edge, double dv1~a,
+  const double *flux, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, dir-1),
+    emitPrjProjection(fh, pre, "pm_s", "m", off, "flux", false),
+    printf(fh, "  if (edge == -1) { ~%"),
+    printf(fh, "    out[m] += dv1~a*~a_pm_cr[m]*g; ~%", dir-1, pre),
+    printf(fh, "  } else { ~%"),
+    printf(fh, "    out[m] += dv1~a*~a_pm_cl[m]*g; ~%", dir-1, pre),
+    printf(fh, "  } ~%"),
+    printf(fh, "} ~%~%")
+  ),
+
+  /* Surface-mode CSR form (CPU): each projection computed once. */
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const int edge, const double *flux, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
+  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NK),
+  emitPrjProjection(fh, pre, false, "k", off, "flux", false),
+  printf(fh, "  if (edge == -1) { ~%"),
+  printf(fh, "    for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
+  printf(fh, "      out[~a_out_mode[q]] += dv1~a*~a_out_cr[q]*g; ~%", pre, dir-1, pre),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } else { ~%"),
+  printf(fh, "    for (int q = ~a_out_off[k]; q < ~a_out_off[k+1]; ++q) { ~%", pre, pre),
+  printf(fh, "      out[~a_out_mode[q]] += dv1~a*~a_out_cl[q]*g; ~%", pre, dir-1, pre),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  return 0.0;~%"),
+  printf(fh, "} ~%")
+)$

@@ -1,0 +1,60 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+fpprec : 24$
+
+statevec : [rho, rhou0, rhou1, rhou2, energy]$
+
+uvar : [uvar0,uvar1,uvar2]$
+
+calcEulerPressure(fh, funcNm, cdim, basisFun, pOrder) := block([modNm,bC,NC,
+  rhol,rhouxl,rhouyl,rhouzl,energyl,uvarxl,uvaryl,uvarzl,pvarl,varsC,basisC],
+
+  kill(varsC, basisC),
+
+  modNm : sconcat("core/basis-precalc/basis", basisFun, cdim, "x", ".lisp"),
+  load(modNm),
+  bC   : basisC[pOrder],
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+
+  printf(fh, "GKYL_CU_DH void ~a_p~a(const double gas_gamma, const double *uvar, const double *statevec, double* pressure) ~%{ ~%", funcNm, pOrder),
+  printf(fh, "  // gas_gamma: Adiabatic index.~%"),
+  printf(fh, "  // uvar: [ux, uy, uz], Fluid flow.~%"),
+  printf(fh, "  // statevec: [rho, rho ux, rho uy, rho uz, energy], Fluid input state vector.~%"),
+  printf(fh, "  // pressure: Output pressure variable, p = (gas_gamma - 1)*(Energy - 0.5*rho*u^2).~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho = &statevec[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhou0 = &statevec[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhou1 = &statevec[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhou2 = &statevec[~a]; ~%", 3*NC),
+  printf(fh, "  const double *energy = &statevec[~a]; ~%", 4*NC),
+
+  printf(fh, "  const double *uvar0 = &uvar[~a]; ~%", 0*NC),
+  printf(fh, "  const double *uvar1 = &uvar[~a]; ~%", 1*NC),
+  printf(fh, "  const double *uvar2 = &uvar[~a]; ~%", 2*NC),
+
+  printf(fh, "~%"),
+
+  printf(fh, "  double pressure_fac = (gas_gamma-1.0); ~%"),
+
+  printf(fh, "~%"),
+
+  rhol : doExpand1(statevec[1], bC),
+  rhouxl : doExpand1(statevec[2], bC),
+  rhouyl : doExpand1(statevec[3], bC),
+  rhouzl : doExpand1(statevec[4], bC),
+  energyl : doExpand1(statevec[5], bC),
+
+  /* Expansions of the fluid flow */
+  uvarxl : doExpand1(uvar[1], bC),
+  uvaryl : doExpand1(uvar[2], bC),
+  uvarzl : doExpand1(uvar[3], bC),
+
+  pvarl : calcInnerProdList(varsC, 1, bC, energyl - 0.5*(rhouxl*uvarxl + rhouyl*uvaryl + rhouzl*uvarzl)),
+
+  writeCExprsCollect1(pressure, pressure_fac*pvarl, [pressure_fac]),
+
+  printf(fh, "} ~%")
+)$

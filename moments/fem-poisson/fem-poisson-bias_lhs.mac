@@ -1,0 +1,124 @@
+/*
+   Generate kernels used to replace entries in the LHS matrix of the Poisson/Helmholtz solver
+   with zeros or ones to enforce biasing, i.e. specific values of the solution at specific points.
+*/
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac");
+load("moments/bvp_utilities/bvp-util.mac");
+load("moments/fem/fem-util.mac");
+fpprec : 24$
+
+generate_fem_poisson_bias_plane_lhs(fh, funcNm, dim, basisFun, pMax) := block(
+  [coordVarS,stencilLoc,bcTypes,bcStrs,bcKey,bcCombos,currBC,stencilStr,numB,vars,nodes,numNodes,phi_c,
+   lhs_c,vals_k,val,dir,dirichletNodes,dirichletNodesI,dirVar,surfVars,sI,d,i,bcI,polyOrder,dI,k,m],
+
+  kill(varsC, varsP, basisC, basisP),
+
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x", ".lisp")),
+
+  /* Associative list between stencil location (-1,0,1) and variable strings in kernel name. */
+  coordVarS : getCoordVarS(varsC),
+
+  /* List of stencil locations. Each entry is a dim-dimensional list
+     with -1 meaning it is at a lower boundary, 1 upper boundary, or
+     0 away from boundaries in that direction. */
+  stencilLoc : getStencilCoords(dim),
+
+  /* Types of boundary conditions for which to generate kernels.
+       =0 periodic
+       =1 nonperiodic
+  */
+  bcTypes : [0, 1],
+  bcStrs  : ["periodic", "nonperiodic"],
+  bcKey   : makelist([bcTypes[i],bcStrs[i]],i,1,length(bcTypes)),
+
+  for sI : 1 thru length(stencilLoc) do (
+    /* Exclude lower boundary kernels (ones that do not own upper cell-boundary nodes). */
+    if (stencilLoc[sI]=makelist(0,d,1,dim)) or
+       (length(sublist(stencilLoc[sI],lambda([x],x < 0)))=0) then (
+
+      /* Obtain the different BC combinations for this stencil.
+         Will generate a separate kernel for each. */
+      bcCombos : [[0]],
+      if stencilLoc[sI][1] # 0 then ( bcCombos : makelist([bcTypes[i]],i,1,length(bcTypes)) ),
+      for d : 2 thru dim do (
+        bcsInDir : [[0]],
+        if stencilLoc[sI][d] # 0 then ( bcsInDir : makelist([bcTypes[i]],i,1,length(bcTypes)) ),
+        bcCombos : listify(cartesian_product(setify(bcCombos),setify(bcsInDir))),
+        for i : 1 thru length(bcCombos) do ( bcCombos[i] : flatten(bcCombos[i]) )
+      ),
+
+      /* Loop over BC combinations. Will create a separate kernel for each. */
+      for bcI : 1 thru length(bcCombos) do (
+
+        currBC : copylist(bcCombos[bcI]),
+
+        /* String used in kernel name, identifying stencil location and BC. */
+        stencilStr : "",
+        for d : 1 thru dim do (
+          bcStr : "",
+          if (stencilLoc[sI][d] = 1) then (
+            bcStr : sconcat("_",assoc(currBC[d],bcKey),string(varsC[d]))
+          ),
+          stencilStr : sconcat(stencilStr,"_",assoc(stencilLoc[sI][d],[[-1,"lo"],[0,"in"],[1,"up"]]),
+                       assoc(stencilLoc[sI][d],coordVarS)[d],bcStr)
+        ),
+
+        for polyOrder : 1 thru pMax do (
+
+          printf(fh, "void ~a_p~a~a(int edge, int dir, const long *globalIdxs, gkyl_mat_triples *tri) ~%{ ~%", funcNm, polyOrder, stencilStr),
+          printf(fh, "  // edge: -1/+1 for lower or upper edge of the cell.~%"),
+          printf(fh, "  // dir: direction perpendicular to the biased plane.~%"),
+          printf(fh, "  // globalIdxs: global linear index of each basis function/node in current cell.~%"),
+          printf(fh, "  // tri: triples object (i,j,val), i.e. contribute val to i,j element of the global matrix.~%"),
+          printf(fh, "~%"),
+
+          bN   : getNodalBasis(basisFun, dim, polyOrder),
+          numB : length(bN),
+          vars : listofvars(bN),
+
+          nodes    : args(getNodes(basisFun, dim, polyOrder)),
+          numNodes : length(nodes),
+
+          phi_c : makelist(phi[k-1],k,1,numB),
+          lhs_c : makelist(0,k,1,numB),
+
+          /* Set the equation corresponding to the k-th node to phi_k = bias value. */
+          for dir : 1 thru dim do (
+            printf(fh, "  if (dir == ~a) {~%", dir-1),
+            for edge : -1 thru 1 step 2 do (
+              printf(fh, "    if (edge == ~a) {~%", edge),
+              dirichletNodes : copylist(sublist(nodes,lambda([x],x[dir]=edge))),
+              dirichletNodesI : sublist_indices(nodes,lambda([x],x[dir]=edge)),
+              for k : 1 thru length(dirichletNodes) do (
+                lhs_c[dirichletNodesI[k]] : phi_c[dirichletNodesI[k]]
+              ),
+
+              /* Write out the coefficients of each basis_i*basis_j pair to matrix
+                 via triples object.*/
+              for dI : 1 thru length(dirichletNodes) do (
+                k : dirichletNodesI[dI],
+                vals_k : coefmatrix([lhs_c[k]],phi_c),
+                for m : 1 thru numB do (
+                  val : vals_k[1][m],
+                  /* MF 2023/05/11: I found one ase in which 5/3 written with 15 significant
+                  ** digits gave the wrong answer, but 18 sig. digits gave the correct answer.
+                  ** One way to fix this is by expanding so that 5/3*3. gets written
+                  ** as 5. */
+                  printf(fh, "  gkyl_mat_triples_insert(tri, globalIdxs[~a], globalIdxs[~a], ~a);~%",k-1,m-1,expand(float(val)))
+                )
+              ),
+              printf(fh, "    }~%~%")
+            ),
+            printf(fh, "  }~%~%")
+          ),
+
+          printf(fh, "}~%")
+
+        )
+      )
+    )
+  )
+)$

@@ -1,0 +1,78 @@
+/* This script generates the kernels for the explicit source terms (external forces) in the
+   fluid equations of different fluid models: isothermal Euler, Euler/5 moment, and 10 moment.
+   Note: these kernels are only used for neutral fluids where there is some specified external
+   force (such as external gravity). For fluid-em coupling, see fluid-vars-implicit-source.mac. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+fpprec : 24$
+
+calcEulerSource(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, rho_e, Ex_e, Ey_e, Ez_e, Bx_e, By_e, Bz_e, 
+   rhoux_e, rhouy_e, rhouz_e, 
+   incr_rhoux, incr_rhouy, incr_rhouz, incr_energy],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double* app_accel, const double* fluid, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // app_accel: External applied acceleration (external forces).~%"),
+  printf(fh, "  // fluid:     [rho, rho ux, rho uy, rho uz...], Fluid input state vector.~%"),
+  printf(fh, "  // out:       Output increment"),
+  printf(fh, "~%"),
+
+  printf(fh, "~%"),
+  printf(fh, "  const double *app_accel_x = &app_accel[~a]; ~%", 0*NC),
+  printf(fh, "  const double *app_accel_y = &app_accel[~a]; ~%", 1*NC),
+  printf(fh, "  const double *app_accel_z = &app_accel[~a]; ~%", 2*NC),
+  printf(fh, "~%"),
+  printf(fh, "  const double *rho = &fluid[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux = &fluid[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy = &fluid[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz = &fluid[~a]; ~%", 3*NC), 
+  printf(fh, "~%"),
+
+  /* No source term for density */
+  printf(fh, "  double *out_rhoux = &out[~a]; ~%", 1*NC),
+  printf(fh, "  double *out_rhouy = &out[~a]; ~%", 2*NC),
+  printf(fh, "  double *out_rhouz = &out[~a]; ~%", 3*NC),
+  printf(fh, "  double *out_energy = &out[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  app_accel_x_e : doExpand1(app_accel_x, bC),
+  app_accel_y_e : doExpand1(app_accel_y, bC),
+  app_accel_z_e : doExpand1(app_accel_z, bC),  
+
+  rho_e : doExpand1(rho, bC),
+  rhoux_e : doExpand1(rhoux, bC),
+  rhouy_e : doExpand1(rhouy, bC),
+  rhouz_e : doExpand1(rhouz, bC),
+
+  incr_rhoux : calcInnerProdList(varsC, 1, bC, rho_e*app_accel_x_e),
+  writeCIncrExprs1(out_rhoux, incr_rhoux),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  incr_rhouy : calcInnerProdList(varsC, 1, bC, rho_e*app_accel_y_e),
+  writeCIncrExprs1(out_rhouy, incr_rhouy),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  incr_rhouz : calcInnerProdList(varsC, 1, bC, rho_e*app_accel_z_e),
+  writeCIncrExprs1(out_rhouz, incr_rhouz),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  incr_energy : calcInnerProdList(varsC, 1, bC, rhoux_e*app_accel_x_e + rhouy_e*app_accel_y_e + rhouz_e*app_accel_z_e),
+  writeCIncrExprs1(out_energy, incr_energy),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "} ~%")
+)$
