@@ -1,7 +1,22 @@
+/* Functions generating the kernels of the array_average updater, which
+   computes the weighted average of a DG field over a subset of its
+   configuration-space dimensions. Phase-space kernels only use the constant
+   part of the weight (win[0]), i.e. they are unweighted. For each case two
+   kernels are written:
+   - gkyl_array_average_<...>_avg<dirs>: the result is in the basis of the
+     remaining dimensions.
+   - gkyl_array_average_<...>_avg<dirs>_fulldim: the result is in the basis
+     of the input field (i.e. the average is constant along the averaged
+     dimensions). */
+
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
-load("gyrokinetic/utilities_gyrokinetic.mac")$
 
+confDirNames : ["x","y","z"]$
+gkVelDirNames : ["vpar","mu"]$
+velDirNames : ["vx","vy","vz"]$
+
+/* Same as writeCIncrExprsNoExpand1 but with atomicAdd (GPU kernels). */
 writeCIncrExprsNoExpand1atomicadd(lhs, rhs) := block([expr],
   expr : float(rhs),
   for i : 1 thru length(expr) do (
@@ -9,136 +24,91 @@ writeCIncrExprsNoExpand1atomicadd(lhs, rhs) := block([expr],
   )
 )$
 
-array_average(polyOrder_max,basisType,cfname,hfname) := block(
+/* Write a kernel accumulating subvol*f_c into out (atomically on the GPU)
+   and its declaration in the header. */
+writeArrayAverageKernel(fh, fhHeader, funcName, f_c) := block([],
+  printf(fh, "GKYL_CU_DH void ~a(const double subvol, const double *win, const double *fin, double* GKYL_RESTRICT out) ~%{ ~%", funcName),
+  printf(fh, "#ifdef __CUDA_ARCH__~%"),
+  writeCIncrExprsNoExpand1atomicadd(out, subvol*expand(f_c)),
+  printf(fh, "#else~%"),
+  writeCIncrExprsNoExpand1(out, subvol*expand(f_c)),
+  printf(fh, "#endif~%"),
+  printf(fh, "} ~%~%"),
+  printf(fhHeader, "GKYL_CU_DH void ~a(const double subvol, const double *win, const double *fin, double* GKYL_RESTRICT out);~%", funcName)
+)$
 
-  [headerf,fh,dims,single_elements,double_elements,triple_elements,
-  all_elements,intdims,dimNames,vars,basis,outVars,
-  intdim_s,funcName,int_dim,b_reduced,f_e,w_e,f_c],
+/* Generate the kernels averaging a cdim x vdim (vdim=0 for conf-space) field
+   over every non-empty subset of its dimensions. */
+genArrayAverageKernels(fh, fhHeader, cdim, vdim, basisType, polyOrder) := block(
+  [varsC,bC,vars,basis,vSub,dimStr,ndim,dirNames,f_e,w_e,op,avgDims,avgStr,outVars,
+   numConfOut,bRed,f_c,fRed_e,fFull_c,funcName,d,k],
 
-  headerf : openw(hfname),
-  /* write prologue of header file*/
-  printf(headerf,"#pragma once~%~%"),
-  printf(headerf,"#include <gkyl_util.h>~%"),
-  printf(headerf,"EXTERN_C_BEG~%~%"),
+  ndim : cdim+vdim,
+  dirNames : append(makelist(confDirNames[d], d, 1, cdim),
+    makelist(if basisType = "gkhyb" then gkVelDirNames[d] else velDirNames[d], d, 1, vdim)),
 
-  fh : openw(cfname),
-  /* write prologue of c file*/
-  printf(fh,"#include <gkyl_array_average_kernels.h>~%~%"),
-
-  for dim : 1 thru 3 do (
-
-    /* add a mapping between dimensionality and symbols */
-    if dim = 3 then (dimNames : ["x","y","z"]),
-    if dim = 2 then (dimNames : ["x","y"]),
-    if dim = 1 then (dimNames : ["x"]),
-
-    dims : makelist(k, k, 1, dim),
-
-    /* Generate all single elements */
-    single_elements : dims,
-
-    /* Generate all pairs (combinations of size 2) */
-    double_elements : if length(dims) > 1 then 
-    create_list([dims[i], dims[j]], i, 1, length(dims), j, i+1, length(dims)) 
-    else [],
-
-    /* Generate all triplets (combinations of size 3) */
-    triple_elements : if length(dims) > 2 then 
-    create_list([dims[i], dims[j], dims[k]], i, 1, length(dims), j, i+1, length(dims), k, j+1, length(dims)) 
-    else [],
-
-    /* Combine single, double, and triple elements to create a list of type x,y,z,xy,xz,yz,xyz */
-    all_elements : append(
-      append(create_list([x], x, single_elements), double_elements),
-      triple_elements
+  if vdim = 0 then (
+    [vars, basis] : loadBasis(basisType, cdim, polyOrder),
+    dimStr : sconcat(cdim, "x")
+  ) else (
+    if basisType = "gkhyb" then (
+      [varsC, bC, vars, basis, vSub] : loadGkBasis(basisType, cdim, vdim, polyOrder)
+    ) else (
+      [varsC, bC, vars, basis] : loadPhaseBasis(basisType, cdim, vdim, polyOrder)
     ),
-    
-    /*  Example for dim = 3 (3x case):
-        -the single_element is [1,2,3]
-        -the double_element is [[1,2],[1,3],[2,3]]
-        -the triple_element is [[1,2,3]]
-        -the all_elements list is [[1],[2],[1,2],[1,3],[2,3],[1,2,3]] corresponding to average along first, second or both dimensions.
-    */
-    for i : 1 thru length(all_elements) do (
-      intdims : all_elements[i],
-
-      /* We build the name extension of the kernel to indicate the avg dimensions */
-      intdim_s : "",
-      for j : 1 thru length(all_elements[i]) do(
-        /* we add the corresponding symbol for each elements in the all_elements sublist */
-        intdim_s : sconcat(intdim_s,dimNames[intdims[j]])
-      ),
-
-      /*  Example for dim = 3 and i = 5:
-          -the fifth element of all_element is [2,3]
-          -intdim_s is now "yz"
-      */
-
-      for polyOrder : 1 thru polyOrder_max do(
-
-        /* Original basis */
-        [vars, basis] : loadBasis(basisType, dim, polyOrder),
-
-        /* Define strings that keep track of dimensions after averaging */
-        outVars  : vars,
-
-        /* Remove the averaged dimensions symbols */
-        for j : 1 thru length(intdims) do(
-          outVars  : delete(vars[intdims[j]],outVars)
-        ),
-
-        /*  Example for dim = 3 and i = 5:
-            -the fifth element of all_element is [2,3]
-            -intdim_s is now "yz"
-            -outVars is just x
-        */
-
-        /* name of the kernel */
-        funcName : sconcat("gkyl_array_average_",dim,"x_", basisType,"_p", polyOrder, "_avg", intdim_s),
-
-        /* integral dimensionality */
-        int_dim : dim - length(intdims),
-
-        /* Output sub basis */
-        b_reduced : basisFromVars(basisType, outVars, polyOrder),
-
-        /* We expand our conf field on the full basis */
-        f_e : doExpand1(fin, basis),
-        w_e : doExpand1(win, basis),
-
-        /* We integrate it on our output basis over the complementary variables */
-        if length(b_reduced) > 0 then(
-          f_c  : calcInnerProdList(vars, w_e, b_reduced, f_e)
-        ) else (
-          /* handle the full average case */
-          f_c  : [innerProd(vars, w_e, 1, f_e)]
-        ),
-
-        /* write the .c file */
-        printf(fh, "GKYL_CU_DH void ~a(const double subvol, const double *win, const double *fin, double* GKYL_RESTRICT out) ~%{ ~%", funcName),
-        
-        printf(fh, "#ifdef __CUDA_ARCH__~%"),
-        /* Version for GPU (to handle concurrent memory access) */
-        writeCIncrExprsNoExpand1atomicadd(out, subvol*expand(f_c)),
-
-        printf(fh, "#else~%"),
-        /* CPU sequential version*/
-        writeCIncrExprsNoExpand1(out, subvol*expand(f_c)),
-
-        /* close accolade and CUDA case */
-        printf(fh, "#endif~%"),
-        printf(fh, "} ~%"),
-
-        /* write the .h file */
-        printf(headerf, "GKYL_CU_DH void ~a(const double subvol, const double *win, const double *fin, double* GKYL_RESTRICT out);~%", funcName),
-
-        print("Kernel ",funcName," generated.")
-      )
-    )
+    dimStr : sconcat(cdim, "x", vdim, "v")
   ),
 
-  /* finalize header file*/
-  printf(headerf,"~%EXTERN_C_END"),
-  close(headerf),
-  close(fh)
+  f_e : doExpand1(fin, basis),
+  if vdim = 0 then (
+    w_e : doExpand1(win, basis)
+  ) else (
+    w_e : win[0]*basis[1]
+  ),
+
+  /* The averaged dimensions are encoded in the bits of op, e.g. op=3 is avgxy
+     and op=5 is avgxz. The updater's kernel tables follow this ordering. */
+  for op : 1 thru 2^ndim-1 do (
+    avgDims : sublist(makelist(d, d, 1, ndim), lambda([d], is(mod(floor(op/2^(d-1)), 2) = 1))),
+    avgStr : apply(sconcat, makelist(dirNames[d], d, avgDims)),
+    outVars : copylist(vars),
+    for d in avgDims do (outVars : delete(vars[d], outVars)),
+    numConfOut : length(sublist(outVars, lambda([v], member(v, makelist(vars[d], d, 1, cdim))))),
+
+    /* Basis of the remaining dimensions. */
+    if length(outVars) = 0 then (
+      bRed : []
+    ) elseif basisType = "hyb" and numConfOut = 0 then (
+      /* Velocity-only hybrid basis is the p=2 serendipity basis. */
+      bRed : basisFromVars("ser", outVars, 2)
+    ) elseif basisType = "hyb" and numConfOut = length(outVars) then (
+      /* Conf-only hybrid basis is the p=1 serendipity basis. */
+      bRed : basisFromVars("ser", outVars, 1)
+    ) else (
+      bRed : basisFromVars(basisType, outVars, polyOrder)
+    ),
+
+    /* Reduced kernel: project w*f onto the reduced basis. */
+    if length(bRed) > 0 then (
+      f_c : calcInnerProdList(vars, w_e, bRed, f_e)
+    ) else (
+      f_c : [innerProd(vars, w_e, 1, f_e)]
+    ),
+    funcName : sconcat("gkyl_array_average_", dimStr, "_", basisType, "_p", polyOrder, "_avg", avgStr),
+    writeArrayAverageKernel(fh, fhHeader, funcName, f_c),
+
+    /* Full-dim kernel: project the reduced expansion back onto the input
+       basis (nonzero only for basis functions independent of the averaged
+       dimensions). */
+    if length(bRed) > 0 then (
+      fRed_e : doExpand1(fred, bRed)
+    ) else (
+      fRed_e : fred[0]
+    ),
+    fFull_c : calcInnerProdList(vars, 1, basis, fRed_e),
+    fFull_c : psubst(makelist(fred[k-1]=f_c[k], k, 1, length(f_c)), fFull_c),
+    writeArrayAverageKernel(fh, fhHeader, sconcat(funcName, "_fulldim"), fFull_c),
+
+    print("Kernel ", funcName, " generated.")
+  )
 )$
