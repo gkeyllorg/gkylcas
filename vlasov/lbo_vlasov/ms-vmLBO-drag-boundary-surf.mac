@@ -47,7 +47,8 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1, /* no tensor p2 at 2x3v */
+      /* 2x3v tensor p=2 is generated as part of the optional 2x3v tensor p=2
+         kernel set (BUILD_VLASOV_TEN_2X3V_P2 in gkeyll). */
 
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating drag boundary surface Vlasov LBO ",bName[bInd]," ~ax~av p~a"),c,v,polyOrder)),

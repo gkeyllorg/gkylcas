@@ -51,7 +51,10 @@ for bInd : 1 thru 2 do (
       maxPolyOrderB : 2,
       if (v=1) then maxPolyOrderB : 3,
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-      if (bInd = 2 and c = 2 and v = 3) then maxPolyOrderB : 1,
+      /* 2x3v tensor p=2 is generated for the velocity-space Hamiltonian
+         (hamil_vel_dense/sparse) Vlasov path only; gkeyll builds it as an
+         optional kernel set. hamil_phase and triad pieces stay p=1 at c+v>=5
+         through their own gates. */
       for pi : minPolyOrderB thru maxPolyOrderB do (
         for hoInd : 1 thru 2 do (
           useHigherOrder : is(hoInd = 2),

@@ -54,9 +54,10 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-      /* Skip 2x3v tensor kernels: not used by the kernel tables and very
-         expensive to generate. */
-      if (bName[bInd] = "tensor" and c = 2 and v = 3) then maxPolyOrderB : 1,
+      /* 2x3v tensor p=2 is generated for the velocity-space Hamiltonian
+         (hamil_vel_dense/sparse) Vlasov path only; gkeyll builds it as an
+         optional kernel set. hamil_phase and triad pieces stay p=1 at c+v>=5
+         through their own gates. */
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating volume Vlasov ",bName[bInd]," ~ax~avP~a"),c,v,polyOrder)),
         /* Velocity-space Hamiltonian volume component. */
