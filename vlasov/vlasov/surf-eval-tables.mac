@@ -515,7 +515,7 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
   /* Configuration-direction surface tables (triad/phase conf-flux: lax +
      hamil_{vel_dense,vel_sparse,phase} producers). Serendipity and the
      tensor p=1 hybrid (which gets only the lax + phase producers). */
-  if (basisFun = "ser" or basisFun = "tensor") then block([surfCVars, nodes_crem, nodes_vvol, cv, sz],
+  if (basisFun = "ser" or (basisFun = "tensor" and polyOrder = 1)) then block([surfCVars, nodes_crem, nodes_vvol, cv, sz],
     nodes_vvol : gaussOrd(nPtsVel, vdim),
     for k : 1 thru vdim do
       emitTabMatrix(fh, sconcat("vst_", tag, "_vel_vol_dv", k-1),
@@ -539,9 +539,10 @@ writeSurfTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) :=
 /* Write one lo- or ho-variant nodal->modal (consumer projection) table set
    for a combo into fh: prj_{v,x}<d> tables + gkyl_vlasov_prj_meta instances
    for every from-flux consumer surface (velocity directions for all bases;
-   configuration directions for Serendipity, mirroring the stream-consumer
-   coverage). Surface bases stay p=polyOrder in the ho variant; only the
-   node set widens. */
+   configuration directions for Serendipity and the tensor p=1 hybrid,
+   mirroring the stream-consumer coverage: tensor p>1 streams through the
+   vlasov_hamil_vel_*_surfx kernels, which use no tables). Surface bases
+   stay p=polyOrder in the ho variant; only the node set widens. */
 writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := block(
   [varsC, bC, varsV, bV, varsP, bP, binfo, nPtsConf, nPtsVel, nodes_conf,
    nodes_vel, nodes_crem, nodes_vvol, d, vv, svv, cv, surfCVars, szp],
@@ -560,7 +561,7 @@ writePrjTabVariant(fh, tag, cdim, vdim, basisFun, polyOrder, useHigherOrder) := 
     printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
       tag, d-1, szp[1], length(bP), szp[2], szp[3], szp[4], szp[5], (d-1)*szp[4]*szp[5])
   ),
-  if (basisFun = "ser" or basisFun = "tensor") then (
+  if (basisFun = "ser" or (basisFun = "tensor" and polyOrder = 1)) then (
     for d : 1 thru cdim do block([],
       cv : varsC[d],
       surfCVars : delete(cv, varsC),

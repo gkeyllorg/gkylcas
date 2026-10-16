@@ -34,7 +34,7 @@ calcPKPMDivPParUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := 
    F_0_HatSurf_l_e, F_0_HatSurf_r_e, 
    Ghat_F_0_l_c, Ghat_F_0_r_c, 
    Ghat_F_0_l_e, Ghat_F_0_r_e, 
-   incr_F_0_l, incr_F_0_r, incr_F_0_vol],
+   incr_F_0_l, incr_F_0_r, incr_F_0_vol, bGhat],
 
   [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),
 
@@ -297,9 +297,11 @@ calcPKPMDivPParUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := 
 
     printf(fh, "  } ~%")
   ),
-  /* Expand G_hat for div(vpar b_hat F_0) in surface basis. */
-  Ghat_F_0_vpar_l_e : doExpand1(Ghat_F_0_vpar_l, bSurf),
-  Ghat_F_0_vpar_r_e : doExpand1(Ghat_F_0_vpar_r, bSurf),
+  /* Expand G_hat for div(vpar b_hat F_0) in the surface basis it was projected
+     onto (the p=1 surface basis unless cdim > 1 and polyOrder > 1, see above). */
+  bGhat : if (cdim > 1 and polyOrder > 1) then bSurf else bSurf_p1,
+  Ghat_F_0_vpar_l_e : doExpand1(Ghat_F_0_vpar_l, bGhat),
+  Ghat_F_0_vpar_r_e : doExpand1(Ghat_F_0_vpar_r, bGhat),
 
   /* Compute surface and volume contributions for integral(vpar phi^- Ghat) and integral(vpar grad(phi) Ghat). */
   incr_F_0_l : calcInnerProdList(surfVars, -vTrans, subst(cv=-1.0, bC), Ghat_F_0_vpar_l_e),

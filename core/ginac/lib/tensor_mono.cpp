@@ -38,6 +38,21 @@ tensor_3x_p2(const std::vector<GiNaC::symbol>& vars)
 }
 
 GiNaC::lst
+tensor_3x_p3(const std::vector<GiNaC::symbol>& vars)
+{
+  GiNaC::symbol x = vars[0], y = vars[1], z = vars[2];
+  auto x2 = x*x;
+  auto y2 = y*y;
+  auto z2 = z*z;
+  auto x3 = x*x*x;
+  auto y3 = y*y*y;
+  auto z3 = z*z*z;
+
+  GiNaC::lst l { 1, x, y, z, x*y, x*z, y*z, x2, y2, z2, x*y*z, x2*y, x*y2, x2*z, y2*z, x*z2, y*z2, x3, y3, z3, x2*y*z, x*y2*z, x*y*z2, x2*y2, x2*z2, y2*z2, x3*y, x*y3, x3*z, y3*z, x*z3, y*z3, x2*y2*z, x2*y*z2, x*y2*z2, x3*y*z, x*y3*z, x*y*z3, x3*y2, x2*y3, x3*z2, y3*z2, x2*z3, y2*z3, x2*y2*z2, x3*y2*z, x2*y3*z, x3*y*z2, x*y3*z2, x2*y*z3, x*y2*z3, x3*y3, x3*z3, y3*z3, x3*y2*z2, x2*y3*z2, x2*y2*z3, x3*y3*z, x3*y*z3, x*y3*z3, x3*y3*z2, x3*y2*z3, x2*y3*z3, x3*y3*z3 };
+  return l;
+}
+
+GiNaC::lst
 tensor_4x_p2(const std::vector<GiNaC::symbol>& vars)
 {
   GiNaC::symbol x = vars[0], y = vars[1], z = vars[2], u = vars[3];

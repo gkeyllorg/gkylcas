@@ -29,7 +29,7 @@ static struct { GiNaC::lst (*ev[4])(const std::vector<GiNaC::symbol>&);
   {NULL, NULL, NULL, NULL}, // No 0D basis functions
   {serendip_1x_p0, serendip_1x_p1, serendip_1x_p2, serendip_1x_p3},
   {serendip_2x_p0, serendip_2x_p1, tensor_2x_p2, tensor_2x_p3},
-  {serendip_3x_p0, serendip_3x_p1, tensor_3x_p2, NULL},
+  {serendip_3x_p0, serendip_3x_p1, tensor_3x_p2, tensor_3x_p3},
   {serendip_4x_p0, serendip_4x_p1, tensor_4x_p2, NULL},
   {serendip_5x_p0, serendip_5x_p1, tensor_5x_p2, NULL},
   {serendip_6x_p0, serendip_6x_p1, NULL, NULL},

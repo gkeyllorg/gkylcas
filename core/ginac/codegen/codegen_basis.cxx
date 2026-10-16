@@ -736,7 +736,7 @@ gen_ten_basis()
   strftime(buff, sizeof buff, "%c", &curr_tm);
   
   int dims[] = { 2, 3, 4, 5 };
-  int max_order[] = { 3, 2, 2, 2 };
+  int max_order[] = { 3, 3, 2, 2 };
 
   symbol z0("z0"), z1("z1"), z2("z2"), z3("z3"), z4("z4"), z5("z5");
   std::vector<symbol> vars { z0, z1, z2, z3, z4, z5 };

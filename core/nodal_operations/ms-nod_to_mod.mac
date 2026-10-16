@@ -9,7 +9,7 @@ fpprec : 24$
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 3$
 minDim_Ser : 1$
 maxDim_Ser : 6$
 
@@ -17,7 +17,7 @@ maxDim_Ser : 6$
 /* Note that Serendipity, p = 1, is equivalent to Tensor */
 /* Thus no need to calculate p = 1 Tensor basis */
 minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 3$
 minDim_Tensor : 2$
 maxDim_Tensor : 4$
 
@@ -66,6 +66,11 @@ writeNod2ModKernel(dim, basisName, pOrder) := block([nodes,numNodes,nodToMod,fmo
   else (
     nodes : getNodes(basisName, dim, pOrder)
   ),
+  /* p=3 uses the Gauss-Lobatto interior nodes +-1/sqrt(5), like the p=3
+     Hamiltonian, radiation and velocity-map kernels, instead of the
+     equi-spaced +-1/3 of getNodes. */
+  if (pOrder = 3) then
+    nodes : matrixmap(lambda([x], if x = 1/3 then sqrt(1/5) elseif x = -1/3 then -sqrt(1/5) else x), nodes),
   numNodes : length(nodes),
 
   /* Get modal expansion from nodal points. */
@@ -137,6 +142,7 @@ for bInd : 1 thru length(bName) do (
     minPolyOrderB : minPolyOrder[bInd],
     maxPolyOrderB : maxPolyOrder[bInd],
     if (d>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+    if (d>2 and maxPolyOrderB > 2) then maxPolyOrderB : 2, /* p=3 only in 1D and 2D. */
     for polyOrder : minPolyOrderB thru maxPolyOrderB do (
       writeNod2ModKernel(d, bName[bInd], polyOrder)
     )

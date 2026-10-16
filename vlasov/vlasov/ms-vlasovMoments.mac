@@ -54,8 +54,9 @@ for bInd : 1 thru length(bName) do (
         fname : sconcat("~/max-out/mom_vlasov_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
         fh : openw(fname),
         funcName : sconcat("mom_vlasov"),
-        /* We do not generate 5D and 6D p>1 phase-space Hamiltonian kernels. */
-        if (c+v>=5 and polyOrder>1) then (
+        /* We do not generate 5D and 6D p>1 phase-space Hamiltonian kernels, and the
+           phase-space Hamiltonian is Serendipity and tensor p=1 hybrid only. */
+        if ((c+v>=5 or bName[bInd] = "tensor") and polyOrder>1) then (
           calcMoments(fh, funcName, c, v, bName[bInd], polyOrder, false)
         )
         else (
