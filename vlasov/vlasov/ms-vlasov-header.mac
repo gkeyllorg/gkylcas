@@ -51,8 +51,9 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
     printf(fh, "~avoid vlasov_hamil_vel_sparse_vol_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, 
       const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, const double *f_no_J, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi)
   ),
-  /* Non-canonical (triad) volumes: Serendipity and the tensor p=1 hybrid. */
-  if ((ci <= vi  and pi < 3) and not(bStr = "tensor" and pi > 1)) then (
+  /* Non-canonical (triad) volumes: Serendipity only (the tensor p=1 triads use
+     the nodal kernels declared in gkyl_vlasov_triad_nodal_kernels.h). */
+  if (bStr = "ser" and ci <= vi and pi < 3) then (
     printf(fh, "~avoid vlasov_nc_hamil_vel_dense_vol_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap,
       const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, const double *f_no_J, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi),
     if (vi > 1) then (
@@ -158,21 +159,25 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
       printf(fhx, "~adouble ho_lax_flux_nodal_~a_~ax~av_~a_p~a(const double *dxv, 
       const double *jacob_pos_l, const double *jacob_pos_c, const double *alpha_quad, 
       const double *f_l, const double *f_r, double* GKYL_RESTRICT conf_flux_surf) ; ~%", deco, cvars[si], ci, vi, bStr, pi),
-      printf(fhx, "~avoid hamil_vel_dense_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+      /* Velocity-space Hamiltonian producers: Serendipity only (the tensor p=1
+         triads use the nodal producers of gkyl_vlasov_triad_nodal_kernels.h). */
+      if (bStr = "ser") then (
+        printf(fhx, "~avoid hamil_vel_dense_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
-      if (vi > 1) then (
-        printf(fhx, "~avoid hamil_vel_sparse_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+        if (vi > 1) then (
+          printf(fhx, "~avoid hamil_vel_sparse_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
-      ),
-      printf(fhx, "~avoid hamil_vel_dense_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+        ),
+        printf(fhx, "~avoid hamil_vel_dense_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
-      if (vi > 1) then (
-        printf(fhx, "~avoid hamil_vel_sparse_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
+        if (vi > 1) then (
+          printf(fhx, "~avoid hamil_vel_sparse_ho_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
       const double *poisson_tensor_conf, const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi)
+        )
       ),
       printf(fhx, "~avoid hamil_phase_alpha_quad_~a_~ax~av_~a_p~a(const double *w, const double *dxv, const int hamil_pt_edge,
       const double *vmap, const double *jacob_pos, const double *jacob_vel_surf,
@@ -183,10 +188,11 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
     )
   ),
   for si : 1 thru vi do (
-    /* Triad velocity-direction producers: Serendipity and the tensor p=1
-       hybrid (which takes the else branch: lo and ho_ forms). */
-    if ((ci <= vi  and pi < 3) and not(bStr = "tensor" and pi > 1)) then (
-      if ((bStr = "ser") and (pi = 1)) or ((bStr = "tensor") and (pi > 1)) then ( 
+    /* Triad velocity-direction producers: Serendipity only (p1: lo form, p2:
+       lo and ho_ forms); the tensor p=1 triads use the nodal producers of
+       gkyl_vlasov_triad_nodal_kernels.h. */
+    if (bStr = "ser" and ci <= vi and pi < 3) then (
+      if (pi = 1) then ( 
         printf(fhx, "~avoid nc_hamil_vel_dense_alpha_quad_v~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, 
           const double *hamil, double* GKYL_RESTRICT alpha_quad); ~%", deco, cvars[si], ci, vi, bStr, pi),
         if (vi > 1) then (

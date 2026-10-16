@@ -305,8 +305,10 @@ for bInd : 1 thru length(bName) do (
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         /* Phase-space Hamiltonian volume component. RULE: hamil_phase at
            c+v>=5 (2x3v, 3x3v) is p=1 ONLY (ser pure p1, tensor p1 hybrid);
-           phase p2 exists only at c+v<5. */
-        if ((bName[bInd] = "ser" or bName[bInd] = "tensor") and not(c+v>=5 and polyOrder>1)) then (
+           phase p2 exists only at c+v<5. The tensor p=1 hybrid kernels are the
+           nodal ones of vlasov/triads/ms-triadNodal.mac. */
+        if ((bName[bInd] = "ser" or bName[bInd] = "tensor") and not(c+v>=5 and polyOrder>1)
+            and not(bName[bInd] = "tensor" and polyOrder = 1)) then (
           fname : sconcat("~/max-out/vlasov_hamil_phase_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
           fh : openw(fname),
           funcName : sconcat("vlasov_hamil_phase_vol_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),

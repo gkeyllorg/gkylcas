@@ -83,10 +83,12 @@ for bInd : 1 thru length(bName) do (
 
               if not((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = true)) and not(hamil_rep = "vel_sparse" and v = 1) then (
                 if ((bName[bInd] = "ser")and (polyOrder = 1) and (useHigherOrder = false)) then si : "",
-                /* Hamiltonian conf-flux producers: all reps for Serendipity
-                   and for the tensor p=1 hybrid (canonical and triad paths).
+                /* Hamiltonian conf-flux producers: all reps for Serendipity;
+                   for the tensor p=1 hybrid only the phase rep of the canonical
+                   models (its triads use the nodal producers of ms-triadNodal.mac).
                    RULE: hamil_phase at c+v>=5 is p=1 only. */
-                if not(hamil_rep = "phase" and c+v>=5 and polyOrder>1) then (
+                if not(hamil_rep = "phase" and c+v>=5 and polyOrder>1)
+                   and not(bName[bInd] = "tensor" and hamil_rep # "phase") then (
                   fname : sconcat("~/max-out/hamil_", hamilLabels[vhamilInd],"_",si,"alpha_quad_", clabels[dir], "_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
                   fh : openw(fname),
                   funcName : sconcat("hamil_", hamilLabels[vhamilInd],"_",si,"alpha_quad_",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),

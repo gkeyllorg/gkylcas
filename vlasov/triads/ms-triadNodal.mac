@@ -1,0 +1,83 @@
+/* Generate the triad kernels with NODAL Poisson-tensor storage (tensor hybrid p=1
+   basis, C^1 cubic velocity map) for the sparse ("vel_sparse") and dense
+   ("vel_dense") velocity Hamiltonians and the phase-space Hamiltonian ("phase", GR
+   triads): the volume kernels (one-dimensional velocity tables built once per cell,
+   then one velocity-space update per configuration-space Gauss-Legendre node, see
+   triadNodalVolFuncs.mac), the configuration- and velocity-direction surface force
+   producers (triadNodalSurfFuncs.mac), and their header. In 1V sparse and dense are
+   identical and only the dense kernels are generated (the kernel tables alias them).
+   Also the canonical-PB phase-space Hamiltonian volume kernels of the tensor p=1
+   hybrid basis (vlasov_hamil_phase_vol_*_tensor_p1, declared in gkyl_vlasov_kernels.h),
+   from the same generator with the canonical bracket. */
+load("vlasov/triads/triadNodalVolFuncs.mac")$
+load("vlasov/triads/triadNodalSurfFuncs.mac")$
+
+/* [cdim, vdim] combinations of the triads (cdim <= vdim). */
+cvList : [[1,1], [1,2], [2,2], [1,3], [2,3], [3,3]]$
+hamilReps : ["vel_sparse", "vel_dense", "phase"]$
+dirLabels : ["x", "y", "z"]$
+volArgs : "const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f, const double *f_no_J, double* GKYL_RESTRICT out"$
+confArgs : "const double *w, const double *dxv, const int hamil_pt_edge, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil"$
+velArgs : "const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil"$
+hoTags : [["", false], ["ho_", true]]$
+
+volName(hr, c, v) := sconcat("vlasov_triad_nodal_", hr, "_vol_", c, "x", v, "v_tensor_p1")$
+confName(hr, ho, d, c, v) := sconcat("triad_nodal_hamil_", hr, "_", ho, "alpha_quad_", dirLabels[d], "_", c, "x", v, "v_tensor_p1")$
+velName(hr, ho, d, c, v) := sconcat("triad_nodal_hamil_", hr, "_", ho, "alpha_quad_v", dirLabels[d], "_", c, "x", v, "v_tensor_p1")$
+genRep(hr, v) := not (hr = "vel_sparse" and v = 1)$
+
+for cv in cvList do block([c, v],
+  [c, v] : cv,
+  for hr in hamilReps do if genRep(hr, v) then (
+    disp(volName(hr, c, v)),
+    fh : openw(sconcat("~/max-out/", volName(hr, c, v), ".c")),
+    if hr = "vel_sparse" then calcTriadNodalVolCell(fh, volName(hr, c, v), c, v)
+    else calcTriadNodalVolCellModes(fh, volName(hr, c, v), c, v, hr, false),
+    close(fh),
+    for ht in hoTags do (
+      for d : 1 thru c do (
+        disp(confName(hr, ht[1], d, c, v)),
+        fh : openw(sconcat("~/max-out/", confName(hr, ht[1], d, c, v), ".c")),
+        calcTriadNodalConfSurfForce(d, fh, confName(hr, ht[1], d, c, v), c, v, ht[2], hr),
+        close(fh)
+      ),
+      for d : 1 thru v do (
+        disp(velName(hr, ht[1], d, c, v)),
+        fh : openw(sconcat("~/max-out/", velName(hr, ht[1], d, c, v), ".c")),
+        calcTriadNodalVelSurfForce(d, fh, velName(hr, ht[1], d, c, v), c, v, ht[2], hr),
+        close(fh)
+      )
+    )
+  )
+)$
+
+/* Canonical-PB phase-space Hamiltonian volume kernels (every cdim, vdim of the
+   canonical-PB tensor p=1 kernel tables, including 2x1v). */
+for cv in [[1,1], [2,1], [1,2], [2,2], [1,3], [2,3], [3,3]] do block([nm],
+  nm : sconcat("vlasov_hamil_phase_vol_", cv[1], "x", cv[2], "v_tensor_p1"),
+  disp(nm),
+  fh : openw(sconcat("~/max-out/", nm, ".c")),
+  calcTriadNodalVolCellModes(fh, nm, cv[1], cv[2], "phase", true),
+  close(fh)
+)$
+
+fh : openw("~/max-out/gkyl_vlasov_triad_nodal_kernels.h")$
+printf(fh, "#pragma once ~%#include <math.h> ~%#include <gkyl_util.h> ~%EXTERN_C_BEG ~%~%")$
+for cv in cvList do block([c, v],
+  [c, v] : cv,
+  for hr in hamilReps do if genRep(hr, v) then (
+    printf(fh, "GKYL_CU_DH void ~a(~a); ~%~%", volName(hr, c, v), volArgs),
+    for ht in hoTags do (
+      for d : 1 thru c do (
+        printf(fh, "GKYL_CU_DH int ~a_shared(int tid, int off, ~a, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%", confName(hr, ht[1], d, c, v), confArgs),
+        printf(fh, "GKYL_CU_DH void ~a(~a, double* GKYL_RESTRICT alpha_quad); ~%~%", confName(hr, ht[1], d, c, v), confArgs)
+      ),
+      for d : 1 thru v do (
+        printf(fh, "GKYL_CU_DH int ~a_shared(int tid, int off, ~a, double* GKYL_RESTRICT O, double* GKYL_RESTRICT I); ~%", velName(hr, ht[1], d, c, v), velArgs),
+        printf(fh, "GKYL_CU_DH void ~a(~a, double* GKYL_RESTRICT alpha_quad); ~%~%", velName(hr, ht[1], d, c, v), velArgs)
+      )
+    )
+  )
+)$
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$

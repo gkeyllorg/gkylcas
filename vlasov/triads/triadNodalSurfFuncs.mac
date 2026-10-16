@@ -1,0 +1,288 @@
+/* Surface force producers of the triad (non-canonical Poisson bracket) Vlasov
+   equation with NODAL Poisson-tensor storage, tensor hybrid p=1 basis and C^1 cubic
+   velocity map, for the sparse ("vel_sparse") and dense ("vel_dense") velocity
+   Hamiltonians and the phase-space Hamiltonian ("phase", GR triads).
+
+   Same sum-factorized ABI as the modal producers (alpha-factor-emit.mac),
+     alpha(i, j) = sum_t O_t(i) * I_t(j),
+   with the same inner (velocity-node) factors, but the outer factors are READ
+   from the Poisson tensor stored at the configuration-space Gauss-Legendre nodes
+   instead of evaluating a modal expansion there:
+
+   - configuration-direction surfaces: poisson_tensor_conf is the cell's face
+     storage, [dir][face][face node][component] with face 0 the lower and 1 the
+     upper face of the cell, face nodes the 2^(cdim-1) transverse Gauss-Legendre
+     nodes in gaussOrd order and components the conf-velocity row of dir
+     (vdim values). The values are computed from the geometry at the face, so
+     the face force is single valued.
+   - velocity-direction surfaces: poisson_tensor_conf is the cell's volume
+     storage, [node][component] at the 2^cdim interior Gauss-Legendre nodes in
+     gaussOrd order (the outer nodes of these surfaces), all Poisson-tensor
+     components (the vel-vel block starts at vdim*vdim). */
+
+load("vlasov/triads/triadConfFluxSurfFuncs.mac")$
+load("vlasov/triads/triadVelFluxSurfFuncs.mac")$
+
+/* Number of sparse (constant or single-velocity-variable) velocity basis functions. */
+triadNodalNumSparse(bV, varsV) := block([NS, b],
+  NS : 0,
+  for b : 1 thru length(bV) do
+    if length(intersection(setify(listofvars(bV[b])), setify(varsV))) <= 1 then NS : NS + 1,
+  NS
+)$
+
+/* Configuration-direction surface: alpha^dir = sum_b Pi^{dir,b} dH/dv_b. For the
+   phase-space Hamiltonian dH/dv_b varies over the face: one term per (b, outer
+   configuration shape a), the inner factors as in calcHamilVelSurfForceFlux. */
+calcTriadNodalConfSurfForce(dir, fh, funcNm, cdim, vdim, useHigherOrder, hamil_rep) := block(
+  [basisFun, polyOrder, varsC, bC, varsV, bV, varsP, bP, vid, cv, surfVars, surfCVars,
+   bSurf, nodes_conf, basisNodalConf, nodes_vel, basisNodalVel, surfNodes, num_nodes_conf,
+   num_nodes_vel, tag, NV, NB, nJPts, jvinvExpr, NS, prelude, outerBody, innerBody, b, d,
+   fact, NA, tabP, NT, edge, elbl, cond],
+
+  basisFun : "tensor", polyOrder : 1,
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
+  vid : vidx(cdim, vdim),
+  cv : varsP[dir],
+  surfVars : delete(cv, varsP),
+  surfCVars : delete(cv, varsC),
+  [bSurf, nodes_conf, basisNodalConf, nodes_vel, basisNodalVel, surfNodes] :
+    loadVlasovConfSurfBasis(cdim, vdim, basisFun, polyOrder, surfVars, surfCVars, varsV, useHigherOrder),
+  num_nodes_conf : length(nodes_conf),
+  num_nodes_vel : length(nodes_vel),
+  tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
+  NV : length(bV),
+  NB : length(bP),
+
+  printf(fh, "#include <gkyl_vlasov_triad_nodal_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
+  surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
+
+  prelude : [], outerBody : [], innerBody : [],
+  for d : 1 thru vdim do prelude : endcons(printf(false, "const double dv1~a = 2.0/dxv[~a];", d-1, vid[d]), prelude),
+  /* Face storage of this direction; the face is selected by hamil_pt_edge. */
+  prelude : endcons(printf(false,
+    "const double *pt_face = &poisson_tensor_conf[(~a + (hamil_pt_edge == -1 ? 0 : 1))*~a];",
+    2*(dir-1), num_nodes_conf*vdim), prelude),
+
+  if (hamil_rep = "phase") then (
+    fact : laxFactorizeBasis(bP, surfCVars, cons(cv, varsV)),
+    NA : laxFactorSizes(fact, cv)[1],
+    tabP : sconcat("vst_", tag, "_ph_x", dir-1),
+    NT : vdim*NA
+  ) else (
+    NA : 1,
+    NT : vdim
+  ),
+
+  /* Outer factors: the stored row Pi^{dir,b} at transverse face node i [times the
+     outer configuration shape a of the phase-space Hamiltonian]. */
+  for b : 1 thru vdim do
+    if (hamil_rep = "phase") then
+      outerBody : endcons(printf(false, "for (int a = 0; a < ~a; ++a) O[(~a + a)*~a + i] = pt_face[i*~a + ~a]*~a_Cm[i*~a + a];",
+        NA, (b-1)*NA, num_nodes_conf, vdim, b-1, tabP, NA), outerBody)
+    else
+      outerBody : endcons(printf(false, "O[~a*~a + i] = pt_face[i*~a + ~a];", b-1, num_nodes_conf, vdim, b-1), outerBody),
+
+  /* Inner factors: dH/dv_b dv1_b / J_v,b at the velocity node (as the modal producer). */
+  nJPts : vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder),
+  jvinvExpr : makelist("", d, 1, vdim),
+  for d : 1 thru vdim do block([nidx],
+    if (vdim = 1) then nidx : "j"
+    elseif (vdim = 2) then nidx : if (d = 1) then sconcat("j/", nJPts) else sconcat("j%", nJPts)
+    else nidx : if (d = 1) then sconcat("j/", nJPts*nJPts)
+      elseif (d = 2) then sconcat("j/", nJPts, "%", nJPts)
+      else sconcat("j%", nJPts),
+    jvinvExpr[d] : sconcat("(1.0/jacob_vel_surf[", nJPts*(d-1), " + ", nidx, "])")
+  ),
+  if (hamil_rep = "phase") then (
+    for edge in [-1, 1] do (
+      if edge = -1 then (elbl : "r", cond : "== -1") else (elbl : "l", cond : "== 1"),
+      innerBody : endcons(printf(false, "~a (hamil_pt_edge ~a) {", if edge = -1 then "if" else "else if", cond), innerBody),
+      for d : 1 thru vdim do block([NMVd],
+        NMVd : laxDerivSizes(fact, cv, varsV[d]),
+        innerBody : endcons(printf(false, "  double G~a[~a];", d-1, NA), innerBody),
+        innerBody : endcons(printf(false, "  for (int a = 0; a < ~a; ++a) G~a[a] = 0.0;", NA, d-1), innerBody),
+        innerBody : endcons(printf(false, "  for (int k = 0; k < ~a; ++k) {", NB), innerBody),
+        innerBody : endcons(printf(false, "    G~a[~a_cmap[k]] += ~a_Vd~a[j*~a + ~a_v~ad~amap[k]]*(~a_dcoef~a~a[k]*hamil[k]);",
+          d-1, tabP, tabP, d-1, NMVd, tabP, elbl, d-1, tabP, elbl, d-1), innerBody),
+        innerBody : endcons("  }", innerBody),
+        innerBody : endcons(printf(false, "  for (int a = 0; a < ~a; ++a) I[(~a + a)*~a + j] = G~a[a]*dv1~a*~a;", NA, (d-1)*NA, num_nodes_vel, d-1, d-1, jvinvExpr[d]), innerBody)
+      ),
+      innerBody : endcons("}", innerBody)
+    )
+  ) else (
+    NS : triadNodalNumSparse(bV, varsV),
+    for d : 1 thru vdim do (
+      innerBody : endcons(printf(false, "double dH_dv~a = 0.0;", d-1), innerBody),
+      if (hamil_rep = "vel_sparse") then
+        innerBody : append(innerBody, [
+          printf(false, "for (int s = 0; s < ~a; ++s) {", NS),
+          printf(false, "  const int b = vst_~a_vel_sparse_idx[s];", tag),
+          printf(false, "  dH_dv~a += vst_~a_vel_vol_dv~a[j*~a + b]*hamil[b];", d-1, tag, d-1, NV),
+          "}"])
+      else
+        innerBody : endcons(printf(false, "for (int b = 0; b < ~a; ++b) dH_dv~a += vst_~a_vel_vol_dv~a[j*~a + b]*hamil[b];", NV, d-1, tag, d-1, NV), innerBody),
+      innerBody : endcons(printf(false, "I[~a*~a + j] = dH_dv~a*dv1~a*~a;", d-1, num_nodes_vel, d-1, d-1, jvinvExpr[d]), innerBody)
+    )
+  ),
+
+  alphaEmitFactored(fh, funcNm,
+    "const double *w, const double *dxv, const int hamil_pt_edge, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil",
+    NT, num_nodes_conf, num_nodes_vel, prelude, outerBody, innerBody)
+)$
+
+/* Velocity-direction surface: alpha^{v_dir} = sum_{k != dir} Pi^{v_dir v_k} dH/dv_k,
+   with Pi^{v_a v_b} = sum_m Omega^{ab}_m v_m (vdim > 1), plus for the phase-space
+   Hamiltonian the force -sum_c Pi^{c, dir} dH/dx_c (one term per outer configuration
+   shape a, and the Pi_pp terms split over a), with the inner factors of
+   calcHamilVelSurfForceNonCanonical. */
+calcTriadNodalVelSurfForce(dir, fh, funcNm, cdim, vdim, useHigherOrder, hamil_rep) := block(
+  [basisFun, polyOrder, varsC, bC, varsV, bV, varsP, bP, vid, vv, surfVars, surfVVars,
+   bSurf, nodes_conf, basisNodalConf, nodes_vel, basisNodalVel, surfNodes, num_nodes_conf,
+   num_nodes_vel, tag, NV, NB, NPT, transK, omDefs, ppRows, NS, nJPts, prelude, outerBody,
+   innerBody, tOff, k, m, r, c, kk, varsMap1, bMap1, fact, NA, NMV, tabP, nPhase],
+
+  basisFun : "tensor", polyOrder : 1,
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
+  vid : vidx(cdim, vdim),
+  vv : varsV[dir],
+  surfVars : delete(vv, varsP),
+  surfVVars : delete(vv, varsV),
+  [bSurf, nodes_conf, basisNodalConf, nodes_vel, basisNodalVel, surfNodes] :
+    loadVlasovVelSurfBasis(cdim, vdim, basisFun, polyOrder, surfVars, surfVVars, varsC, useHigherOrder),
+  num_nodes_conf : length(nodes_conf),
+  num_nodes_vel : length(nodes_vel),
+  laxAssertNodeOrder(surfNodes, nodes_conf, nodes_vel),
+  tag : surfTabTag(cdim, vdim, basisFun, polyOrder, useHigherOrder),
+  NV : length(bV),
+  NB : length(bP),
+  NPT : [1, 6, 18][vdim],
+
+  printf(fh, "#include <gkyl_vlasov_triad_nodal_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_flux_vlasov_kernels.h> ~%"),
+  surfTabInclude(fh, cdim, vdim, basisFun, polyOrder),
+
+  transK : delete(dir, makelist(k, k, 1, vdim)),
+  prelude : [], outerBody : [], innerBody : [],
+
+  /* Phase-space Hamiltonian force: outer -sum_c Pi^{c,dir}(i) dCm_c[i][a] dx1_c / J_x,c
+     with the stored conf-velocity row c at interior node i, inner G[j][a]; the
+     transverse derivative contractions Gd_k[j][a] feed the Pi_pp terms below. */
+  if (hamil_rep = "phase") then (
+    fact : laxFactorizeBasis(bP, varsC, cons(vv, surfVVars)),
+    NA : laxFactorSizes(fact, vv)[1],
+    NMV : laxFactorSizes(fact, vv)[2],
+    tabP : sconcat("vst_", tag, "_ph_v", dir-1),
+    nPhase : NA,
+    for c : 1 thru cdim do prelude : endcons(printf(false, "const double dx1~a = 2.0/dxv[~a];", c-1, c-1), prelude),
+    for c : 1 thru cdim do prelude : endcons(printf(false, "const double jacob_c~a_inv = 1.0/jacob_pos[~a];", clabels[c], 2*(c-1)), prelude),
+    for c : 1 thru cdim do
+      outerBody : endcons(printf(false, "const double px~a_q = poisson_tensor_conf[i*~a + ~a];", c-1, NPT, (dir-1) + vdim*(c-1)), outerBody),
+    outerBody : endcons(printf(false, "for (int a = 0; a < ~a; ++a) O[a*~a + i] = -(~a);", NA, num_nodes_conf,
+      simplode(makelist(sconcat("px", c-1, "_q*", tabP, "_CmDx", c-1, "[i*", NA, " + a]*dx1", c-1, "*jacob_c", clabels[c], "_inv"), c, 1, cdim), " + ")), outerBody),
+    innerBody : endcons(printf(false, "double G[~a];", NA), innerBody),
+    for k in transK do innerBody : endcons(printf(false, "double Gd~a[~a];", k-1, NA), innerBody),
+    innerBody : endcons(printf(false, "for (int a = 0; a < ~a; ++a) { G[a] = 0.0; ~a}", NA,
+      if transK = [] then "" else simplode(makelist(sconcat("Gd", k-1, "[a] = 0.0; "), k, transK))), innerBody),
+    innerBody : endcons(printf(false, "for (int k = 0; k < ~a; ++k) {", NB), innerBody),
+    innerBody : endcons(printf(false, "  const int a = ~a_cmap[k];", tabP), innerBody),
+    innerBody : endcons(printf(false, "  G[a] += ~a_V[j*~a + ~a_vrmap[k]]*(~a_coefr[k]*hamil[k]);", tabP, NMV, tabP, tabP), innerBody),
+    for k in transK do block([NMd],
+      NMd : laxDerivSizes(fact, vv, varsV[k]),
+      innerBody : endcons(printf(false, "  Gd~a[a] += ~a_Vd~a[j*~a + ~a_vrd~amap[k]]*(~a_dcoefr~a[k]*hamil[k]);",
+        k-1, tabP, k-1, NMd, tabP, k-1, tabP, k-1), innerBody)
+    ),
+    innerBody : endcons("}", innerBody),
+    innerBody : endcons(printf(false, "for (int a = 0; a < ~a; ++a) I[a*~a + j] = G[a];", NA, num_nodes_vel), innerBody)
+  ) else (
+    NA : 1,
+    nPhase : 0
+  ),
+
+  tOff : nPhase,
+  if (vdim > 1) then (
+    /* omega_ab and the vel-vel rows entering it (0-based within the block at
+       vdim*vdim), with the sign of the term in alpha^dir (as the modal producer). */
+    if (vdim = 2) then
+      omDefs : (if (dir = 1) then [[2, [0, 1], "+"]] else [[1, [0, 1], "-"]])
+    else (
+      if (dir = 1) then omDefs : [[2, [0, 3, 6], "+"], [3, [1, 4, 7], "+"]]
+      else if (dir = 2) then omDefs : [[1, [0, 3, 6], "-"], [3, [2, 5, 8], "+"]]
+      else omDefs : [[1, [1, 4, 7], "-"], [2, [2, 5, 8], "-"]]
+    ),
+    ppRows : sort(unique(flatten(makelist(om[2], om, omDefs)))),
+
+    for m : 1 thru vdim do prelude : endcons(printf(false, "const double *vmap_v~a = &vmap[~a];", m-1, 4*(m-1)), prelude),
+    for k in transK do prelude : endcons(printf(false, "const double dv1~a = 2.0/dxv[~a];", k-1, vid[k]), prelude),
+
+    /* Outer factors: stored vel-vel rows at interior node i. */
+    for r in ppRows do
+      outerBody : endcons(printf(false, "const double p~a_q = poisson_tensor_conf[i*~a + ~a];", r, NPT, vdim*vdim + r), outerBody),
+
+    /* Inner factors (as the modal producer): per-node inverse transverse Jacobians,
+       physical velocities from the cubic map (v_dir at its -1 edge), dH/dv_k. */
+    nJPts : vlasovJacSurfStride(basisFun, polyOrder, useHigherOrder),
+    for k in transK do block([pp, nidx],
+      pp : if k < dir then k-1 else k-2,
+      if (vdim = 2) then nidx : "j"
+      else nidx : if (pp = 0) then sconcat("j/", nJPts) else sconcat("j%", nJPts),
+      innerBody : endcons(printf(false, "const double jacob_v~a_inv = 1.0/jacob_vel_surf[~a + ~a];", clabels[k], nJPts*(k-1), nidx), innerBody)
+    ),
+    [varsMap1, bMap1] : loadBasis("Tensor", 1, 3),
+    for m : 1 thru vdim do block([vmapS, xnS, xnSqS, vt_e, p],
+      vmapS : eval_string(sconcat("vmap_v", m-1)),
+      if (m = dir) then (
+        vt_e : float(expand(subst(x = -1, doExpand1(vmapS, bMap1)))),
+        innerBody : endcons(printf(false, "const double vt~a = ~a;", m, vt_e), innerBody)
+      )
+      else (
+        p : if m < dir then m-1 else m-2,
+        innerBody : endcons(printf(false, "const double xn~a = vst_~a_vel_nodes_v~a[j*~a + ~a];", m-1, tag, dir-1, vdim-1, p), innerBody),
+        innerBody : endcons(printf(false, "const double xn~a_sq = xn~a*xn~a;", m-1, m-1, m-1), innerBody),
+        xnS : eval_string(sconcat("xn", m-1)),
+        xnSqS : eval_string(sconcat("xn", m-1, "_sq")),
+        vt_e : float(expand(subst(x = xnS, doExpand1(vmapS, bMap1)))),
+        vt_e : subst([xnS^3 = xnS*xnSqS, xnS^2 = xnSqS], vt_e),
+        innerBody : endcons(printf(false, "const double vt~a = ~a;", m, vt_e), innerBody)
+      )
+    ),
+    if (hamil_rep # "phase") then (
+      NS : triadNodalNumSparse(bV, varsV),
+      for k in transK do (
+        innerBody : endcons(printf(false, "double dH_dv~a = 0.0;", k-1), innerBody),
+        if (hamil_rep = "vel_sparse") then
+          innerBody : append(innerBody, [
+            printf(false, "for (int s = 0; s < ~a; ++s) {", NS),
+            printf(false, "  const int b = vst_~a_vel_sparse_idx[s];", tag),
+            printf(false, "  dH_dv~a += vst_~a_vel_dv~a_v~a[j*~a + b]*hamil[b];", k-1, tag, k-1, dir-1, NV),
+            "}"])
+        else
+          innerBody : endcons(printf(false, "for (int b = 0; b < ~a; ++b) dH_dv~a += vst_~a_vel_dv~a_v~a[j*~a + b]*hamil[b];", NV, k-1, tag, k-1, dir-1, NV), innerBody)
+      )
+    ),
+
+    /* Term (k, m): outer +/- Pi_pp row [times outer shape a], inner v_m dH/dv_k
+       dv1_k / J_v,k [with dH/dv_k -> Gd_k[a]]. */
+    for kk : 1 thru length(omDefs) do block([rows, sgn],
+      k : omDefs[kk][1], rows : omDefs[kk][2], sgn : omDefs[kk][3],
+      for m : 1 thru vdim do (
+        if (hamil_rep = "phase") then (
+          outerBody : endcons(printf(false, "for (int a = 0; a < ~a; ++a) O[(~a + a)*~a + i] = ~ap~a_q*~a_Cm[i*~a + a];",
+            NA, tOff, num_nodes_conf, if sgn = "-" then "-" else "", rows[m], tabP, NA), outerBody),
+          innerBody : endcons(printf(false, "for (int a = 0; a < ~a; ++a) I[(~a + a)*~a + j] = vt~a*Gd~a[a]*dv1~a*jacob_v~a_inv;",
+            NA, tOff, num_nodes_vel, m, k-1, k-1, clabels[k]), innerBody),
+          tOff : tOff + NA
+        ) else (
+          outerBody : endcons(printf(false, "O[~a*~a + i] = ~ap~a_q;", tOff, num_nodes_conf, if sgn = "-" then "-" else "", rows[m]), outerBody),
+          innerBody : endcons(printf(false, "I[~a*~a + j] = vt~a*dH_dv~a*dv1~a*jacob_v~a_inv;", tOff, num_nodes_vel, m, k-1, k-1, clabels[k]), innerBody),
+          tOff : tOff + 1
+        )
+      )
+    )
+  ),
+
+  alphaEmitFactored(fh, funcNm,
+    "const double *w, const double *dxv, const double *vmap, const double *jacob_pos, const double *jacob_vel_surf, const double *poisson_tensor_conf, const double *hamil",
+    tOff, num_nodes_conf, num_nodes_vel, prelude, outerBody, innerBody)
+)$

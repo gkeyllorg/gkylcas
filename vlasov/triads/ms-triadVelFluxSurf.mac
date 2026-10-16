@@ -18,27 +18,18 @@ minVdim_Ser : 1$    /* see begining of v loop below though. */
 maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
-/* Tensor product basis. */
-/* Tensor p=1 IS the tensor hybrid (p1 conf x p2 vel): usable by EVERY
-   Hamiltonian rep (vel_dense, vel_sparse, phase) on both the canonical and
-   triad paths (f_no_J flow, cubic-map volume representation and per-node
-   velocity-Jacobian indexing all validated). Tensor p>1 has no triad kernels. */
-minPolyOrder_Tensor : 1$
-maxPolyOrder_Tensor : 1$
-minCdim_Tensor : 1$
-minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 3$
-maxVdim_Tensor : 3$
+/* The tensor p=1 hybrid triads store the Poisson tensor at the configuration-space
+   nodes and use the kernels of ms-triadNodal.mac. */
 
 /* ...... END OF USER INPUTS........ */
 
-bName        : ["ser","tensor"]$
-minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
-maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
-minCdim      : [minCdim_Ser, minCdim_Tensor]$
-minVdim      : [minVdim_Ser, minVdim_Tensor]$
-maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
-maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+bName        : ["ser"]$
+minPolyOrder : [minPolyOrder_Ser]$
+maxPolyOrder : [maxPolyOrder_Ser]$
+minCdim      : [minCdim_Ser]$
+minVdim      : [minVdim_Ser]$
+maxCdim      : [maxCdim_Ser]$
+maxVdim      : [maxVdim_Ser]$
 useHigherOrderList : [false, true]$
 /* Hamiltonian representations: the label is both the kernel-name segment and
    the hamil_rep passed to the generators. vel_sparse is skipped in 1V (sparse

@@ -1,0 +1,628 @@
+/* Per-configuration-space-node volume update of the triad (non-canonical Poisson
+   bracket) Vlasov equation for the tensor hybrid p=1 basis (p=1 tensor in
+   configuration space x p=2 tensor in velocity space), with the sparse velocity
+   Hamiltonian H = sum_i H_i(v_i) and the C^1 cubic velocity map.
+
+   The volume term is the Galerkin integral of calcHamilVolNonCanonical
+   (triadVolFuncs.mac), summed over the unique antisymmetric Poisson-tensor pairs:
+     conf-vel (x_d, v_b): (2/dx_d)(1/J_xd) d_xd(phi) (2/dv_b) d_vb(H) PT_db(x) F_b,
+     vel-vel  (v_a, v_b): (2/dv_a)(2/dv_b) [d_va(phi) d_vb(H) - d_vb(phi) d_va(H)]
+                          Omega_ab^j(x) v_j(v) F_ab,
+   with F_b = f/J_vb and F_ab = F_a/J_vb taken nodally along the divided direction
+   (3 Gauss-Legendre points), as the inline modal kernels do.
+
+   Every configuration-space product (test-function derivative x Poisson tensor x f)
+   is at most cubic per direction for the p=1 Poisson tensor, so the configuration-
+   space integral is EXACT with 2 Gauss-Legendre points per direction (unit weights).
+   The cell update is therefore a sum over the 2^cdim configuration-space nodes of a
+   velocity-space-only modal update, using phi_k = coef_k * bC[c] * bV[m]. Each
+   vel-vel pair stays antisymmetric node by node, so the discrete Hamiltonian is
+   conserved exactly, as with the modal kernel.
+
+   The velocity-space update is linear in f with operators that depend on velocity
+   space only; for the separable H they factor into 3x3 one-dimensional matrices per
+   velocity direction (see triadNodalVolVel1DMats), built once per cell and applied
+   direction by direction at each node.
+
+   The cell kernels read the Poisson tensor stored at the nodes: poisson_tensor_conf
+   is the cell's volume storage [node][component], 2^cdim interior Gauss-Legendre
+   nodes in gaussOrd order (first coordinate slowest, -1/sqrt(3) first). With the
+   node values of a p=1 modal tensor this reproduces the inline modal kernels to
+   round off. */
+
+load("vlasov/triads/triadVolFuncs.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+
+/* Factor each phase basis function as bP[k] = coef[k]*bC[cIdx[k]]*bV[mIdx[k]]
+   (1-based indices). Errors out if a function is not such a product. */
+triadNodalFactorBasis(bP, bC, bV) := block(
+  [NP, cIdx, mIdx, coefL, k, c, m, r, found],
+  NP : length(bP),
+  cIdx : makelist(0, k, 1, NP),
+  mIdx : makelist(0, k, 1, NP),
+  coefL : makelist(0, k, 1, NP),
+  for k : 1 thru NP do (
+    found : false,
+    for c : 1 thru length(bC) do (
+      for m : 1 thru length(bV) do (
+        if not found then (
+          r : radcan(bP[k]/(bC[c]*bV[m])),
+          if listofvars(r) = [] then (
+            found : true, cIdx[k] : c, mIdx[k] : m, coefL[k] : r
+          )
+        )
+      )
+    ),
+    if not found then error("triadNodalFactorBasis: not a conf x vel product, k =", k)
+  ),
+  [cIdx, mIdx, coefL]
+)$
+
+/* Velocity basis (p=2 tensor) in the variables vx, vy[, vz]. */
+triadNodalVelBasis(vdim) := block([varsV, bV, varsSub],
+  [varsV, bV] : loadBasis("Tensor", vdim, 2),
+  varsSub : makelist(varsV[d] = [vx, vy, vz][d], d, 1, vdim),
+  [subst(varsSub, copylist(varsV)), subst(varsSub, copylist(bV))]
+)$
+
+/* The velocity-space update at a configuration-space node is linear in f and its
+   operators depend on velocity space only. With the tensor velocity basis, the
+   sparse (separable) Hamiltonian, the per-direction velocity map and the
+   per-direction nodal division by J_v, every operator is a sum of Kronecker
+   products of 3x3 one-dimensional matrices. For each velocity direction d
+   (1D modes m, n of the p=2 basis phi, (D phi_n) = phi_n divided nodally by J_vd):
+     PD_d[m][n]  = (2/dv_d) int phi_m' (D phi_n),
+     PvD_d[m][n] = (2/dv_d) int phi_m' v_d (D phi_n),
+     QD_d[m][n]  = (2/dv_d) int phi_m d_vd(H) (D phi_n),
+     QvD_d[m][n] = (2/dv_d) int phi_m d_vd(H) v_d (D phi_n),
+     V_d[m][n]   = int phi_m v_d phi_n.
+   Then B_b = QD_b f (along b) and, for each pair (a,b) with third direction c,
+     U += QD_b (Om_a PvD_a f + Om_c V_c PD_a f) + Om_b QvD_b PD_a f
+        - PD_b (Om_a QvD_a f + Om_c V_c QD_a f) - Om_b PvD_b QD_a f,
+   with Om_j = Omega_ab^j at the node. These are the same integrals as the
+   expanded form, factored. */
+
+/* Number of one-dimensional matrices per velocity direction in the table. */
+triadNodalNumTab1D : 5$
+
+/* 0-based 1D degrees [i_1, ..., i_vdim] of each velocity basis function, with
+   bV[m] = prod_d phi1D[i_d+1](v_d). Errors out if bV is not such a product. */
+triadNodalVelDegrees(bV, varsV, phi1D) := block([vdim, degs, m, d, r],
+  vdim : length(varsV),
+  degs : makelist(makelist(hipow(expand(bV[m]), varsV[d]), d, 1, vdim), m, 1, length(bV)),
+  for m : 1 thru length(bV) do (
+    r : radcan(bV[m]/prod(subst(x=varsV[d], phi1D[degs[m][d]+1]), d, 1, vdim)),
+    if r # 1 then error("triadNodalVelDegrees: not a product of 1D modes, m =", m)
+  ),
+  degs
+)$
+
+/* Row-major list of the 3x3 integrals int_{-1}^{1} l[m] r[k] dv. */
+triadNodalInt1D(l, r, v) := flatten(makelist(makelist(integrate(expand(l[m]*r[k]), v, -1, 1), k, 1, 3), m, 1, 3))$
+
+/* One-dimensional matrices of velocity direction d (row-major lists of 9, 1D modes
+   m, k of phi; D phi_n = phi_n divided by J_vd at the 3 Gauss-Legendre nodes):
+     [P, Pv, Q, Qv, V, D] = [int phi_m' phi_k, int phi_m' v_d phi_k,
+                             int phi_m d_vd(H) phi_k, int phi_m d_vd(H) v_d phi_k,
+                             int phi_m v_d phi_k, int phi_k (D phi_n)]. */
+triadNodalVolVel1DMats(vdim) := block(
+  [basisFun, varsV, bV, varsP1, phi1D, hamil_e, bV_vi, NV_1D, jacobNodes,
+   numJacobNodes, jacobNodes_vi, basisNodal_vi, varsV_p3map, bV_p3map, d, v, phi,
+   dphi, dH_e, vmap_e, Dphi, i],
+  basisFun : "tensor", /* Read by loadVelJacobianBasis. */
+  [varsV, bV] : triadNodalVelBasis(vdim),
+  [varsP1, phi1D] : loadBasis("Tensor", 1, 2),
+  hamil_e : hamilExpand(hamil, bV, varsV, true),
+  [bV_vi, NV_1D, jacobNodes, numJacobNodes, jacobNodes_vi, basisNodal_vi] : loadVelJacobianBasis(2),
+  [varsV_p3map, bV_p3map] : loadBasis("Tensor", 1, 3),
+  makelist(block(
+    v : varsV[d],
+    phi : subst(x=v, copylist(phi1D)),
+    dphi : diff(phi, v),
+    dH_e : diff(hamil_e, v),
+    for i : 1 thru vdim do
+      if i # d and not freeof(varsV[i], dH_e) then
+        error("triadNodalVolVel1DMats: d_v H is not one-dimensional, d =", d),
+    vmap_e : doExpand1(eval_string(sconcat("vmap_v", clabels[d])), subst(x=v, copylist(bV_p3map))),
+    /* phi_n divided by J_vd at the 3 Gauss-Legendre nodes (Lagrange interpolant). */
+    Dphi : makelist(sum(subst(v=jacobNodes[i][1], phi[n])
+                        *arraymake(eval_string(sconcat("jinv_v", clabels[d])), [i-1])
+                        *basisNodal_vi[d][i], i, 1, numJacobNodes), n, 1, 3),
+    [triadNodalInt1D(dphi, phi, v), triadNodalInt1D(dphi*vmap_e, phi, v),
+     triadNodalInt1D(phi*dH_e, phi, v), triadNodalInt1D(phi*dH_e*vmap_e, phi, v),
+     triadNodalInt1D(phi*vmap_e, phi, v), triadNodalInt1D(phi, Dphi, v)]), d, 1, vdim)
+)$
+
+/* Product of two 3x3 matrices stored as row-major lists of 9. */
+triadNodalMatMul3(A, B) := makelist(sum(A[3*floor((i-1)/3)+k+1]*B[3*k+mod(i-1,3)+1], k, 0, 2), i, 1, 9)$
+
+/* Expressions of the one-dimensional velocity tables, flattened as
+   vel_tab[45*(d-1) + 9*t + 3*m + n], t = 0..4 for PD, PvD, QD, QvD, V. */
+triadNodalVolVelTabExprs(vdim) := block([mats, dv1s, d],
+  mats : triadNodalVolVel1DMats(vdim),
+  dv1s : [dv10, dv11, dv12],
+  apply(append, makelist(append(dv1s[d]*triadNodalMatMul3(mats[d][1], mats[d][6]),
+                                dv1s[d]*triadNodalMatMul3(mats[d][2], mats[d][6]),
+                                dv1s[d]*triadNodalMatMul3(mats[d][3], mats[d][6]),
+                                dv1s[d]*triadNodalMatMul3(mats[d][4], mats[d][6]),
+                                mats[d][5]), d, 1, vdim))
+)$
+
+/* Statements filling vel_tab, the one-dimensional velocity tables of a cell, from
+   dv1, vmap, jacob_vel and hamil: the division matrix D and the (2/dv_d)-scaled P,
+   Pv, Q, Qv first, then their products. */
+calcTriadNodalVolVelTablesBody(fh, vdim) := block([mats, dv1s, tab_s, d, i, lab, D_s, X_s, t],
+  mats : triadNodalVolVel1DMats(vdim),
+  dv1s : [dv10, dv11, dv12],
+  tab_s : [],
+  for d : 1 thru vdim do (
+    lab : clabels[d],
+    printf(fh, "  const double dv1~a = dv1[~a]; ~%", d-1, d-1),
+    printf(fh, "  const double *vmap_v~a = &vmap[~a]; ~%", lab, 4*(d-1)),
+    printf(fh, "  const double jinv_v~a[3] = {", lab),
+    for i : 1 thru 3 do printf(fh, "~a1.0/jacob_vel[~a]", if i > 1 then ", " else "", 3*(d-1)+i-1),
+    printf(fh, "}; ~%"),
+    D_s : triadNodalWriteArr(eval_string(sconcat("jdiv_v", lab)), mats[d][6]),
+    X_s : makelist(triadNodalWriteArr(eval_string(sconcat(["p_v", "pv_v", "q_v", "qv_v"][t], lab)),
+                                      dv1s[d]*mats[d][t]), t, 1, 4),
+    tab_s : append(tab_s, apply(append, makelist(triadNodalMatMul3(X_s[t], D_s), t, 1, 4)), mats[d][5])
+  ),
+  printf(fh, "  double vel_tab[~a]; ~%", length(tab_s)),
+  writeCExprs1(vel_tab, tab_s)
+)$
+
+/* C symbols vel_tab[i] of the 3x3 table t (0..4) of velocity direction d, with 0 where
+   the floated table expression tabF[i+1] vanishes identically. */
+triadNodalTabSyms(tabF, d, t) := block([i0],
+  i0 : 9*triadNodalNumTab1D*(d-1) + 9*t,
+  makelist(if tabF[i0+k+1] = 0.0 then 0 else arraymake(vel_tab, [i0+k]), k, 0, 8)
+)$
+
+/* Write name[i] = rhs_e[i] for the entries that do not vanish identically and
+   return the list of the corresponding C symbols, with 0 for vanishing entries
+   (no array at all when every entry vanishes). */
+triadNodalWriteArr(name, rhs_e) := block([rhsF, i],
+  rhsF : float(expand(rhs_e)),
+  if some(lambda([e], e # 0.0), rhsF) then printf(fh, "  double ~a[~a]; ~%", name, length(rhsF)),
+  for i : 1 thru length(rhsF) do
+    if rhsF[i] # 0.0 then printf(fh, "  ~a[~a] = ~a; ~%", name, i-1, rhsF[i]),
+  makelist(if rhsF[i] = 0.0 then 0 else arraymake(name, [i-1]), i, 1, length(rhsF))
+)$
+
+/* Apply the 3x3 matrix M (row-major list) along velocity direction d to the list
+   x of velocity coefficients (degs from triadNodalVelDegrees). */
+triadNodalDirApply(M, d, x, degs) := block([NV, m, n, tn],
+  NV : length(degs),
+  makelist(sum(block([tn : copylist(degs[m])], tn[d] : n,
+                     M[3*degs[m][d] + n + 1]*x[first(sublist_indices(degs, lambda([s], s = tn)))]),
+               n, 0, 2), m, 1, NV)
+)$
+
+/* Velocity-basis setup shared by the node emitters: [NV, degs, tabF, f_s] with the
+   1D degrees of the velocity basis, the floated table expressions (zero pattern) and
+   the C symbols f_node[m]. */
+triadNodalVolNodeSetup(vdim) := block([varsV, bV, varsP1, phi1D],
+  [varsV, bV] : triadNodalVelBasis(vdim),
+  [varsP1, phi1D] : loadBasis("Tensor", 1, 2),
+  [length(bV), triadNodalVelDegrees(bV, varsV, phi1D), float(expand(triadNodalVolVelTabExprs(vdim))),
+   makelist(arraymake(f_node, [m-1]), m, 1, length(bV))]
+)$
+
+/* Statements accumulating, at one configuration-space node, the velocity-velocity
+   update
+     U[m] += sum_{(a,b),j} Omega_ab^j int (2/dv_a)(2/dv_b)
+             [d_va(bV[m]) d_vb(H) - d_vb(bV[m]) d_va(H)] v_j F_ab
+   from f_node, pt_node (vel-vel components) and the cell tables vel_tab. For each
+   pair (a,b) with third direction c and Om_j = Omega_ab^j it computes
+     g = PD_a f, t = Om_a PvD_a f + Om_c V_c g, U += QD_b t + Om_b QvD_b g,
+     g = QD_a f, t = Om_a QvD_a f + Om_c V_c g, U -= PD_b t + Om_b PvD_b g,
+   so that only two 27-entry temporaries are live besides f_node and U. */
+calcTriadNodalVolNodeUBody(fh, vdim) := block(
+  [NV, degs, tabF, f_s, a, b, c, ptIdx, dir1, dir2, jv, om, lab, wV, side, tg, tv, tb,
+   tbv, sgn, wa, gS, tS, wQvD, wPvD],
+  [NV, degs, tabF, f_s] : triadNodalVolNodeSetup(vdim),
+  for a : 1 thru vdim-1 do (
+    for b : a+1 thru vdim do (
+      om : makelist(0, d, 1, vdim),
+      for ptIdx : 1 thru pt_conf_total[vdim] do (
+        [dir1, dir2, jv] : grab_dir_from_pt_index(vdim, ptIdx),
+        if dir1 - vdim = a and dir2 - vdim = b then om[jv] : arraymake(pt_node, [ptIdx-1])
+      ),
+      lab : sconcat(clabels[a], clabels[b]),
+      if vdim = 3 then (
+        c : first(delete(b, delete(a, [1, 2, 3]))),
+        wV : triadNodalWriteArr(eval_string(sconcat("wV_", lab)), om[c]*triadNodalTabSyms(tabF, c, 4))
+      ),
+      wQvD : triadNodalWriteArr(eval_string(sconcat("wQvD_", lab)), om[b]*triadNodalTabSyms(tabF, b, 3)),
+      wPvD : triadNodalWriteArr(eval_string(sconcat("wPvD_", lab)), om[b]*triadNodalTabSyms(tabF, b, 1)),
+      for side : 1 thru 2 do (
+        /* side 1: g = PD_a f, t from PvD_a, U += QD_b t + Om_b QvD_b g.
+           side 2: g = QD_a f, t from QvD_a, U -= PD_b t + Om_b PvD_b g. */
+        [tg, tv, tb, tbv, sgn] : if side = 1 then [0, 1, 2, wQvD, 1] else [2, 3, 0, wPvD, -1],
+        wa : triadNodalWriteArr(eval_string(sconcat("wa", side, "_", lab)), om[a]*triadNodalTabSyms(tabF, a, tv)),
+        gS : triadNodalWriteArr(eval_string(sconcat("g", side, "_", lab)),
+                                triadNodalDirApply(triadNodalTabSyms(tabF, a, tg), a, f_s, degs)),
+        tS : triadNodalWriteArr(eval_string(sconcat("t", side, "_", lab)),
+                                triadNodalDirApply(wa, a, f_s, degs)
+                                + (if vdim = 3 then triadNodalDirApply(wV, c, gS, degs) else 0)),
+        writeCIncrExprs1(U, sgn*(triadNodalDirApply(triadNodalTabSyms(tabF, b, tb), b, tS, degs)
+                                 + triadNodalDirApply(tbv, b, gS, degs)))
+      )
+    )
+  )
+)$
+
+/* Statements writing B[NV*(b-1) + m] = int bV[m] (2/dv_b) d_vb(H) F_b (= QD_b f along
+   b) at one configuration-space node; returns the list of C symbols of B (0 where an
+   entry vanishes identically). */
+calcTriadNodalVolNodeBBody(fh, vdim) := block([NV, degs, tabF, f_s, b],
+  [NV, degs, tabF, f_s] : triadNodalVolNodeSetup(vdim),
+  triadNodalWriteArr(B, apply(append, makelist(
+    triadNodalDirApply(triadNodalTabSyms(tabF, b, 2), b, f_s, degs), b, 1, vdim)))
+)$
+
+/* Cell volume kernel (same signature as the modal triad volume kernels): builds the
+   one-dimensional velocity tables of the cell once, then loops over the 2^cdim
+   Gauss-Legendre nodes: evaluates f there, applies the velocity-velocity update and
+   scatters it, then the configuration-velocity update and scatters it (in that order,
+   to keep few values live). */
+calcTriadNodalVolCell(fh, funcNm, cdim, vdim) := block(
+  [varsC, bC, varsV, bV, varsP, bP, NC, NV, NP, cIdx, mIdx, coefL, nodesC, NQ, npt,
+   sub_q, sSyms, bC_q, dbC_q, f_node_c, B_s, W_s, k, c, m, d, b],
+
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis("tensor", cdim, vdim, 1),
+  NC : length(bC), NV : length(bV), NP : length(bP),
+  [cIdx, mIdx, coefL] : triadNodalFactorBasis(bP, bC, bV),
+  nodesC : gaussOrd(2, cdim),
+  NQ : length(nodesC),
+
+  printf(fh, "#include <gkyl_vlasov_triad_nodal_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *vmap,
+  const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  for d : 1 thru cdim do (
+    printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", d-1, d-1),
+    printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_pos[~a]; ~%", clabels[d], 2*(d-1))
+  ),
+  printf(fh, "  const double dv1[~a] = {", vdim),
+  for b : 1 thru vdim do printf(fh, "~a2.0/dxv[~a]", if b > 1 then ", " else "", cdim+b-1),
+  printf(fh, "}; ~%"),
+  calcTriadNodalVolVelTablesBody(fh, vdim),
+
+  npt : pt_conf_total[vdim],
+
+  /* Runtime loop over the Gauss-Legendre nodes x_d = s_d/sqrt(3), s_d = -1/+1,
+     first coordinate slowest (gaussOrd order, the order of poisson_tensor_conf). */
+  sSyms : makelist(eval_string(sconcat("s", d-1)), d, 1, cdim),
+  sub_q : makelist(varsC[d] = sSyms[d]/sqrt(3), d, 1, cdim),
+  printf(fh, "  for (int q = 0; q < ~a; ++q) { ~%", NQ),
+  for d : 1 thru cdim do
+    printf(fh, "  const double ~a = ((q >> ~a) & 1) ? 1.0 : -1.0; ~%", sSyms[d], cdim-d),
+  bC_q : triadNodalWriteArr(bcq, makelist(subst(sub_q, bC[c]), c, 1, NC)),
+  dbC_q : makelist(triadNodalWriteArr(eval_string(sconcat("dbcq_", clabels[d])),
+                     makelist(subst(sub_q, diff(bC[c], varsC[d])), c, 1, NC)), d, 1, cdim),
+  printf(fh, "  double f_node[~a] = {0.0}; ~%", NV),
+  printf(fh, "  const double *pt_node = &poisson_tensor_conf[~a*q]; ~%", npt),
+  printf(fh, "  double U[~a] = {0.0}; ~%", NV),
+  f_node_c : makelist(0, m, 1, NV),
+  for k : 1 thru NP do
+    f_node_c[mIdx[k]] : f_node_c[mIdx[k]] + coefL[k]*bC_q[cIdx[k]]*f[k-1],
+  writeCExprs1(f_node, f_node_c),
+  /* Velocity-velocity part, scattered with bC[c](x_q). */
+  calcTriadNodalVolNodeUBody(fh, vdim),
+  writeCIncrExprs1(out, makelist(coefL[k]*bC_q[cIdx[k]]*U[mIdx[k]-1], k, 1, NP)),
+  /* Configuration-velocity part: B_b scattered with the node weights
+     W[c][b] = sum_d d_xd(bC[c])(x_q) (2/dx_d)(1/J_xd) PT_db(x_q). */
+  B_s : calcTriadNodalVolNodeBBody(fh, vdim),
+  W_s : triadNodalWriteArr(wgt, flatten(makelist(makelist(
+          sum(dbC_q[d][c]*dx1[d]*jacobCInv_sym[d]*pt_node[vdim*(d-1) + b-1], d, 1, cdim),
+          b, 1, vdim), c, 1, NC))),
+  writeCIncrExprs1(out, makelist(coefL[k]*sum(W_s[vdim*(cIdx[k]-1) + b]*B_s[NV*(b-1) + mIdx[k]],
+                                             b, 1, vdim), k, 1, NP)),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
+
+/* ---------------------------------------------------------------------------
+   Dense velocity Hamiltonian and phase-space Hamiltonian (GR triads).
+
+   H at a node is a full p=2 tensor velocity expansion, H = sum_p h_p psi_p(v) with
+   psi_p = prod_d phi_{p_d}(v_d), so every operator is a sum over the H modes p of
+   Kronecker products of 3x3 one-dimensional matrices, one per velocity direction d,
+   indexed by the 1D mode p_d (mode matrices, D = nodal division by J_vd):
+     P_p  = (2/dv_d) int phi_m' phi_p (D phi_n),  Pv_p = (2/dv_d) int phi_m' phi_p v_d (D phi_n),
+     Q_p  = (2/dv_d) int phi_m phi_p' (D phi_n),  Qv_p = (2/dv_d) int phi_m phi_p' v_d (D phi_n),
+     C_p  = int phi_m phi_p phi_n (constants),    Cv_p = int phi_m phi_p v_d phi_n.
+   The test-function derivative direction takes P/Pv, the H-derivative direction
+   Q/Qv, the remaining direction C/Cv (v when it carries the Omega velocity factor).
+   The node update sums the modes direction by direction, combining the innermost
+   direction's matrices into one 3x3 matrix per outer modes.
+   For the phase-space Hamiltonian, H and its configuration-space gradient are
+   evaluated at the node, and the configuration-velocity bracket adds the force
+     -sum_{d,b} PT_db (2/dx_d)(1/J_xd) int (2/dv_b) d_vb(bV[m]) d_xd(H) F_b.
+   --------------------------------------------------------------------------- */
+
+/* Mode matrices of velocity direction d (row-major lists of 9, before the (2/dv_d)
+   scaling and the division): [P, Pv, Q, Qv, C, Cv, D], P..Cv lists over p = 0..2. */
+triadNodalVolModeMats(vdim) := block(
+  [basisFun, varsV, bV, varsP1, phi1D, bV_vi, NV_1D, jacobNodes, numJacobNodes,
+   jacobNodes_vi, basisNodal_vi, varsV_p3map, bV_p3map, d, v, phi, dphi, vmap_e, Dphi, i, p],
+  basisFun : "tensor", /* Read by loadVelJacobianBasis. */
+  [varsV, bV] : triadNodalVelBasis(vdim),
+  [varsP1, phi1D] : loadBasis("Tensor", 1, 2),
+  [bV_vi, NV_1D, jacobNodes, numJacobNodes, jacobNodes_vi, basisNodal_vi] : loadVelJacobianBasis(2),
+  [varsV_p3map, bV_p3map] : loadBasis("Tensor", 1, 3),
+  makelist(block(
+    v : varsV[d],
+    phi : subst(x=v, copylist(phi1D)),
+    dphi : diff(phi, v),
+    vmap_e : doExpand1(eval_string(sconcat("vmap_v", clabels[d])), subst(x=v, copylist(bV_p3map))),
+    Dphi : makelist(sum(subst(v=jacobNodes[i][1], phi[n])
+                        *arraymake(eval_string(sconcat("jinv_v", clabels[d])), [i-1])
+                        *basisNodal_vi[d][i], i, 1, numJacobNodes), n, 1, 3),
+    [makelist(triadNodalInt1D(dphi*phi[p], phi, v), p, 1, 3),
+     makelist(triadNodalInt1D(dphi*phi[p]*vmap_e, phi, v), p, 1, 3),
+     makelist(triadNodalInt1D(phi*dphi[p], phi, v), p, 1, 3),
+     makelist(triadNodalInt1D(phi*dphi[p]*vmap_e, phi, v), p, 1, 3),
+     makelist(triadNodalInt1D(phi*phi[p], phi, v), p, 1, 3),
+     makelist(triadNodalInt1D(phi*phi[p]*vmap_e, phi, v), p, 1, 3),
+     triadNodalInt1D(phi, Dphi, v)]), d, 1, vdim)
+)$
+
+/* C array name of the mode table t of velocity direction lab for 1D mode p-1. */
+triadNodalTabName(t, lab, p) := eval_string(sconcat(t, "_v", lab, "_", p-1))$
+
+/* Statements of the cell's one-dimensional mode tables (from dv1, vmap, jacob_vel);
+   returns, per velocity direction, [P, Pv, Q, Qv, C, Cv] as lists over p = 0..2 of
+   the 9 C symbols (0 for vanishing entries; the constant C as numbers). canonical:
+   the canonical Poisson bracket (no division by the velocity-map Jacobian, no
+   velocity-velocity block): only P and Q, from dv1. */
+calcTriadNodalVolModeTablesBody(fh, vdim, canonical) := block([mats, dv1s, d, i, lab, D_s, p, tabs],
+  mats : triadNodalVolModeMats(vdim),
+  dv1s : [dv10, dv11, dv12],
+  tabs : [],
+  for d : 1 thru vdim do (
+    lab : clabels[d],
+    printf(fh, "  const double dv1~a = dv1[~a]; ~%", d-1, d-1),
+    if canonical then
+      D_s : [1, 0, 0, 0, 1, 0, 0, 0, 1]
+    else (
+      printf(fh, "  const double *vmap_v~a = &vmap[~a]; ~%", lab, 4*(d-1)),
+      printf(fh, "  const double jinv_v~a[3] = {", lab),
+      for i : 1 thru 3 do printf(fh, "~a1.0/jacob_vel[~a]", if i > 1 then ", " else "", 3*(d-1)+i-1),
+      printf(fh, "}; ~%"),
+      D_s : triadNodalWriteArr(eval_string(sconcat("jdiv_v", lab)), mats[d][7])
+    ),
+    tabs : endcons([
+      makelist(triadNodalWriteArr(triadNodalTabName("tP", lab, p), dv1s[d]*triadNodalMatMul3(mats[d][1][p], D_s)), p, 1, 3),
+      makelist(if vdim > 1 and not canonical then triadNodalWriteArr(triadNodalTabName("tPv", lab, p), dv1s[d]*triadNodalMatMul3(mats[d][2][p], D_s))
+               else makelist(0, i, 1, 9), p, 1, 3),
+      makelist(triadNodalWriteArr(triadNodalTabName("tQ", lab, p), dv1s[d]*triadNodalMatMul3(mats[d][3][p], D_s)), p, 1, 3),
+      makelist(if vdim > 1 and not canonical then triadNodalWriteArr(triadNodalTabName("tQv", lab, p), dv1s[d]*triadNodalMatMul3(mats[d][4][p], D_s))
+               else makelist(0, i, 1, 9), p, 1, 3),
+      makelist(float(mats[d][5][p]), p, 1, 3),
+      makelist(if vdim > 2 and not canonical then triadNodalWriteArr(triadNodalTabName("tCv", lab, p), mats[d][6][p]) else makelist(0, i, 1, 9), p, 1, 3)],
+      tabs)
+  ),
+  tabs
+)$
+
+/* True if every entry of the matrix (list) vanishes. */
+triadNodalZeroMat(M) := every(lambda([e], float(expand(e)) = 0.0), M)$
+
+/* Statements lhs[i] += rhs[i] (lhs a list of C symbols) for the nonzero rhs entries. */
+triadNodalIncr(lhs, rhs) := block([rhsF, i],
+  rhsF : float(expand(rhs)),
+  for i : 1 thru length(rhsF) do
+    if rhsF[i] # 0.0 then printf(fh, "  ~a += ~a; ~%", lhs[i], rhsF[i])
+)$
+
+/* Coefficient symbol of the H mode with 1D degrees ptup in the list hS (velocity
+   basis order, degrees in degs). */
+triadNodalHMode(hS, degs, ptup) := hS[first(sublist_indices(degs, lambda([s], s = ptup)))]$
+
+/* Statements adding sgn * sum_p w(p) [A[o][p_o] (x) A[m][p_m] (x) A[i][p_i]] x to tgt,
+   order = [o, m, i] (outer to inner velocity directions; [o, i] in 2V, [o] in 1V),
+   A[d] a list over p_d = 0..2 of 3x3 matrices, wS the H-mode coefficient symbols. */
+triadNodalTuckerApply(tgt, sgn, wS, A, order, x, degs, tag) := block(
+  [vdim, NV, o, mm, ii, po, pm, pi, ptup, Mi, Mi_s, r_s, t_s, k],
+  vdim : length(order), NV : length(degs),
+  if vdim = 1 then (
+    o : order[1],
+    Mi : sum(triadNodalHMode(wS, degs, [pi])*A[o][pi+1], pi, 0, 2),
+    if not triadNodalZeroMat(Mi) then (
+      Mi_s : triadNodalWriteArr(eval_string(sconcat("M_", tag)), Mi),
+      triadNodalIncr(tgt, sgn*triadNodalDirApply(Mi_s, o, x, degs))
+    )
+  ) else if vdim = 2 then (
+    [o, ii] : order,
+    for po : 0 thru 2 do if not triadNodalZeroMat(A[o][po+1]) then (
+      Mi : sum(block([ptup : makelist(0, k, 1, 2)], ptup[o] : po, ptup[ii] : pi, triadNodalHMode(wS, degs, ptup))*A[ii][pi+1], pi, 0, 2),
+      if not triadNodalZeroMat(Mi) then (
+        Mi_s : triadNodalWriteArr(eval_string(sconcat("M_", tag, "_", po)), Mi),
+        r_s : triadNodalWriteArr(eval_string(sconcat("r_", tag, "_", po)), triadNodalDirApply(Mi_s, ii, x, degs)),
+        triadNodalIncr(tgt, sgn*triadNodalDirApply(A[o][po+1], o, r_s, degs))
+      )
+    )
+  ) else (
+    [o, mm, ii] : order,
+    for po : 0 thru 2 do if not triadNodalZeroMat(A[o][po+1]) then (
+      t_s : makelist(arraymake(eval_string(sconcat("t_", tag, "_", po)), [k-1]), k, 1, NV),
+      printf(fh, "  double t_~a_~a[~a] = {0.0}; ~%", tag, po, NV),
+      for pm : 0 thru 2 do if not triadNodalZeroMat(A[mm][pm+1]) then (
+        Mi : sum(block([ptup : makelist(0, k, 1, 3)], ptup[o] : po, ptup[mm] : pm, ptup[ii] : pi, triadNodalHMode(wS, degs, ptup))
+                 *A[ii][pi+1], pi, 0, 2),
+        if not triadNodalZeroMat(Mi) then (
+          Mi_s : triadNodalWriteArr(eval_string(sconcat("M_", tag, "_", po, pm)), Mi),
+          r_s : triadNodalWriteArr(eval_string(sconcat("r_", tag, "_", po, pm)), triadNodalDirApply(Mi_s, ii, x, degs)),
+          triadNodalIncr(t_s, triadNodalDirApply(A[mm][pm+1], mm, r_s, degs))
+        )
+      ),
+      triadNodalIncr(tgt, sgn*triadNodalDirApply(A[o][po+1], o, t_s, degs))
+    )
+  )
+)$
+
+/* Statements adding the velocity-velocity bracket of pair (a, b) (third direction c in
+   3V) to tgt, for H-mode coefficients hS and Omega_ab^j = om[j]:
+     sum_p h_p [ Om_a Pv_a (x) Q_b (x) C_c + Om_b P_a (x) Qv_b (x) C_c + Om_c P_a (x) Q_b (x) Cv_c ]
+   - sum_p h_p [ Om_a Qv_a (x) P_b (x) C_c + Om_b Q_a (x) Pv_b (x) C_c + Om_c Q_a (x) P_b (x) Cv_c ],
+   per outer mode p_a: X = sum_{p_b} B_b r, Y = sum_{p_b} (Om_b Bv_b r + B_b rv) with
+   r = sum_{p_c} h C_c x, rv = sum_{p_c} h Om_c Cv_c x, then tgt += Om_a Av_a X + A_a Y. */
+triadNodalTuckerOmega(tgt, a, b, c, om, hS, tabs, x, degs, tag) := block(
+  [vdim, NV, side, sgn, Aa, Aav, Ab, Abv, pa, pb, pc, ptup, MC, MCv, MC_s, MCv_s, r_s, rv_s,
+   X_s, Y_s, Mb, Mbv, Mb_s, Mbv_s, k, stag],
+  vdim : length(degs[1]), NV : length(degs),
+  for side : 1 thru 2 do (
+    /* tabs[d] = [P, Pv, Q, Qv, C, Cv]. */
+    if side = 1 then (sgn : 1, Aa : tabs[a][1], Aav : tabs[a][2], Ab : tabs[b][3], Abv : tabs[b][4])
+    else (sgn : -1, Aa : tabs[a][3], Aav : tabs[a][4], Ab : tabs[b][1], Abv : tabs[b][2]),
+    for pa : 0 thru 2 do if not (triadNodalZeroMat(Aa[pa+1]) and triadNodalZeroMat(Aav[pa+1])) then (
+      stag : sconcat(tag, "_", side, pa),
+      if vdim = 2 then (
+        Mb : sum(block([ptup : makelist(0, k, 1, 2)], ptup[a] : pa, ptup[b] : pb, triadNodalHMode(hS, degs, ptup))*Ab[pb+1], pb, 0, 2),
+        Mbv : sum(block([ptup : makelist(0, k, 1, 2)], ptup[a] : pa, ptup[b] : pb, triadNodalHMode(hS, degs, ptup))*om[b]*Abv[pb+1], pb, 0, 2),
+        Mb_s : triadNodalWriteArr(eval_string(sconcat("Mb_", stag)), Mb),
+        Mbv_s : triadNodalWriteArr(eval_string(sconcat("Mbv_", stag)), Mbv),
+        X_s : triadNodalWriteArr(eval_string(sconcat("X_", stag)), triadNodalDirApply(Mb_s, b, x, degs)),
+        Y_s : triadNodalWriteArr(eval_string(sconcat("Y_", stag)), triadNodalDirApply(Mbv_s, b, x, degs))
+      ) else (
+        X_s : makelist(arraymake(eval_string(sconcat("X_", stag)), [k-1]), k, 1, NV),
+        Y_s : makelist(arraymake(eval_string(sconcat("Y_", stag)), [k-1]), k, 1, NV),
+        printf(fh, "  double X_~a[~a] = {0.0}; ~%", stag, NV),
+        printf(fh, "  double Y_~a[~a] = {0.0}; ~%", stag, NV),
+        for pb : 0 thru 2 do if not (triadNodalZeroMat(Ab[pb+1]) and triadNodalZeroMat(Abv[pb+1])) then (
+          MC : sum(block([ptup : makelist(0, k, 1, 3)], ptup[a] : pa, ptup[b] : pb, ptup[c] : pc, triadNodalHMode(hS, degs, ptup))
+                   *tabs[c][5][pc+1], pc, 0, 2),
+          MCv : sum(block([ptup : makelist(0, k, 1, 3)], ptup[a] : pa, ptup[b] : pb, ptup[c] : pc, triadNodalHMode(hS, degs, ptup))
+                    *om[c]*tabs[c][6][pc+1], pc, 0, 2),
+          MC_s : triadNodalWriteArr(eval_string(sconcat("MC_", stag, pb)), MC),
+          MCv_s : triadNodalWriteArr(eval_string(sconcat("MCv_", stag, pb)), MCv),
+          r_s : triadNodalWriteArr(eval_string(sconcat("r_", stag, pb)), triadNodalDirApply(MC_s, c, x, degs)),
+          rv_s : triadNodalWriteArr(eval_string(sconcat("rv_", stag, pb)), triadNodalDirApply(MCv_s, c, x, degs)),
+          triadNodalIncr(X_s, triadNodalDirApply(Ab[pb+1], b, r_s, degs)),
+          triadNodalIncr(Y_s, om[b]*triadNodalDirApply(Abv[pb+1], b, r_s, degs) + triadNodalDirApply(Ab[pb+1], b, rv_s, degs))
+        )
+      ),
+      triadNodalIncr(tgt, sgn*(om[a]*triadNodalDirApply(Aav[pa+1], a, X_s, degs) + triadNodalDirApply(Aa[pa+1], a, Y_s, degs)))
+    )
+  )
+)$
+
+/* Poisson-tensor entry PT_db at the node (pt_node) and inverse configuration-space
+   Jacobian of direction d; canonical: the canonical bracket (delta_db, no Jacobian). */
+triadNodalPT(canonical, vdim, d, b) := if canonical then (if d = b then 1 else 0)
+  else arraymake(pt_node, [vdim*(d-1) + b-1])$
+triadNodalJcInv(canonical, d) := if canonical then 1 else jacobCInv_sym[d]$
+
+/* Cell volume kernel for the dense velocity Hamiltonian (hamil_rep = "vel_dense",
+   hamil the cell's velocity expansion) or the phase-space Hamiltonian
+   (hamil_rep = "phase", hamil the cell's phase expansion, evaluated at each node
+   together with its configuration-space gradient). Same signature, node loop and
+   scatter as calcTriadNodalVolCell. canonical (phase-space Hamiltonian only): the
+   canonical Poisson bracket of the canonical-PB models, sum over the pairs (x_d, v_d),
+   d <= min(cdim, vdim), with no Jacobians (as calcHamilVol with rep = "none"); the
+   Poisson tensor is constant, so the 2-node configuration-space quadrature is exact
+   and the kernel equals the modal one to round off. */
+calcTriadNodalVolCellModes(fh, funcNm, cdim, vdim, hamil_rep, canonical) := block(
+  [varsC, bC, varsV, bV, varsP, bP, NC, NV, NP, cIdx, mIdx, coefL, nodesC, NQ, npt, sub_q,
+   sSyms, bC_q, dbC_q, f_node_c, B_s, W_s, k, c, m, d, b, a, tabs, degs, varsP1, phi1D, f_s,
+   hS, U_s, om, ptIdx, dir1, dir2, jv, others, dH_s, wK_s, K_s, nb],
+
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis("tensor", cdim, vdim, 1),
+  /* Velocity directions with a configuration-velocity bracket term. */
+  nb : if canonical then min(cdim, vdim) else vdim,
+  NC : length(bC), NV : length(bV), NP : length(bP),
+  [cIdx, mIdx, coefL] : triadNodalFactorBasis(bP, bC, bV),
+  nodesC : gaussOrd(2, cdim),
+  NQ : length(nodesC),
+  [varsP1, phi1D] : loadBasis("Tensor", 1, 2),
+  degs : triadNodalVelDegrees(triadNodalVelBasis(vdim)[2], triadNodalVelBasis(vdim)[1], phi1D),
+  f_s : makelist(arraymake(f_node, [m-1]), m, 1, NV),
+  U_s : makelist(arraymake(U, [m-1]), m, 1, NV),
+
+  printf(fh, "#include <~a> ~%", if canonical then "gkyl_vlasov_kernels.h" else "gkyl_vlasov_triad_nodal_kernels.h"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *vmap,
+  const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil, const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  for d : 1 thru cdim do (
+    printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", d-1, d-1),
+    if not canonical then
+      printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_pos[~a]; ~%", clabels[d], 2*(d-1))
+  ),
+  printf(fh, "  const double dv1[~a] = {", vdim),
+  for b : 1 thru vdim do printf(fh, "~a2.0/dxv[~a]", if b > 1 then ", " else "", cdim+b-1),
+  printf(fh, "}; ~%"),
+  tabs : calcTriadNodalVolModeTablesBody(fh, vdim, canonical),
+
+  npt : pt_conf_total[vdim],
+  sSyms : makelist(eval_string(sconcat("s", d-1)), d, 1, cdim),
+  sub_q : makelist(varsC[d] = sSyms[d]/sqrt(3), d, 1, cdim),
+  printf(fh, "  for (int q = 0; q < ~a; ++q) { ~%", NQ),
+  for d : 1 thru cdim do
+    printf(fh, "  const double ~a = ((q >> ~a) & 1) ? 1.0 : -1.0; ~%", sSyms[d], cdim-d),
+  bC_q : triadNodalWriteArr(bcq, makelist(subst(sub_q, bC[c]), c, 1, NC)),
+  dbC_q : makelist(triadNodalWriteArr(eval_string(sconcat("dbcq_", clabels[d])),
+                     makelist(subst(sub_q, diff(bC[c], varsC[d])), c, 1, NC)), d, 1, cdim),
+  printf(fh, "  double f_node[~a] = {0.0}; ~%", NV),
+  if not canonical then printf(fh, "  const double *pt_node = &poisson_tensor_conf[~a*q]; ~%", npt),
+  printf(fh, "  double U[~a] = {0.0}; ~%", NV),
+  f_node_c : makelist(0, m, 1, NV),
+  for k : 1 thru NP do
+    f_node_c[mIdx[k]] : f_node_c[mIdx[k]] + coefL[k]*bC_q[cIdx[k]]*f[k-1],
+  writeCExprs1(f_node, f_node_c),
+
+  if hamil_rep = "phase" then (
+    /* H and its configuration-space gradient at the node. */
+    hS : triadNodalWriteArr(hq, block([h_c : makelist(0, m, 1, NV)],
+           for k : 1 thru NP do h_c[mIdx[k]] : h_c[mIdx[k]] + coefL[k]*bC_q[cIdx[k]]*hamil[k-1], h_c)),
+    dH_s : makelist(triadNodalWriteArr(eval_string(sconcat("dHq_", clabels[d])), block([h_c : makelist(0, m, 1, NV)],
+           for k : 1 thru NP do h_c[mIdx[k]] : h_c[mIdx[k]] + coefL[k]*dbC_q[d][cIdx[k]]*hamil[k-1], h_c)), d, 1, cdim),
+    /* Force coefficients K_b = -sum_d PT_db (2/dx_d)(1/J_xd) d_xd(H). */
+    wK_s : triadNodalWriteArr(wK, flatten(makelist(makelist(-triadNodalPT(canonical, vdim, d, b)*dx1[d]*triadNodalJcInv(canonical, d),
+             b, 1, vdim), d, 1, cdim))),
+    K_s : makelist(triadNodalWriteArr(eval_string(sconcat("Kq_v", clabels[b])),
+            sum(wK_s[vdim*(d-1) + b]*dH_s[d], d, 1, cdim)), b, 1, nb),
+    /* Force: sum_b int (2/dv_b) d_vb(bV[m]) K_b F_b, P along b, C elsewhere. */
+    for b : 1 thru nb do (
+      others : delete(b, makelist(d, d, 1, vdim)),
+      triadNodalTuckerApply(U_s, 1, K_s[b],
+        makelist(if d = b then tabs[d][1] else tabs[d][5], d, 1, vdim),
+        cons(b, others), f_s, degs, sconcat("K", clabels[b]))
+    )
+  ) else (
+    hS : makelist(arraymake(hamil, [m-1]), m, 1, NV)
+  ),
+
+  /* Velocity-velocity part. */
+  if not canonical then for a : 1 thru vdim-1 do (
+    for b : a+1 thru vdim do (
+      om : makelist(0, d, 1, vdim),
+      for ptIdx : 1 thru pt_conf_total[vdim] do (
+        [dir1, dir2, jv] : grab_dir_from_pt_index(vdim, ptIdx),
+        if dir1 - vdim = a and dir2 - vdim = b then om[jv] : arraymake(pt_node, [ptIdx-1])
+      ),
+      c : if vdim = 3 then first(delete(b, delete(a, [1, 2, 3]))) else 0,
+      triadNodalTuckerOmega(U_s, a, b, c, om, hS, tabs, f_s, degs, sconcat(clabels[a], clabels[b]))
+    )
+  ),
+  writeCIncrExprs1(out, makelist(coefL[k]*bC_q[cIdx[k]]*U[mIdx[k]-1], k, 1, NP)),
+
+  /* Configuration-velocity part: B_b = sum_p h_p Q_b (x) C (2/dv_b) d_vb(H) F_b,
+     scattered with the node weights W[c][b] as in calcTriadNodalVolCell. */
+  printf(fh, "  double B[~a] = {0.0}; ~%", nb*NV),
+  for b : 1 thru nb do (
+    others : delete(b, makelist(d, d, 1, vdim)),
+    triadNodalTuckerApply(makelist(arraymake(B, [NV*(b-1) + m-1]), m, 1, NV), 1, hS,
+      makelist(if d = b then tabs[d][3] else tabs[d][5], d, 1, vdim),
+      cons(b, others), f_s, degs, sconcat("B", clabels[b]))
+  ),
+  B_s : makelist(arraymake(B, [k-1]), k, 1, nb*NV),
+  W_s : triadNodalWriteArr(wgt, flatten(makelist(makelist(
+          sum(dbC_q[d][c]*dx1[d]*triadNodalJcInv(canonical, d)*triadNodalPT(canonical, vdim, d, b), d, 1, cdim),
+          b, 1, nb), c, 1, NC))),
+  writeCIncrExprs1(out, makelist(coefL[k]*sum(W_s[nb*(cIdx[k]-1) + b]*B_s[NV*(b-1) + mIdx[k]],
+                                             b, 1, nb), k, 1, NP)),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
