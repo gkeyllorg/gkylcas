@@ -1,0 +1,63 @@
+/* pkpm-vars-grad-u.mac ----------------------------------------------------------
+   Weak (surface-averaged) gradient of the flow velocity of the p=1 PKPM solver.
+
+   pkpm_vars_grad_u_<dir>_<c>x_ser_p1(dxv, u_l, u_c, u_r, grad_u)
+     Writes the p=1 expansion of d_dir u_j, j = x, y, z, into the block
+     grad_u[(dir*3 + j) NC ...] (the full array holds cdim x 3 expansions) from the
+     weak form with the average of the two traces at each face,
+
+       <psi_k, d_dir u_j> = dx1 [ psi_k(+1) ubar_r - psi_k(-1) ubar_l - <d_xi psi_k, u_c> ],
+       ubar_r = (u_c(+1) + u_r(-1))/2,  ubar_l = (u_l(+1) + u_c(-1))/2.
+
+     This is the gradient the legacy solver used for bb:grad(u) and div(u). A pure
+     slope sawtooth of u (alternating in-cell slopes with smooth averages) cancels in
+     the face averages, so the compression and perpendicular sources of the kinetic
+     equations do not feed back on it; the plain in-cell gradient does, and the
+     coupled system then drains p_perp and can blow up in magnetized runs. */
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("pkpm/pkpm/pkpm-cas-util.mac")$
+load(stringproc)$
+fpprec : 24$
+
+cvars : [x, y, z]$
+
+calcPKPMVarsGradU(dir, fh, funcNm, cdim) := block(
+  [varsC, bC, NC, cv, surfVars, j, k, ul_e, uc_e, ur_e, ubar_r, ubar_l, vol, sl, sr, g],
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis("ser", cdim, 1),
+  NC : length(bC),
+  cv : varsC[dir],
+  surfVars : delete(cv, varsC),
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *dxv, const double *u_l, const double *u_c, const double *u_r, double* GKYL_RESTRICT grad_u) ~%{ ~%", funcNm),
+  printf(fh, "  // dxv[NDIM]: Cell spacing. ~%"),
+  printf(fh, "  // u_l/u_c/u_r: Flow velocity [ux, uy, uz] in the left/current/right cell in direction ~a. ~%", cv),
+  printf(fh, "  // grad_u:    Output weak gradient of u, block of direction ~a: [d_~a ux, d_~a uy, d_~a uz]. ~%", cv, cv, cv, cv),
+  printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
+  for j : 1 thru 3 do (
+    printf(fh, "  const double *u~a_l = &u_l[~a]; ~%", cvars[j], (j-1)*NC),
+    printf(fh, "  const double *u~a_c = &u_c[~a]; ~%", cvars[j], (j-1)*NC),
+    printf(fh, "  const double *u~a_r = &u_r[~a]; ~%", cvars[j], (j-1)*NC),
+    printf(fh, "  double *grad_u~a = &grad_u[~a]; ~%", cvars[j], ((dir-1)*3 + (j-1))*NC)
+  ),
+  printf(fh, " ~%"),
+  for j : 1 thru 3 do (
+    ul_e : doExpand1(concat(u, cvars[j], "_l"), bC),
+    uc_e : doExpand1(concat(u, cvars[j], "_c"), bC),
+    ur_e : doExpand1(concat(u, cvars[j], "_r"), bC),
+    ubar_r : (subst(cv = 1, uc_e) + subst(cv = -1, ur_e))/2,
+    ubar_l : (subst(cv = 1, ul_e) + subst(cv = -1, uc_e))/2,
+    vol : calcInnerProdList(varsC, 1, diff(bC, cv), uc_e),
+    if cdim > 1 then (
+      sr : calcInnerProdList(surfVars, 1, subst(cv = 1, bC), ubar_r),
+      sl : calcInnerProdList(surfVars, 1, subst(cv = -1, bC), ubar_l)
+    ) else (
+      sr : makelist(subst(cv = 1, bC[k])*ubar_r, k, 1, NC),
+      sl : makelist(subst(cv = -1, bC[k])*ubar_l, k, 1, NC)
+    ),
+    g : dx1*(sr - sl - vol),
+    pkpmWriteDefExprs(fh, sconcat("grad_u", cvars[j]), g)
+  ),
+  printf(fh, "} ~%")
+)$

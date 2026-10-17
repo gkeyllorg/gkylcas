@@ -1,0 +1,16 @@
+load("pkpm/pkpm/pkpm-vars-diag.mac")$
+load(stringproc)$
+/* This script generates the diagnostic and limiter-scratch kernels of the refactored
+   (p=1) PKPM solver: pkpm_vars_pressure_proj_<c>x_ser_p1 and pkpm_vars_diag_<c>x_ser_p1. */
+for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_vars_pressure_proj_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMVarsPressureProj(fh, funcName, c),
+  close(fh),
+  funcName : sconcat("pkpm_vars_diag_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMVarsDiag(fh, funcName, c),
+  close(fh)
+)$

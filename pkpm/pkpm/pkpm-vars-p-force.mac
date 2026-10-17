@@ -1,0 +1,83 @@
+/* Generate kernels that close the PKPM pressure force a_P from the first v_par moment
+   of the partial (stage-A) right-hand side of the F_0 equation:
+
+     rho a_P = -M1(rhs_A)   (weakly, for every p=1 test function),
+
+   so that the velocity-space pass (stage B) restores integral(v_par F_0) exactly. For a
+   p=1 density that is positive at the 2^cdim Gauss-Legendre nodes the weak division is
+   the nodal quotient interpolated to p=1 (every triple product of the weak form is
+   integrated exactly by the 2-point rule), which is what the kernel computes.
+
+   Policy for an inadmissible density: if rho <= 0 at any node of the cell, the weak system
+   is not solved there, a_P is set to zero in the whole cell, and the kernel returns the
+   number of such nodes. The first-moment invariant does not hold in such cells; callers
+   count and report them. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcPKPMVarsPForce(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, nodes, weights, NN, nodeSub, rho_e, m1_e, rho_q, m1_q, n, k, a_P_c],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+  NC : length(bC),
+
+  /* Gauss-Legendre nodes and weights of the (polyOrder+1)-point tensor rule. */
+  [nodes, weights] : gaussOrdWeight(polyOrder+1, cdim),
+  NN : length(nodes),
+
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH int ~a(const double *vlasov_pkpm_moms, const double *rhs_moms, double* GKYL_RESTRICT a_P) ~%{ ~%", funcNm),
+  printf(fh, "  // vlasov_pkpm_moms: Input [rho, p_parallel, p_perp, M1], moments of the kinetic equation (stage state). ~%"),
+  printf(fh, "  // rhs_moms:         Input [rho, p_parallel, p_perp, M1] moments of the stage-A right-hand side of F_0. ~%"),
+  printf(fh, "  // a_P:              Output pressure force closing the first moment: rho a_P = -M1(rhs_A) weakly, ~%"),
+  printf(fh, "  //                   evaluated at the ~a Gauss-Legendre nodes and interpolated to the p=~a basis. ~%", NN, polyOrder),
+  printf(fh, "  // Returns the number of nodes where rho <= 0 (a_P is set to zero in the cell in that case). ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  const double *rho = &vlasov_pkpm_moms[~a]; ~%", 0),
+  printf(fh, "  const double *m1_rhs = &rhs_moms[~a]; ~%", NC*3),
+  printf(fh, " ~%"),
+
+  rho_e : doExpand1(rho, bC),
+  m1_e : doExpand1(m1_rhs, bC),
+
+  printf(fh, "  double a_P_n[~a] = {0.0}; ~%", NN),
+  printf(fh, "  int num_null_rho = 0; ~%"),
+  printf(fh, " ~%"),
+
+  for n : 1 thru NN do (
+    nodeSub : makelist(varsC[d]=nodes[n][d], d, 1, cdim),
+    rho_q : float(expand(subst(nodeSub, rho_e))),
+    m1_q : float(expand(subst(nodeSub, m1_e))),
+    printf(fh, "  { ~%"),
+    printf(fh, "    const double rho_q = ~a; ~%", rho_q),
+    printf(fh, "    const double m1_q = ~a; ~%", m1_q),
+    printf(fh, "    if (rho_q > 0.0) { ~%"),
+    printf(fh, "      a_P_n[~a] = -m1_q/rho_q; ~%", n-1),
+    printf(fh, "    } else { ~%"),
+    printf(fh, "      num_null_rho += 1; ~%"),
+    printf(fh, "    } ~%"),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, " ~%"),
+  printf(fh, "  if (num_null_rho > 0) { ~%"),
+  for k : 1 thru NC do printf(fh, "    a_P[~a] = 0.0; ~%", k-1),
+  printf(fh, "    return num_null_rho; ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+
+  /* Quadrature projection onto the modal basis: c_k = sum_n w_n psi_k(x_n) a_P(x_n). */
+  a_P_c : makelist(sum(weights[n]*subst(makelist(varsC[d]=nodes[n][d], d, 1, cdim), bC[k])*a_P_n[n-1], n, 1, NN), k, 1, NC),
+  writeCExprs1(a_P, a_P_c),
+  printf(fh, " ~%"),
+
+  printf(fh, "  return 0; ~%"),
+  printf(fh, "} ~%")
+)$

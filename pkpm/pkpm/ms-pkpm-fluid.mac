@@ -1,0 +1,61 @@
+load("pkpm/pkpm/pkpm-fluid-flux-surf.mac")$
+load("pkpm/pkpm/pkpm-fluid-vol.mac")$
+load(stringproc)$
+/* This script generates the momentum kernels of the refactored (p=1) PKPM solver for
+   cdim = 1, 2, 3: the face-flux kernels pkpm_fluid_flux_{x,y,z}_<c>x_ser_p1, the
+   scatter kernels pkpm_fluid_surf{x,y,z}_<c>x_ser_p1 and the volume kernels
+   pkpm_fluid_vol_<c>x_ser_p1, together with their header gkyl_pkpm_fluid_kernels.h. */
+
+cvarsStr : ["x", "y", "z"]$
+
+for c : 1 thru 3 do (
+  for d : 1 thru c do (
+    funcName : sconcat("pkpm_fluid_flux_", cvarsStr[d], "_", c, "x_ser_p1"),
+    disp(printf(false, "Creating ~a", funcName)),
+    fh : openw(sconcat("~/max-out/", funcName, ".c")),
+    calcPKPMFluidFluxSurf(d, fh, funcName, c),
+    close(fh),
+
+    funcName : sconcat("pkpm_fluid_surf", cvarsStr[d], "_", c, "x_ser_p1"),
+    disp(printf(false, "Creating ~a", funcName)),
+    fh : openw(sconcat("~/max-out/", funcName, ".c")),
+    calcPKPMFluidScatterSurf(d, fh, funcName, c),
+    close(fh)
+  ),
+  funcName : sconcat("pkpm_fluid_vol_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMFluidVol(fh, funcName, c),
+  close(fh)
+)$
+
+/* Header. */
+fh : openw("~/max-out/gkyl_pkpm_fluid_kernels.h")$
+printf(fh, "#pragma once ~%")$
+printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <stdbool.h> ~%")$
+printf(fh, "#include <gkyl_wave_geom.h> ~%")$
+printf(fh, "#include <gkyl_wv_eqn.h> ~%")$
+printf(fh, "#include <gkyl_wv_ten_moment_priv.h> ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+deco : "GKYL_CU_DH "$
+for c : 1 thru 3 do (
+  printf(fh, "~adouble pkpm_fluid_vol_~ax_ser_p1(const double *w, const double *dxv,
+  const double *moms, const double *bvar, const double *u, const double *euler,
+  double* GKYL_RESTRICT out); ~%", deco, c),
+  for d : 1 thru c do (
+    printf(fh, "~adouble pkpm_fluid_flux_~a_~ax_ser_p1(
+  const struct gkyl_wv_eqn *wv_eqn, const struct gkyl_wave_cell_geom *geom,
+  const double *w, const double *dxv,
+  const double *moms_l, const double *moms_r, const double *bvar_l, const double *bvar_r,
+  const double *u_l, const double *u_r, const double *euler_l, const double *euler_r,
+  double* GKYL_RESTRICT flux, double* GKYL_RESTRICT mass_flux); ~%", deco, cvarsStr[d], c),
+    printf(fh, "~adouble pkpm_fluid_surf~a_~ax_ser_p1(const double *w, const double *dxv,
+  const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out); ~%", deco, cvarsStr[d], c)
+  ),
+  printf(fh, "~%")
+)$
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$

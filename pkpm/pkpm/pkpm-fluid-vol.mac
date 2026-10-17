@@ -1,0 +1,72 @@
+/* pkpm-fluid-vol.mac --------------------------------------------------------------
+   Volume kernel of the momentum equation of the refactored (p=1) PKPM solver:
+
+     integral( d_d phi ( M_i u_d + P_id ) ),   P_id = p_perp delta_id + (p_par - p_perp) b_i b_d,
+
+   integrated exactly from the modal factors (the evolved momentum M, the weak-division
+   flow u, the kinetic moments and the unit vector b, all p=1): no product is projected
+   onto p=1 before the contraction. Returns the center-cell CFL estimate
+   sum_d (2p+1)/2 dx1_d |u_d| (the face kernels add the ten-moment speed bound). */
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("pkpm/pkpm/pkpm-cas-util.mac")$
+load(stringproc)$
+fpprec : 24$
+
+cvars : [x, y, z]$
+dx1s : [dx10, dx11, dx12]$
+
+calcPKPMFluidVol(fh, funcNm, cdim) := block(
+  [varsC, bC, NC, rho_e, ppar_e, pperp_e, b_e, u_e, M_e, P_e, i, j, d, vol, cflPt, umid],
+
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis("ser", cdim, 1),
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_pkpm_fluid_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const double *moms, const double *bvar, const double *u, const double *euler,
+  double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]:   Cell-center coordinates. ~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing. ~%"),
+  printf(fh, "  // moms:      [rho, p_parallel, p_perp, M1], moments of the kinetic equation. ~%"),
+  printf(fh, "  // bvar:      Magnetic field unit vector [bx, by, bz]. ~%"),
+  printf(fh, "  // u:         Flow velocity [ux, uy, uz]. ~%"),
+  printf(fh, "  // euler:     Momentum [rho ux, rho uy, rho uz]. ~%"),
+  printf(fh, "  // out:       Incremented momentum increment. ~%"),
+  for d : 1 thru cdim do
+    printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", d-1, d-1),
+  printf(fh, "  const double *ppar = &moms[~a]; ~%", 1*NC),
+  printf(fh, "  const double *pperp = &moms[~a]; ~%", 2*NC),
+  for i : 1 thru 3 do (
+    printf(fh, "  const double *b~a = &bvar[~a]; ~%", cvars[i], (i-1)*NC),
+    printf(fh, "  const double *u~a = &u[~a]; ~%", cvars[i], (i-1)*NC),
+    printf(fh, "  const double *M~a = &euler[~a]; ~%", cvars[i], (i-1)*NC),
+    printf(fh, "  double *out~a = &out[~a]; ~%", i-1, (i-1)*NC)
+  ),
+  printf(fh, " ~%"),
+
+  ppar_e : doExpand1(ppar, bC),
+  pperp_e : doExpand1(pperp, bC),
+  b_e : [doExpand1(bx, bC), doExpand1(by, bC), doExpand1(bz, bC)],
+  u_e : [doExpand1(ux, bC), doExpand1(uy, bC), doExpand1(uz, bC)],
+  M_e : [doExpand1(Mx, bC), doExpand1(My, bC), doExpand1(Mz, bC)],
+  P_e : makelist(makelist((ppar_e - pperp_e)*b_e[i]*b_e[j] + (if i = j then pperp_e else 0), j, 1, 3), i, 1, 3),
+
+  for i : 1 thru 3 do (
+    vol : 0,
+    for d : 1 thru cdim do
+      vol : vol + dx1s[d]*calcInnerProdList(varsC, 1, diff(bC, varsC[d]), M_e[i]*u_e[d] + P_e[i][d]),
+    pkpmWriteIncrExprs(fh, concat(out, i-1), vol, [dx10, dx11, dx12])
+  ),
+  printf(fh, " ~%"),
+
+  cflPt : makelist(varsC[d] = 0, d, 1, cdim),
+  printf(fh, "  double cflFreq_mid = 0.0; ~%"),
+  for d : 1 thru cdim do (
+    umid : float(expand(subst(cflPt, u_e[d]))),
+    printf(fh, "  cflFreq_mid += 1.5*dx1~a*fabs(~a); ~%", d-1, umid)
+  ),
+  printf(fh, "  return cflFreq_mid; ~%"),
+  printf(fh, "} ~%")
+)$

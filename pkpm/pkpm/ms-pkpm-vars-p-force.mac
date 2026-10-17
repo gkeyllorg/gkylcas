@@ -1,0 +1,34 @@
+load("pkpm/pkpm/pkpm-vars-p-force.mac")$
+load(stringproc)$
+/* This script generates the kernels closing the PKPM pressure force a_P from the
+   first v_par moment of the stage-A right-hand side (see pkpm-vars-p-force.mac).
+   Only p=1 is generated. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser"]$
+minPolyOrder : [minPolyOrder_Ser]$
+maxPolyOrder : [maxPolyOrder_Ser]$
+minCdim      : [minCdim_Ser]$
+maxCdim      : [maxCdim_Ser]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      disp(printf(false,sconcat("Creating pkpm_vars_p_force ",bName[bInd]," ~axp~a"),c,polyOrder)),
+      fname : sconcat("~/max-out/pkpm_vars_p_force_closure_", c, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("pkpm_vars_p_force_closure_", c, "x_", bName[bInd], "_p", polyOrder),
+      calcPKPMVarsPForce(fh, funcName, c, bName[bInd], polyOrder),
+      close(fh)
+    )
+  )
+);

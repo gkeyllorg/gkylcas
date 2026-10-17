@@ -36,6 +36,10 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
 )$
 
 printEmVarsPrototype(deco, ci, bStr, pi) := block([si],
+  /* Direct nodal normalization b = B/|B| (p=1 only, PKPM solver; see em-bvar-nodal.mac). */
+  if (pi = 1 and bStr = "ser") then (
+    printf(fh, "~aint em_bvar_nodal_~ax_~a_p~a(const double *em, double* GKYL_RESTRICT b); ~%", deco, ci, bStr, pi)
+  ),
   printf(fh, "~avoid em_calc_BB_~ax_~a_p~a(const double *em, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
   printf(fh, "~avoid em_calc_num_ExB_~ax_~a_p~a(const double *em, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
   printf(fh, "~aint em_set_bvar_~ax_~a_p~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *BB); ~%", deco, ci, bStr, pi),

@@ -1,0 +1,16 @@
+load("pkpm/pkpm/pkpm-kinetic-conf-vol.mac")$
+load(stringproc)$
+/* This script generates the volume kernels of the configuration-space pass (stage A)
+   of the p=1 PKPM kinetic update, pkpm_kinetic_conf_vol_<c>x1v_ser_p1, for
+   cdim = minCdim .. maxCdim (see pkpm-kinetic-conf-vol.mac). */
+
+if not(symbolp(minCdim)) then minCdim : minCdim else minCdim : 1$
+if not(symbolp(maxCdim)) then maxCdim : maxCdim else maxCdim : 3$
+
+for c : minCdim thru maxCdim do (
+  funcName : sconcat("pkpm_kinetic_conf_vol_", c, "x1v_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMKineticConfVol(fh, funcName, c),
+  close(fh)
+)$

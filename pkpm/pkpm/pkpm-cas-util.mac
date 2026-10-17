@@ -1,0 +1,29 @@
+/* pkpm-cas-util.mac --------------------------------------------------------------
+   Shared writers of the refactored PKPM generators. */
+load("util_maxima/out-scripts.mac")$
+
+/* Integer powers print as C's pow(): walk the expression and replace a^n
+   (integer n >= 2) by pow(a, n); indexed coefficients and atoms pass through. */
+pkpmPowToC(e) := block([],
+  if atom(e) or subvarp(e) then e
+  else if op(e) = "^" and integerp(part(e, 2)) and part(e, 2) >= 2 then
+    funmake(pow, [pkpmPowToC(part(e, 1)), part(e, 2)])
+  else map(pkpmPowToC, e)
+)$
+
+/* Write `  name[i] = expr;` for every entry (zeros written too, so the array is
+   fully defined). */
+pkpmWriteDefExprs(fh, name, exprs) := block([i],
+  for i : 1 thru length(exprs) do
+    printf(fh, "  ~a[~a] = ~a; ~%", name, i-1, pkpmPowToC(float(expand(exprs[i]))))
+)$
+
+/* Write `  lhs[i] += expr;` for the nonzero entries, collecting the cell
+   constants in clst, with powers rendered for C. */
+pkpmWriteIncrExprs(fh, lhs, rhs, clst) := block([expr, i],
+  expr : float(expand(rhs)),
+  for i : 1 thru length(expr) do (
+    if expr[i] # 0.0 then
+      printf(fh, "  ~a += ~a; ~%", lhs[i-1], pkpmPowToC(apply(collectterms, cons(expr[i], clst))))
+  )
+)$

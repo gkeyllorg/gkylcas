@@ -1,0 +1,36 @@
+load("vlasov/maxwell/em-bvar-nodal.mac")$
+load(stringproc)$
+/* This script generates the kernels computing the magnetic field unit vector
+   b = B/|B| by direct normalization at the Gauss-Legendre nodes and interpolation
+   to the p=1 modal basis (see em-bvar-nodal.mac). Only p=1 is generated: the
+   PKPM solver keeps b at p=1 because the 2-point rule makes this construction a
+   square nodal-to-modal map. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser"]$
+minPolyOrder : [minPolyOrder_Ser]$
+maxPolyOrder : [maxPolyOrder_Ser]$
+minCdim      : [minCdim_Ser]$
+maxCdim      : [maxCdim_Ser]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      disp(printf(false,sconcat("Creating em_bvar_nodal ",bName[bInd]," ~axp~a"),c,polyOrder)),
+      fname : sconcat("~/max-out/em_bvar_nodal_", c, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("em_bvar_nodal_", c, "x_", bName[bInd], "_p", polyOrder),
+      calcEmBvarNodal(fh, funcName, c, bName[bInd], polyOrder),
+      close(fh)
+    )
+  )
+);

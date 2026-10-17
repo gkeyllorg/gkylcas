@@ -1,0 +1,57 @@
+load("pkpm/pkpm/pkpm-conf-flux-surf.mac")$
+load("pkpm/pkpm/pkpm-vel-flux-surf.mac")$
+load("pkpm/pkpm/pkpm-kinetic-vel-vol.mac")$
+load(stringproc)$
+/* This script generates, for the p=1 PKPM solver and cdim = 1, 2, 3:
+   1. the nodal surface-evaluation table headers gkyl_pkpm_flux_surf_tables_<c>x1v_p1.h,
+   2. the configuration-space HLL flux kernels pkpm_conf_flux_{x,y,z}_<c>x1v_ser_p1 and
+      the mass-flux constraint kernels pkpm_conf_flux_corr_{x,y,z}_<c>x1v_ser_p1,
+   3. the hyper_dg surface kernels scattering stored modal fluxes:
+      pkpm_stream_surf{x,y,z}_<c>x1v_ser_p1 (configuration directions) and
+      pkpm_accel_surfvpar_<c>x1v_ser_p1 / pkpm_accel_boundary_surfvpar_<c>x1v_ser_p1
+      (v_par direction),
+   4. the v_par flux kernels pkpm_vel_flux_vpar_<c>x1v_ser_p1,
+   5. the velocity-space pass volume kernels pkpm_kinetic_vel_vol_<c>x1v_ser_p1. */
+
+cvars : ["x", "y", "z"]$
+
+for c : 1 thru 3 do (
+  fname : sconcat("~/max-out/gkyl_pkpm_flux_surf_tables_", c, "x1v_p1.h"),
+  disp(printf(false, "tables: ~a", fname)),
+  fh : openw(fname),
+  writePKPMFluxTabHeader(fh, c),
+  close(fh),
+
+  for d : 1 thru c do (
+    funcName : sconcat("pkpm_conf_flux_", cvars[d], "_", c, "x1v_ser_p1"),
+    disp(printf(false, "Creating ~a", funcName)),
+    fh : openw(sconcat("~/max-out/", funcName, ".c")),
+    calcPKPMConfFluxSurf(d, fh, funcName, c),
+    calcPKPMConfFluxCorr(d, fh, funcName, c),
+    close(fh),
+
+    funcName : sconcat("pkpm_stream_surf", cvars[d], "_", c, "x1v_ser_p1"),
+    disp(printf(false, "Creating ~a", funcName)),
+    fh : openw(sconcat("~/max-out/", funcName, ".c")),
+    calcPKPMStreamSurf(d, fh, funcName, c),
+    close(fh)
+  ),
+
+  funcName : sconcat("pkpm_accel_surfvpar_", c, "x1v_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMAccelSurf(fh, funcName, sconcat("pkpm_accel_boundary_surfvpar_", c, "x1v_ser_p1"), c),
+  close(fh),
+
+  funcName : sconcat("pkpm_vel_flux_vpar_", c, "x1v_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMVelFluxSurf(fh, funcName, c),
+  close(fh),
+
+  funcName : sconcat("pkpm_kinetic_vel_vol_", c, "x1v_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMKineticVelVol(fh, funcName, c),
+  close(fh)
+)$

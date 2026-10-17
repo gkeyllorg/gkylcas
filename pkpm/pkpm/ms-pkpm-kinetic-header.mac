@@ -1,0 +1,45 @@
+/* Generate the header file for the phase-space kernels of the refactored (p=1)
+   PKPM solver: configuration-space HLL flux producers, the v_par flux producer, the
+   hyper_dg surface kernels scattering stored modal fluxes, and the volume kernels of
+   the configuration-space (stage A) and velocity-space (stage B) passes. */
+
+cvars : ["x", "y", "z"]$
+
+fh : openw("~/max-out/gkyl_pkpm_kinetic_kernels.h")$
+
+printf(fh, "#pragma once ~%")$
+printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+
+deco : "GKYL_CU_DH "$
+for c : 1 thru 3 do (
+  printf(fh, "~adouble pkpm_kinetic_conf_vol_~ax1v_ser_p1(const double *w, const double *dxv,
+  const double *bvar, const double *grad_b, const double *u, const double *grad_u, const double *theta,
+  const double *nu_sum, const double *nu_vthsq_sum,
+  const double *f, double* GKYL_RESTRICT out); ~%", deco, c),
+  for d : 1 thru c do (
+    printf(fh, "~adouble pkpm_conf_flux_~a_~ax1v_ser_p1(const double *w, const double *dxv,
+  const double *b_l, const double *b_r, const double *u_l, const double *u_r,
+  const double *theta_l, const double *theta_r, const double *f_l, const double *f_r,
+  double* GKYL_RESTRICT flux, double* GKYL_RESTRICT mass_flux); ~%", deco, cvars[d], c),
+    printf(fh, "~avoid pkpm_conf_flux_corr_~a_~ax1v_ser_p1(double mass, const double *moms_l, const double *moms_r,
+  const double *roe_mass_flux, const double *kin_mass_flux, const double *f_l, const double *f_r,
+  double* GKYL_RESTRICT flux); ~%", deco, cvars[d], c),
+    printf(fh, "~adouble pkpm_stream_surf~a_~ax1v_ser_p1(const double *w, const double *dxv,
+  const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out); ~%", deco, cvars[d], c)
+  ),
+  printf(fh, "~adouble pkpm_accel_surfvpar_~ax1v_ser_p1(const double *w, const double *dxv,
+  const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out); ~%", deco, c),
+  printf(fh, "~adouble pkpm_accel_boundary_surfvpar_~ax1v_ser_p1(const double *w, const double *dxv,
+  const int edge, const double *flux, double* GKYL_RESTRICT out); ~%", deco, c),
+  printf(fh, "~adouble pkpm_vel_flux_vpar_~ax1v_ser_p1(const double *w, const double *dxv,
+  const double *bvar, const double *grad_b, const double *u, const double *grad_u, const double *theta,
+  const double *a_P, const double *f_l, const double *f_r, double* GKYL_RESTRICT flux); ~%", deco, c),
+  printf(fh, "~adouble pkpm_kinetic_vel_vol_~ax1v_ser_p1(const double *w, const double *dxv,
+  const double *a_P, const double *f, double* GKYL_RESTRICT out); ~%", deco, c),
+  printf(fh, "~%")
+)$
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$

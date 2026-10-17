@@ -1,0 +1,55 @@
+/* pkpm-kinetic-vel-vol.mac ---------------------------------------------------
+   Volume kernel of the velocity-space pass (stage B) of the p=1 PKPM kinetic update:
+   the pressure-force volume term  integral( d_v phi a_P [F, G] ), integrated exactly
+   (a_P is p=1 in configuration space; the test function and the distribution are
+   p=1 in configuration space and p=2 in v_par). Everything else of the velocity-space
+   pass is the surface scatter of the stored v_par fluxes. The returned CFL estimate
+   is zero: the force speeds are accumulated by the v_par flux updater. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, aP_e, F_e, G_e, force_F, force_G, expr, i],
+
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]),
+  pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
+  NC : length(pkbC),
+  NP : length(pkbP),
+
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const double *a_P, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]:   Cell-center coordinates. ~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing. ~%"),
+  printf(fh, "  // a_P:       Pressure force closing the first moment. ~%"),
+  printf(fh, "  // f:         Input distribution functions [F_0, G]. ~%"),
+  printf(fh, "  // out:       Incremented output [F_0, G]. ~%"),
+  printf(fh, "  const double dv1 = 2.0/dxv[~a]; ~%", cdim),
+  printf(fh, "  const double *F_0 = &f[~a]; ~%", 0*NP),
+  printf(fh, "  const double *G_1 = &f[~a]; ~%", 1*NP),
+  printf(fh, "  double *out_F_0 = &out[~a]; ~%", 0*NP),
+  printf(fh, "  double *out_G_1 = &out[~a]; ~%", 1*NP),
+  printf(fh, " ~%"),
+
+  aP_e : doExpand1(a_P, pkbC),
+  F_e : doExpand1(F_0, pkbP),
+  G_e : doExpand1(G_1, pkbP),
+
+  force_F : dv1*calcInnerProdList(pkP, 1, diff(pkbP, pkV[1]), aP_e*F_e),
+  force_G : dv1*calcInnerProdList(pkP, 1, diff(pkbP, pkV[1]), aP_e*G_e),
+
+  expr : float(expand(force_F)),
+  for i : 1 thru NP do
+    if expr[i] # 0.0 then printf(fh, "  out_F_0[~a] += ~a; ~%", i-1, apply(collectterms, [expr[i], dv1])),
+  expr : float(expand(force_G)),
+  for i : 1 thru NP do
+    if expr[i] # 0.0 then printf(fh, "  out_G_1[~a] += ~a; ~%", i-1, apply(collectterms, [expr[i], dv1])),
+  printf(fh, " ~%"),
+  printf(fh, "  return 0.0; ~%"),
+  printf(fh, "} ~%")
+)$

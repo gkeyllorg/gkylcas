@@ -1,0 +1,109 @@
+/* pkpm-flux-tables.mac ---------------------------------------------------------
+   Nodal surface-evaluation tables for the PKPM surface-flux kernels, written
+   with the generators of vlasov/vlasov/surf-eval-tables.mac for the
+   p=1 PKPM phase basis (p=1 configuration space tensored with p=2 in v_par;
+   the "tenhyb" loader, identical in function set and ordering to the "hyb"
+   basis of gkyl_cart_modal_hybrid for one velocity dimension, which the
+   generator asserts).
+
+   The PKPM node counts differ from the Vlasov tables: three Gauss-Legendre
+   points per surface direction everywhere (transverse configuration
+   directions of a configuration face, v_par on a configuration face, and
+   every configuration direction of the v_par face), because the PKPM face
+   integrands reach degree five (v_par b F phi in v_par; bb:grad(u) F phi in
+   configuration space), and the HLL/upwind fluxes are only piecewise
+   polynomial. One header per configuration dimension,
+   gkyl_pkpm_flux_surf_tables_<c>x1v_p1.h, with the tag pkpm_<c>x1v_p1:
+
+     vst_<tag>_ph_x<d>  / vst_<tag>_prj_x<d>   configuration face d (producer /
+                                              consumer-projection tables)
+     vst_<tag>_ph_v0    / vst_<tag>_prj_v0     v_par face
+
+   plus the gkyl_vlasov_surf_meta / gkyl_vlasov_prj_meta instances the
+   Vlasov-style launchers read. Flat node layout: n = i*NI + j with the
+   outer (transverse configuration) node i slowest and the inner node j
+   fastest (gaussOrd ordering). */
+load("vlasov/vlasov/vlasov-basis.mac")$
+load("vlasov/vlasov/surf-eval-tables.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load(stringproc)$
+fpprec : 24$
+
+pkpmFluxTag(cdim) := sconcat("pkpm_", cdim, "x1v_p1")$
+pkpmFluxNumPts : 3$
+
+/* Include line of the table header of a cdim (shared by the flux generators). */
+pkpmFluxTabInclude(fh, cdim) :=
+  printf(fh, "#include <gkyl_pkpm_flux_surf_tables_~ax1v_p1.h> ~%", cdim)$
+
+/* The PKPM phase basis and its assert against the hybrid loader. */
+loadPKPMPhaseBasis(cdim) := block([lt, pk, lh],
+  /* Copy the tensor-hybrid lists before the second loader reassigns the basis names. */
+  lt : loadVlasovBasis("tensor", cdim, 1, 1),
+  pk : makelist(copylist(lt[i]), i, 1, 6),
+  /* loadVlasovBasis has no 3x1v variable substitution (Vlasov never used it):
+     normalize the velocity variable and basis to vx for every cdim. */
+  pk[3] : [vx],
+  pk[4] : subst(x = vx, pk[4]),
+  lh : loadPhaseBasis("hyb", cdim, 1, 1),
+  if length(pk[6]) # length(lh[4]) then error("loadPKPMPhaseBasis: hybrid basis size mismatch"),
+  if ratsimp(pk[6] - lh[4]) # makelist(0, i, 1, length(pk[6])) then
+    error("loadPKPMPhaseBasis: tensor-hybrid and hybrid basis ordering differ"),
+  pk
+)$
+
+/* The basis loaders assign the dynamically scoped names varsC/bC/varsV/bV/varsP/bP,
+   so every generator keeps private copies (pkC, pkV, ...) of what it needs. */
+writePKPMFluxTabHeader(fh, cdim) := block(
+  [tag, pkC, pkV, pkP, pkbP, d, cv, surfCVars, nodes_crem, nodes_vvol,
+   nodes_conf, sz, szp, vv, lb],
+  tag : pkpmFluxTag(cdim),
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkV : copylist(lb[3]), pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
+  vv : pkV[1],
+
+  printf(fh, "#pragma once ~%"),
+  printf(fh, "// Generated nodal surface-evaluation tables of the PKPM surface-flux kernels ~%"),
+  printf(fh, "// (see gkylcas/pkpm/pkpm/pkpm-flux-tables.mac): three Gauss-Legendre points ~%"),
+  printf(fh, "// per surface direction. Header-static so both host and device ~%"),
+  printf(fh, "// instantiations of GKYL_CU_DH kernels can read them; unused arrays are ~%"),
+  printf(fh, "// elided per TU. ~%"),
+  printf(fh, "#include <gkyl_util.h> ~%"),
+  printf(fh, "#include <gkyl_vlasov_flux_surf_mod2nod_meta.h> ~%"),
+  printf(fh, "#include <gkyl_vlasov_surf_nod2mod_meta.h> ~%"),
+
+  /* Configuration faces: outer = transverse configuration nodes, inner = v_par nodes. */
+  nodes_vvol : gaussOrd(pkpmFluxNumPts, 1),
+  for d : 1 thru cdim do (
+    cv : pkC[d],
+    surfCVars : delete(cv, pkC),
+    nodes_crem : if cdim > 1 then gaussOrd(pkpmFluxNumPts, cdim-1) else [1],
+    sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_x", d-1), pkbP,
+      surfCVars, cv, pkV, nodes_crem, nodes_vvol, false, false, false),
+    printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_x~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
+      tag, d-1, length(pkbP), sz[1], sz[2], length(nodes_crem), length(nodes_vvol), 0, 0),
+    szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_x", d-1), pkbP,
+      basisFromVars("tenhyb", delete(cv, pkP), 1),
+      surfCVars, cv, pkV, pkpmFluxNumPts, pkpmFluxNumPts),
+    printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_x~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
+      tag, d-1, szp[1], length(pkbP), szp[2], szp[3], szp[4], szp[5], 0)
+  ),
+
+  /* v_par face: outer = all configuration nodes, no inner variables. The
+     configuration basis and its derivatives at these nodes, for the force
+     producers (b, grad u, div b, theta, a_P at the face nodes). */
+  nodes_conf : gaussOrd(pkpmFluxNumPts, cdim),
+  emitTabMatrix(fh, sconcat("vst_", tag, "_conf_ev"), lb[2], pkC, nodes_conf),
+  for d : 1 thru cdim do
+    emitTabMatrix(fh, sconcat("vst_", tag, "_conf_dx", d-1),
+      makelist(diff(lb[2][a], pkC[d]), a, 1, length(lb[2])), pkC, nodes_conf),
+  sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_v0"), pkbP,
+    pkC, vv, [], nodes_conf, [1], false, false, false),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_v0_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
+    tag, length(pkbP), sz[1], sz[2], length(nodes_conf), 1, 0, 0),
+  szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_v0"), pkbP,
+    basisFromVars("tenhyb", delete(vv, pkP), 1),
+    pkC, vv, [], pkpmFluxNumPts, pkpmFluxNumPts),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v0_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
+    tag, szp[1], length(pkbP), szp[2], szp[3], szp[4], szp[5], 0)
+)$

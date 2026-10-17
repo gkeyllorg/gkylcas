@@ -1,0 +1,16 @@
+load("pkpm/pkpm/pkpm-vars-grad-u.mac")$
+load(stringproc)$
+/* This script generates the weak-gradient kernels pkpm_vars_grad_u_{x,y,z}_<c>x_ser_p1
+   of the refactored (p=1) PKPM solver (see pkpm-vars-grad-u.mac). */
+
+cvarsStr : ["x", "y", "z"]$
+
+for c : 1 thru 3 do (
+  for d : 1 thru c do (
+    funcName : sconcat("pkpm_vars_grad_u_", cvarsStr[d], "_", c, "x_ser_p1"),
+    disp(printf(false, "Creating ~a", funcName)),
+    fh : openw(sconcat("~/max-out/", funcName, ".c")),
+    calcPKPMVarsGradU(d, fh, funcName, c),
+    close(fh)
+  )
+)$

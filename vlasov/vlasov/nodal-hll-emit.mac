@@ -1,0 +1,43 @@
+/* nodal-hll-emit.mac ----------------------------------------------------------
+   Two-sided (HLL) node function for the nodal surface-flux machinery of
+   nodal-lax-emit.mac, for scalar advection whose face speed is DISCONTINUOUS
+   across the interface: the left state moves with a_l (the left cell's trace of
+   the speed) and the right state with a_r. This is the configuration-space
+   streaming of the PKPM model, v_par b_n + u_n, with b and u discontinuous
+   DG fields; a single upwind speed does not exist at such a face.
+
+   With the signal bounds S_L = min(a_l, a_r, 0), S_R = max(a_l, a_r, 0) the
+   HLL flux
+
+     (S_R a_l f_l - S_L a_r f_r + S_L S_R (f_r - f_l)) / (S_R - S_L)
+
+   reduces EXACTLY, for every sign combination, to
+
+     Fhat = max(a_l, 0) f_l + min(a_r, 0) f_r:
+
+   same signs give the upwind flux a_l f_l or a_r f_r, converging speeds
+   (a_l > 0 > a_r) give a_l f_l + a_r f_r, and diverging speeds (a_l < 0 < a_r)
+   give zero. The closed form needs no division and no branch, and it is what
+   the kernels compute; the HLL form above is the reference for tests.
+
+   The emitted `_node` function has the signature of laxEmitNodeFn's with the
+   single alpha replaced by (a_l, a_r); the stage-1 `_g` and projection `_prj`
+   functions of nodal-lax-emit.mac are reused unchanged. The returned value is
+   max(|a_l|, |a_r|) for the caller's CFL reduction. */
+load("vlasov/vlasov/nodal-lax-emit.mac")$
+
+hllEmitNodeFn(fh, funcNm, prefix, NA, NI) := block(
+  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j, double a_l, double a_r,
+  const double *G_l, const double *G_r, double* GKYL_RESTRICT Fhat_nodal) ~%{ ~%", funcNm),
+  printf(fh, "  double f_l_quad = 0.0; ~%"),
+  printf(fh, "  double f_r_quad = 0.0; ~%"),
+  printf(fh, "  for (int a = 0; a < ~a; ++a) { ~%", NA),
+  printf(fh, "    f_l_quad += ~a_Cm[i*~a + a]*G_l[j*~a + a]; ~%", prefix, NA, NA),
+  printf(fh, "    f_r_quad += ~a_Cm[i*~a + a]*G_r[j*~a + a]; ~%", prefix, NA, NA),
+  printf(fh, "  } ~%"),
+  printf(fh, "  const int n = i*~a + j; ~%", NI),
+  printf(fh, "  // HLL with S_L = min(a_l, a_r, 0), S_R = max(a_l, a_r, 0), in closed form. ~%"),
+  printf(fh, "  Fhat_nodal[n] = fmax(a_l, 0.0)*f_l_quad + fmin(a_r, 0.0)*f_r_quad; ~%"),
+  printf(fh, "  return fmax(fabs(a_l), fabs(a_r)); ~%"),
+  printf(fh, "} ~%~%")
+)$

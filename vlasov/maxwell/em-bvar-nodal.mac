@@ -1,0 +1,92 @@
+/* Generate kernels that compute the magnetic field unit vector b = B/|B| by direct
+   normalization at the 2^cdim Gauss-Legendre nodes of the cell, followed by projection
+   onto the p=1 modal basis with the same 2-point rule. For p=1 the number of nodes equals
+   the number of basis functions and the rule integrates products of two p=1 functions
+   exactly, so the result is the p=1 interpolant of B/|B| at those nodes: no magnetic
+   field unit tensor b_i b_j is formed or projected at any point.
+
+   Policy for a vanishing field: at a node where |B| = 0 the unit vector is undefined and
+   is set to zero there; the kernel returns the number of such nodes so the caller can
+   count them. Used by the PKPM solver. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcEmBvarNodal(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, nodes, weights, NN, nodeSub, B_x_e, B_y_e, B_z_e,
+   Bx_q, By_q, Bz_q, n, k, bx_c, by_c, bz_c],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+  NC : length(bC),
+
+  /* Gauss-Legendre nodes and weights of the (polyOrder+1)-point tensor rule. */
+  [nodes, weights] : gaussOrdWeight(polyOrder+1, cdim),
+  NN : length(nodes),
+
+  printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH int ~a(const double *em, double* GKYL_RESTRICT b) ~%{ ~%", funcNm),
+  printf(fh, "  // em: Input electromagnetic fields [Ex, Ey, Ez, Bx, By, Bz, phi, psi]. ~%"),
+  printf(fh, "  // b:  Output magnetic field unit vector [bx, by, bz] = B/|B|, normalized at the ~%"),
+  printf(fh, "  //     ~a Gauss-Legendre nodes and interpolated to the p=~a basis. ~%", NN, polyOrder),
+  printf(fh, "  // Returns the number of nodes where |B| = 0 (b is set to zero at such nodes). ~%"),
+  printf(fh, " ~%"),
+
+  printf(fh, "  const double *B_x = &em[~a]; ~%", NC*3),
+  printf(fh, "  const double *B_y = &em[~a]; ~%", NC*4),
+  printf(fh, "  const double *B_z = &em[~a]; ~%", NC*5),
+  printf(fh, " ~%"),
+  printf(fh, "  double *bx = &b[~a]; ~%", 0),
+  printf(fh, "  double *by = &b[~a]; ~%", NC),
+  printf(fh, "  double *bz = &b[~a]; ~%", NC*2),
+  printf(fh, " ~%"),
+
+  B_x_e : doExpand1(B_x, bC),
+  B_y_e : doExpand1(B_y, bC),
+  B_z_e : doExpand1(B_z, bC),
+
+  printf(fh, "  double bx_n[~a] = {0.0}; ~%", NN),
+  printf(fh, "  double by_n[~a] = {0.0}; ~%", NN),
+  printf(fh, "  double bz_n[~a] = {0.0}; ~%", NN),
+  printf(fh, "  int num_null_b = 0; ~%"),
+  printf(fh, " ~%"),
+
+  /* Evaluate B at each node, normalize pointwise. */
+  for n : 1 thru NN do (
+    nodeSub : makelist(varsC[d]=nodes[n][d], d, 1, cdim),
+    Bx_q : float(expand(subst(nodeSub, B_x_e))),
+    By_q : float(expand(subst(nodeSub, B_y_e))),
+    Bz_q : float(expand(subst(nodeSub, B_z_e))),
+    printf(fh, "  { ~%"),
+    printf(fh, "    const double Bx_q = ~a; ~%", Bx_q),
+    printf(fh, "    const double By_q = ~a; ~%", By_q),
+    printf(fh, "    const double Bz_q = ~a; ~%", Bz_q),
+    printf(fh, "    const double magB_q = sqrt(Bx_q*Bx_q + By_q*By_q + Bz_q*Bz_q); ~%"),
+    printf(fh, "    if (magB_q > 0.0) { ~%"),
+    printf(fh, "      bx_n[~a] = Bx_q/magB_q; ~%", n-1),
+    printf(fh, "      by_n[~a] = By_q/magB_q; ~%", n-1),
+    printf(fh, "      bz_n[~a] = Bz_q/magB_q; ~%", n-1),
+    printf(fh, "    } else { ~%"),
+    printf(fh, "      num_null_b += 1; ~%"),
+    printf(fh, "    } ~%"),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, " ~%"),
+
+  /* Quadrature projection onto the modal basis: c_k = sum_n w_n psi_k(x_n) b(x_n). */
+  bx_c : makelist(sum(weights[n]*subst(makelist(varsC[d]=nodes[n][d], d, 1, cdim), bC[k])*bx_n[n-1], n, 1, NN), k, 1, NC),
+  by_c : makelist(sum(weights[n]*subst(makelist(varsC[d]=nodes[n][d], d, 1, cdim), bC[k])*by_n[n-1], n, 1, NN), k, 1, NC),
+  bz_c : makelist(sum(weights[n]*subst(makelist(varsC[d]=nodes[n][d], d, 1, cdim), bC[k])*bz_n[n-1], n, 1, NN), k, 1, NC),
+  writeCExprs1(bx, bx_c),
+  writeCExprs1(by, by_c),
+  writeCExprs1(bz, bz_c),
+  printf(fh, " ~%"),
+
+  printf(fh, "  return num_null_b; ~%"),
+  printf(fh, "} ~%")
+)$
