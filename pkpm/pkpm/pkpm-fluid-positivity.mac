@@ -1,0 +1,106 @@
+/* pkpm-fluid-positivity.mac ------------------------------------------------------------
+   Positivity limiter of the fluid state [rho, M, E] of the energy-constrained (p=1) PKPM
+   solver (Zhang & Shu 2010, exact for the multilinear p=1 serendipity basis whose extreme
+   values over the cell are at its 2^cdim vertices).
+
+   pkpm_fluid_positivity_<c>x_ser_p1(eps, fluid)
+     With q_avg the cell averages and q_v the vertex values of the conservative state,
+     (1) the density slopes are scaled by theta_1 so that rho_v >= eps rho_avg at every vertex,
+     (2) ALL slopes are scaled jointly by theta_2 so that the internal energy
+         e(q) = E - |M|^2/(2 rho) satisfies e(q_v) >= eps e(q_avg) at every vertex:
+         along q(t) = q_avg + t (q_v - q_avg) the condition rho e(q(t)) - eps e_avg rho(t) >= 0
+         is a quadratic in t with a positive value at t = 0, so theta_2 is its smallest
+         root in (0, 1) over the vertices that violate it.
+     The cell averages are untouched (conservation). Returns 0 when nothing was done, 1 when
+     the density slopes were scaled, 2 when all slopes were scaled, 3 for both, and -1 when
+     the cell average itself is inadmissible (nothing is done then). */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcPKPMFluidPositivity(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, verts, NV, k, i, fld, flds, e, sub],
+
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+  NC : length(bC),
+  /* All sign combinations of the cell vertices. */
+  verts : [[]],
+  for d : 1 thru cdim do
+    verts : append(makelist(endcons(-1, v), v, verts), makelist(endcons(1, v), v, verts)),
+  NV : length(verts),
+  flds : ["rho", "Mx", "My", "Mz", "E"],
+
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
+  printf(fh, "#include <math.h> ~%"),
+  printf(fh, "GKYL_CU_DH int ~a(double eps, double* GKYL_RESTRICT fluid) ~%{ ~%", funcNm),
+  printf(fh, "  // eps:   Relative floor: the vertex density and internal energy are kept above eps times the cell values. ~%"),
+  printf(fh, "  // fluid: In/out fluid state [rho, rho ux, rho uy, rho uz, E]; the slopes are scaled toward the cell averages. ~%"),
+  printf(fh, "  // Returns 0 (untouched), 1 (density slopes scaled), 2 (all slopes scaled for the internal energy), ~%"),
+  printf(fh, "  // 3 (both) or -1 (inadmissible cell average: nothing done). ~%"),
+  for i : 1 thru 5 do
+    printf(fh, "  double *~a = &fluid[~a]; ~%", flds[i], (i-1)*NC),
+  printf(fh, " ~%"),
+  printf(fh, "  // Cell averages. ~%"),
+  for i : 1 thru 5 do
+    printf(fh, "  const double ~a_avg = ~a*~a[0]; ~%", flds[i], float(bC[1]), flds[i]),
+  printf(fh, "  if (!(rho_avg > 0.0)) return -1; ~%"),
+  printf(fh, "  const double e_avg = E_avg - 0.5*(Mx_avg*Mx_avg + My_avg*My_avg + Mz_avg*Mz_avg)/rho_avg; ~%"),
+  printf(fh, "  if (!(e_avg > 0.0)) return -1; ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  // Vertex values. ~%"),
+  for i : 1 thru 5 do (
+    printf(fh, "  double ~a_v[~a]; ~%", flds[i], NV),
+    for k : 1 thru NV do (
+      sub : makelist(varsC[d] = verts[k][d], d, 1, cdim),
+      e : simplode(makelist(sconcat("(", float(subst(sub, bC[j])), ")*", flds[i], "[", j-1, "]"), j, 1, NC), " + "),
+      printf(fh, "  ~a_v[~a] = ~a; ~%", flds[i], k-1, e)
+    )
+  ),
+  printf(fh, " ~%"),
+  printf(fh, "  int flag = 0; ~%"),
+  printf(fh, "  // (1) Density: scale the density slopes so that rho_v >= eps rho_avg. ~%"),
+  printf(fh, "  double theta = 1.0; ~%"),
+  printf(fh, "  const double rho_min = eps*rho_avg; ~%"),
+  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NV),
+  printf(fh, "    if (rho_v[k] < rho_min) theta = fmin(theta, (rho_avg - rho_min)/(rho_avg - rho_v[k])); ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  if (theta < 1.0) { ~%"),
+  printf(fh, "    for (int i = 1; i < ~a; ++i) rho[i] *= theta; ~%", NC),
+  printf(fh, "    for (int k = 0; k < ~a; ++k) rho_v[k] = rho_avg + theta*(rho_v[k] - rho_avg); ~%", NV),
+  printf(fh, "    flag |= 1; ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  // (2) Internal energy: scale all slopes so that e(q_v) >= eps e(q_avg). ~%"),
+  printf(fh, "  const double e_min = eps*e_avg; ~%"),
+  printf(fh, "  const double c = rho_avg*(e_avg - e_min); ~%"),
+  printf(fh, "  theta = 1.0; ~%"),
+  printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NV),
+  printf(fh, "    const double drho = rho_v[k] - rho_avg, dMx = Mx_v[k] - Mx_avg, dMy = My_v[k] - My_avg, dMz = Mz_v[k] - Mz_avg, dE = E_v[k] - E_avg; ~%"),
+  printf(fh, "    // g(t) = rho(t) E(t) - |M(t)|^2/2 - e_min rho(t) = a t^2 + b t + c along q(t) = q_avg + t (q_v - q_avg). ~%"),
+  printf(fh, "    const double a = drho*dE - 0.5*(dMx*dMx + dMy*dMy + dMz*dMz); ~%"),
+  printf(fh, "    const double b = rho_avg*dE + drho*E_avg - (Mx_avg*dMx + My_avg*dMy + Mz_avg*dMz) - e_min*drho; ~%"),
+  printf(fh, "    if (a + b + c < 0.0) { ~%"),
+  printf(fh, "      // g(0) = c > 0 > g(1): exactly one root in (0, 1). ~%"),
+  printf(fh, "      double t; ~%"),
+  printf(fh, "      if (fabs(a) <= 1.0e-14*(fabs(b) + fabs(c))) { ~%"),
+  printf(fh, "        t = -c/b; ~%"),
+  printf(fh, "      } else { ~%"),
+  printf(fh, "        const double sq = sqrt(fmax(b*b - 4.0*a*c, 0.0)); ~%"),
+  printf(fh, "        const double qq = -0.5*(b + (b >= 0.0 ? sq : -sq)); ~%"),
+  printf(fh, "        const double t1 = qq/a, t2 = qq != 0.0 ? c/qq : t1; ~%"),
+  printf(fh, "        t = (t1 > 0.0 && t1 < 1.0) ? t1 : t2; ~%"),
+  printf(fh, "      } ~%"),
+  printf(fh, "      theta = fmin(theta, fmax(fmin(t, 1.0), 0.0)); ~%"),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  if (theta < 1.0) { ~%"),
+  for i : 1 thru 5 do
+    printf(fh, "    for (int i = 1; i < ~a; ++i) ~a[i] *= theta; ~%", NC, flds[i]),
+  printf(fh, "    flag |= 2; ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  return flag; ~%"),
+  printf(fh, "} ~%")
+)$

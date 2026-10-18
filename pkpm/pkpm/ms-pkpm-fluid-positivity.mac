@@ -1,0 +1,11 @@
+load("pkpm/pkpm/pkpm-fluid-positivity.mac")$
+load(stringproc)$
+/* This script generates the kernels pkpm_fluid_positivity_<c>x_ser_p1, the vertex
+   positivity limiter of the fluid state (see pkpm-fluid-positivity.mac). */
+for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_fluid_positivity_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMFluidPositivity(fh, funcName, c, "ser", 1),
+  close(fh)
+)$
