@@ -83,20 +83,28 @@ calcPKPMFluidFluxSurf(dir, fh, funcNm, cdim) := block(
   printf(fh, "#include <gkyl_pkpm_fluid_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH double ~a(
   const struct gkyl_wv_eqn *wv_eqn, const struct gkyl_wave_cell_geom *geom,
-  const double *w, const double *dxv,
+  const double *w, const double *dxv, const double *jacob_pos_l, const double *jacob_pos_r,
   const double *moms_l, const double *moms_r, const double *bvar_l, const double *bvar_r,
   const double *u_l, const double *u_r, const double *fluid_l, const double *fluid_r,
   double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
   printf(fh, "  // wv_eqn:      Ten-moment wave equation (unused; kept for the limiter interface). ~%"),
   printf(fh, "  // geom:        Wave geometry of the current cell (unused). ~%"),
-  printf(fh, "  // w/dxv:       Cell center and spacing of the current cell. ~%"),
-  printf(fh, "  // moms_l/r:    Kinetic coupling moments [p_par, p_perp, q_par, q_perp] in the left/current cell. ~%"),
+  printf(fh, "  // w/dxv:       Cell center and spacing of the current cell (computational). ~%"),
+  printf(fh, "  // jacob_pos_l/r: Position-map Jacobian per configuration direction (cdim blocks of 2 equal ~%"),
+  printf(fh, "  //              entries) of the left/current cell; the total Jacobian J is their product. ~%"),
+  printf(fh, "  // moms_l/r:    Jacobian-weighted kinetic coupling moments J [p_par, p_perp, q_par, q_perp] in the left/current cell. ~%"),
   printf(fh, "  // bvar_l/r:    Magnetic field unit vector [bx, by, bz] in the left/current cell. ~%"),
   printf(fh, "  // u_l/r:       Flow velocity [ux, uy, uz] in the left/current cell. ~%"),
-  printf(fh, "  // fluid_l/r:   Evolved fluid state [rho, rho ux, rho uy, rho uz, E] in the left/current cell. ~%"),
-  printf(fh, "  // flux:        Output fluxes [F_rho, F_x, F_y, F_z, F_E] on the lower face, surface modal. ~%"),
+  printf(fh, "  // fluid_l/r:   Evolved Jacobian-weighted fluid state J [rho, rho ux, rho uy, rho uz, E] in the left/current cell. ~%"),
+  printf(fh, "  // flux:        Output fluxes of the evolved J-weighted state [F_rho, F_x, F_y, F_z, F_E] on the ~%"),
+  printf(fh, "  //              lower face, surface modal: the physical HLL flux of the physical traces q/J times ~%"),
+  printf(fh, "  //              the face Jacobian J/J_~a. ~%", cvars[dir]),
   printf(fh, "  // Returns the stable time-step estimate from the normal speed bound at the nodes. ~%"),
   printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
+  printf(fh, "  const double jtot_l = ~a; ~%", simplode(makelist(sconcat("jacob_pos_l[", 2*(d-1), "]"), d, 1, cdim), "*")),
+  printf(fh, "  const double jtot_r = ~a; ~%", simplode(makelist(sconcat("jacob_pos_r[", 2*(d-1), "]"), d, 1, cdim), "*")),
+  printf(fh, "  const double jinv_l = 1.0/jtot_l, jinv_r = 1.0/jtot_r; ~%"),
+  printf(fh, "  const double jdinv_r = 1.0/jacob_pos_r[~a], jperp = jtot_r*jdinv_r; ~%", 2*(dir-1)),
   printf(fh, "  const double *rho_l = &fluid_l[~a]; ~%", 0*NC),
   printf(fh, "  const double *E_l = &fluid_l[~a]; ~%", 4*NC),
   printf(fh, "  const double *ppar_l = &moms_l[~a]; ~%", 0*NC),
@@ -131,6 +139,11 @@ calcPKPMFluidFluxSurf(dir, fh, funcNm, cdim) := block(
     pkpmWriteFaceEvals(fh, sconcat(fld, "_lq"), concat(fld, "_l"), bC, cv, 1, surfVars, nodes),
     pkpmWriteFaceEvals(fh, sconcat(fld, "_rq"), concat(fld, "_r"), bC, cv, -1, surfVars, nodes)
   ),
+  printf(fh, "  // Physical traces: the extensive quantities carry the Jacobian of their cell. ~%"),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
+  for fld in [rho, E, ppar, pperp, qpar, qperp, Mx, My, Mz] do
+    printf(fh, "    ~a_lq[n] *= jinv_l; ~a_rq[n] *= jinv_r; ~%", fld, fld),
+  printf(fh, "  } ~%"),
   printf(fh, "  double F_q[5][~a] = {{0.0}}; ~%", NN),
   printf(fh, "  double lambda_max = 0.0; ~%"),
   printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
@@ -173,6 +186,7 @@ calcPKPMFluidFluxSurf(dir, fh, funcNm, cdim) := block(
   printf(fh, "      if (S_L >= 0.0) F_q[i][n] = F_lv[i]; ~%"),
   printf(fh, "      else if (S_R <= 0.0) F_q[i][n] = F_rv[i]; ~%"),
   printf(fh, "      else F_q[i][n] = (S_R*F_lv[i] - S_L*F_rv[i] + S_L*S_R*(q_rv[i] - q_lv[i]))/(S_R - S_L); ~%"),
+  printf(fh, "      F_q[i][n] *= jperp; ~%"),
   printf(fh, "    } ~%"),
   printf(fh, "  } ~%"),
   printf(fh, " ~%"),
@@ -189,7 +203,7 @@ calcPKPMFluidFluxSurf(dir, fh, funcNm, cdim) := block(
       printf(fh, "  flux[~a] = ~a; ~%", (c-1)*NSurf + k-1, float(expand(expr)))
     )
   ),
-  printf(fh, "  return 1.5*dx1*lambda_max; ~%"),
+  printf(fh, "  return 1.5*dx1*jdinv_r*lambda_max; ~%"),
   printf(fh, "} ~%")
 )$
 

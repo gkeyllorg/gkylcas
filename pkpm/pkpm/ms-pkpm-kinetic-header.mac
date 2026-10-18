@@ -15,13 +15,14 @@ printf(fh, "~%")$
 
 deco : "GKYL_CU_DH "$
 for c : 1 thru 3 do (
-  printf(fh, "~adouble pkpm_kinetic_conf_vol_~ax1v_ser_p1(const double *w, const double *dxv,
+  printf(fh, "~adouble pkpm_kinetic_conf_vol_~ax1v_ser_p1(const double *w, const double *dxv, const double *jacob_pos,
   const double *bvar, const double *grad_b, const double *u, const double *grad_u,
   const double *xi, const double *grad_xi, const double *grad_ln_n,
   const double *theta, const double *f, double* GKYL_RESTRICT out); ~%", deco, c),
   printf(fh, "~aint pkpm_dist_normalize_~ax1v_ser_p1(const double *nmoms, const double *f, double* GKYL_RESTRICT fbar); ~%", deco, c),
   for d : 1 thru c do (
     printf(fh, "~adouble pkpm_conf_flux_~a_~ax1v_ser_p1(const double *w, const double *dxv,
+  const double *jacob_pos_l, const double *jacob_pos_r,
   const double *b_l, const double *b_r, const double *u_l, const double *u_r,
   const double *xi_l, const double *xi_r, const double *f_l, const double *f_r,
   double* GKYL_RESTRICT flux); ~%", deco, cvars[d], c),

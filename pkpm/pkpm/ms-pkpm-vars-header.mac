@@ -24,7 +24,7 @@ printPKPMVarsPrototype(deco, ci, bStr, pi) := block([si, d],
   printf(fh, "~aint pkpm_vars_u_set_~ax_~a_p~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *vlasov_pkpm_moms, const double *euler_pkpm); ~%", deco, ci, bStr, pi),
   printf(fh, "~avoid pkpm_vars_u_copy_~ax_~a_p~a(int count, struct gkyl_nmat *x, double* GKYL_RESTRICT pkpm_u); ~%", deco, ci, bStr, pi),
   for d : 1 thru ci do
-    printf(fh, "~avoid pkpm_vars_grad_u_~a_~ax_~a_p~a(const double *dxv, const double *u_l, const double *u_c, const double *u_r, double* GKYL_RESTRICT grad_u); ~%", deco, cvars[d], ci, bStr, pi),
+    printf(fh, "~avoid pkpm_vars_grad_u_~a_~ax_~a_p~a(const double *dxv, const double *jacob_pos, const double *u_l, const double *u_c, const double *u_r, double* GKYL_RESTRICT grad_u); ~%", deco, cvars[d], ci, bStr, pi),
   printf(fh, "~aint pkpm_vars_closure_~ax_~a_p~a(double w_lo, double w_up, double dv, const double *norm_moms, const double *rhs_moms,
   const double *bvar, const double *grad_b, const double *grad_u, const double *xi, const double *grad_xi, const double *theta,
   const double *alpha_0_prev, const double *c_h_prev, const double *f_lo, const double *f_up,
