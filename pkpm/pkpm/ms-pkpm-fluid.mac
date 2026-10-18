@@ -4,7 +4,8 @@ load(stringproc)$
 /* This script generates the momentum kernels of the refactored (p=1) PKPM solver for
    cdim = 1, 2, 3: the face-flux kernels pkpm_fluid_flux_{x,y,z}_<c>x_ser_p1, the
    scatter kernels pkpm_fluid_surf{x,y,z}_<c>x_ser_p1 and the volume kernels
-   pkpm_fluid_vol_<c>x_ser_p1, together with their header gkyl_pkpm_fluid_kernels.h. */
+   pkpm_fluid_vol_<c>x_ser_p1, together with their header gkyl_pkpm_fluid_kernels.h (which
+   also declares the absorbing-boundary kernels of ms-pkpm-fluid-flux-absorb.mac). */
 
 cvarsStr : ["x", "y", "z"]$
 
@@ -43,17 +44,22 @@ printf(fh, "~%")$
 deco : "GKYL_CU_DH "$
 for c : 1 thru 3 do (
   printf(fh, "~adouble pkpm_fluid_vol_~ax_ser_p1(const double *w, const double *dxv,
-  const double *moms, const double *bvar, const double *u, const double *euler,
+  const double *vlasov_pkpm_moms, const double *bvar, const double *u, const double *fluid,
   double* GKYL_RESTRICT out); ~%", deco, c),
   for d : 1 thru c do (
     printf(fh, "~adouble pkpm_fluid_flux_~a_~ax_ser_p1(
   const struct gkyl_wv_eqn *wv_eqn, const struct gkyl_wave_cell_geom *geom,
   const double *w, const double *dxv,
   const double *moms_l, const double *moms_r, const double *bvar_l, const double *bvar_r,
-  const double *u_l, const double *u_r, const double *euler_l, const double *euler_r,
-  double* GKYL_RESTRICT flux, double* GKYL_RESTRICT mass_flux); ~%", deco, cvarsStr[d], c),
+  const double *u_l, const double *u_r, const double *fluid_l, const double *fluid_r,
+  double* GKYL_RESTRICT flux); ~%", deco, cvarsStr[d], c),
     printf(fh, "~adouble pkpm_fluid_surf~a_~ax_ser_p1(const double *w, const double *dxv,
-  const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out); ~%", deco, cvarsStr[d], c)
+  const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out); ~%", deco, cvarsStr[d], c),
+    printf(fh, "~avoid pkpm_fluid_flux_absorb_accum_~a_~ax1v_ser_p1(int edge, const double *w, const double *dxv,
+  const double *bvar, const double *u, const double *xi, const double *f,
+  double* GKYL_RESTRICT I); ~%", deco, cvarsStr[d], c),
+    printf(fh, "~avoid pkpm_fluid_flux_absorb_~a_~ax_ser_p1(int edge, const double *bvar, const double *u,
+  const double *xi, const double *fluid, const double *I, double* GKYL_RESTRICT flux); ~%", deco, cvarsStr[d], c)
   ),
   printf(fh, "~%")
 )$

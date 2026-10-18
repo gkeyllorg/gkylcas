@@ -1,0 +1,92 @@
+/* pkpm-dist-normalize.mac -------------------------------------------------------
+   Nodal constraint enforcement of the normalized PKPM distributions at the initial
+   condition. The projected [F, G] on the w grid satisfy the constraints only up to the
+   projection error; with N = [M0, M2, M0_G, M1, ...] their moments (mass 1),
+
+     F <- F/M0,   G <- G s/M0,   s = (3 - M2/M0)/(2 M0_G/M0),
+
+   so that M0(F) = 1 and M2(F) + 2 M0(G) = 3 exactly (the change of T_perp/T is at the
+   projection-error level). The hybrid basis is the product of the configuration and w
+   bases, so the weak operation decouples into one configuration-space nodal
+   multiplication per w mode: for a p=1 M0 positive at the 2^cdim Gauss-Legendre nodes
+   the weak division is the nodal quotient interpolated with the 2-point rule (every
+   triple product of the weak form is integrated exactly), which is what the kernel
+   computes: for every phase mode j,
+
+     fbar_j = sum_q w_q factor(x_q) int_w psi_j(x_q, w) f(x_q, w) dw.
+
+   Policy: at a node where M0 <= 0 or M0_G <= 0 both factors are set to zero; the kernel
+   returns the number of such nodes. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load("pkpm/pkpm/pkpm-cas-util.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcPKPMDistNormalize(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, nodes, weights, NN, n0_e, n2_e, nG_e, f_e, nodeSub, q, j, c, expr, fnm, onm, fac],
+
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]),
+  pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
+  NC : length(pkbC),
+  NP : length(pkbP),
+  [nodes, weights] : gaussOrdWeight(2, cdim),
+  NN : length(nodes),
+
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH int ~a(const double *nmoms, const double *f, double* GKYL_RESTRICT fbar) ~%{ ~%", funcNm),
+  printf(fh, "  // nmoms: Input moments [M0, M2, M0_G, M1, ...] of the distributions (mass 1). ~%"),
+  printf(fh, "  // f:     Input distribution functions [F, G]. ~%"),
+  printf(fh, "  // fbar:  Output [F/M0, G s/M0] with s = (3 - M2/M0)/(2 M0_G/M0) (nodal). ~%"),
+  printf(fh, "  // Returns the number of nodes where M0 <= 0 or M0_G <= 0 (both factors are zero there). ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  const double *n0 = &nmoms[~a]; ~%", 0*NC),
+  printf(fh, "  const double *n2 = &nmoms[~a]; ~%", 1*NC),
+  printf(fh, "  const double *nG = &nmoms[~a]; ~%", 2*NC),
+
+  n0_e : doExpand1(n0, pkbC),
+  n2_e : doExpand1(n2, pkbC),
+  nG_e : doExpand1(nG, pkbC),
+  printf(fh, "  double fac_F[~a] = {0.0}; ~%", NN),
+  printf(fh, "  double fac_G[~a] = {0.0}; ~%", NN),
+  printf(fh, "  int num_null = 0; ~%"),
+  for q : 1 thru NN do (
+    nodeSub : makelist(pkC[d]=nodes[q][d], d, 1, cdim),
+    printf(fh, "  { ~%"),
+    printf(fh, "    const double n0_q = ~a; ~%", float(expand(subst(nodeSub, n0_e)))),
+    printf(fh, "    const double n2_q = ~a; ~%", float(expand(subst(nodeSub, n2_e)))),
+    printf(fh, "    const double nG_q = ~a; ~%", float(expand(subst(nodeSub, nG_e)))),
+    printf(fh, "    if (n0_q > 0.0 && nG_q > 0.0) { ~%"),
+    printf(fh, "      fac_F[~a] = 1.0/n0_q; ~%", q-1),
+    printf(fh, "      fac_G[~a] = (3.0 - n2_q/n0_q)/(2.0*nG_q/n0_q)/n0_q; ~%", q-1),
+    printf(fh, "    } else { ~%"),
+    printf(fh, "      num_null += 1; ~%"),
+    printf(fh, "    } ~%"),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, " ~%"),
+
+  for c : 0 thru 1 do (
+    fnm : if c = 0 then F_0 else G_1,
+    onm : if c = 0 then fbar_F_0 else fbar_G_1,
+    fac : if c = 0 then fac_F else fac_G,
+    printf(fh, "  const double *~a = &f[~a]; ~%", fnm, c*NP),
+    printf(fh, "  double *~a = &fbar[~a]; ~%", onm, c*NP),
+    f_e : doExpand1(fnm, pkbP),
+    expr : makelist(0, j, 1, NP),
+    for q : 1 thru NN do (
+      nodeSub : makelist(pkC[d]=nodes[q][d], d, 1, cdim),
+      for j : 1 thru NP do
+        expr[j] : expr[j] + weights[q]*fac[q-1]
+          *integrate(subst(nodeSub, pkbP[j])*subst(nodeSub, f_e), pkV[1], -1, 1)
+    ),
+    pkpmWriteDefExprs(fh, onm, expr)
+  ),
+  printf(fh, " ~%"),
+  printf(fh, "  return num_null; ~%"),
+  printf(fh, "} ~%")
+)$

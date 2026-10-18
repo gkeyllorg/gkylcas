@@ -31,7 +31,7 @@ set_pkpm_u_i_p1(fh, funcNm, cdim, basisFun, polyOrder) := block(
   NC : length(bC),
 
   printf(fh, "#include <gkyl_mat.h> ~%"),
-  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
   printf(fh, "#include <gkyl_binop_mul_ser.h> ~%"),
   printf(fh, "#include <gkyl_basis_~a_~ax_p~a_inv.h> ~%", basisFun, cdim, polyOrder),
   printf(fh, "GKYL_CU_DH int ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, 
@@ -119,7 +119,7 @@ set_pkpm_u_i(fh, funcNm, cdim, basisFun, polyOrder) := block(
   NC : length(bC),
 
   printf(fh, "#include <gkyl_mat.h> ~%"),
-  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH int ~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, 
   const double *vlasov_pkpm_moms, const double *euler_pkpm) ~%{ ~%", funcNm, polyOrder),
   printf(fh, "  // count:            integer to indicate which matrix being fetched. ~%"),
@@ -207,7 +207,7 @@ copy_pkpm_u_i(fh, funcNm, cdim, basisFun, polyOrder) := block(
   NC : length(bC),
 
   printf(fh, "#include <gkyl_mat.h> ~%"),
-  printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
   /* Function declaration with input/output variables. */
   printf(fh, "GKYL_CU_DH void ~a(int count, struct gkyl_nmat *x, 
     double* GKYL_RESTRICT pkpm_u) ~%{ ~%", funcNm),

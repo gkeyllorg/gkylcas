@@ -1,0 +1,11 @@
+load("pkpm/pkpm/pkpm-dist-normalize.mac")$
+load(stringproc)$
+/* This script generates the kernels pkpm_dist_normalize_<c>x1v_ser_p1 dividing
+   [F_0, G] weakly by the number density (see pkpm-dist-normalize.mac). */
+for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_dist_normalize_", c, "x1v_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMDistNormalize(fh, funcName, c),
+  close(fh)
+)$

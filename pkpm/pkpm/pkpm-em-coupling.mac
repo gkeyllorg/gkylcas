@@ -1,0 +1,165 @@
+/* pkpm-em-coupling.mac -------------------------------------------------------------
+   Locally implicit (time-centered, Wang et al. JCP 2020) fluid-Maxwell source update of
+   the p=1 PKPM solver, solved NODALLY at the 2^cdim Gauss-Legendre nodes of each cell.
+
+   With M_s the momentum of species s (J_s = (q_s/m_s) M_s), the source equations
+     dM_s/dt = (q_s/m_s) (rho_s (E + E_ext) + M_s x (B + B_ext)) + rho_s a_s
+     eps0 dE/dt = -sum_s (q_s/m_s) M_s - J_app
+   are advanced by the implicit midpoint rule in the unknowns [Mbar_s, eps0 Ebar]:
+     Mbar_s - dt/2 (q_s/m_s) (rho_s Ebar + Mbar_s x B) = M_s^n + dt/2 (q_s/m_s rho_s E_ext + rho_s a_s)
+     eps0 Ebar + dt/2 sum_s (q_s/m_s) Mbar_s = eps0 E^n - dt/2 J_app    (E^n if the field is static)
+   then M^{n+1} = 2 Mbar - M^n, E^{n+1} = 2 Ebar - E^n.
+
+   Every nonlinearity (rho E, M x B, M.E) is a product of two p=1 fields, so its projection
+   onto the p=1 basis is integrated exactly by the 2-point Gauss-Legendre rule, i.e. by the
+   values at the 2^cdim nodes: the nodal solve followed by the nodal-to-modal transform
+   equals the modal solve with exact weak products, and the momentum increment is the
+   exact weak projection of dt (q/m)(rho Ebar + Mbar x B). The nodal solve also conserves
+   sum_s |M_s|^2/(2 rho_s) + eps0 |E|^2/2 node by node (the implicit midpoint rule
+   preserves the quadratic invariant), which is what pkpm_vars_energy_update_* adds to E.
+
+   Per cell the batched matrix is block diagonal: 2^cdim blocks of size 3 num_species + 3
+   (the same size nc (3 S + 3) as the modal system). This file emits the nodal/modal
+   helpers; the species loops of the set and copy kernels are written out as C. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load(stringproc)$
+
+/* Nodal evaluation and nodal-to-modal transform of one p=1 expansion (header helpers). */
+writePKPMEMCouplingHelpers(fh, cdim) := block(
+  [varsC, bC, NC, ow, nodes, weights, NN, k, n, e, sub],
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis("ser", cdim, 1),
+  NC : length(bC),
+  ow : gaussOrdWeight(2, cdim),
+  nodes : ow[1], weights : ow[2],
+  NN : length(nodes),
+  printf(fh, "// p=1 serendipity in ~ax: values at the ~a Gauss-Legendre nodes, and back. ~%", cdim, NN),
+  printf(fh, "GKYL_CU_DH static inline void pkpm_em_coupling_~ax_ser_p1_nodal(const double *f, double *fq) ~%{ ~%", cdim),
+  for n : 1 thru NN do (
+    sub : makelist(varsC[d] = nodes[n][d], d, 1, cdim),
+    e : sum(f[k-1]*subst(sub, bC[k]), k, 1, NC),
+    printf(fh, "  fq[~a] = ~a; ~%", n-1, float(expand(e)))
+  ),
+  printf(fh, "} ~%"),
+  printf(fh, "GKYL_CU_DH static inline void pkpm_em_coupling_~ax_ser_p1_modal(const double *fq, double *f) ~%{ ~%", cdim),
+  for k : 1 thru NC do (
+    e : sum(weights[n]*subst(makelist(varsC[d] = nodes[n][d], d, 1, cdim), bC[k])*fq[n-1], n, 1, NN),
+    printf(fh, "  f[~a] = ~a; ~%", k-1, float(expand(e)))
+  ),
+  printf(fh, "} ~%")
+)$
+
+calcPKPMEMCouplingSet(fh, funcNm, cdim) := block([NC, NN],
+  NC : 2^cdim, NN : 2^cdim,
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_em_coupling_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(int count, int num_species, double qbym[GKYL_MAX_SPECIES],
+  double epsilon0, bool pkpm_field_static, double dt, struct gkyl_nmat *A_n, struct gkyl_nmat *rhs_n,
+  const double *app_accel[GKYL_MAX_SPECIES], const double *ext_em, const double *app_current,
+  const double *fluid[GKYL_MAX_SPECIES], const double *em) ~%{ ~%", funcNm),
+  printf(fh, "  // count:             index of the matrix of this cell in the batch. ~%"),
+  printf(fh, "  // num_species:       number of species (momentum equations). ~%"),
+  printf(fh, "  // qbym:              charge/mass ratio of each species. ~%"),
+  printf(fh, "  // epsilon0:          permittivity of free space. ~%"),
+  printf(fh, "  // pkpm_field_static: true if the self-consistent electric field is not advanced. ~%"),
+  printf(fh, "  // dt:                time step. ~%"),
+  printf(fh, "  // A_n, rhs_n:        batched left-hand side and right-hand side; block diagonal over the ~a nodes, ~%", NN),
+  printf(fh, "  //                    unknowns per node [Mbar_1, ..., Mbar_S, epsilon0 Ebar] (3 S + 3). ~%"),
+  printf(fh, "  // app_accel:         applied accelerations [ax, ay, az] per species. ~%"),
+  printf(fh, "  // ext_em:            external fields [Ex, Ey, Ez, Bx, By, Bz]. ~%"),
+  printf(fh, "  // app_current:       applied current [Jx, Jy, Jz]. ~%"),
+  printf(fh, "  // fluid:             fluid state [rho, rho ux, rho uy, rho uz, E] per species at the old time. ~%"),
+  printf(fh, "  // em:                [Ex, Ey, Ez, Bx, By, Bz] at the old time. ~%"),
+  printf(fh, "  struct gkyl_mat lhs = gkyl_nmat_get(A_n, count); ~%"),
+  printf(fh, "  struct gkyl_mat rhs = gkyl_nmat_get(rhs_n, count); ~%"),
+  printf(fh, "  gkyl_mat_clear(&lhs, 0.0); ~%"),
+  printf(fh, "  gkyl_mat_clear(&rhs, 0.0); ~%"),
+  printf(fh, "  const int NU = 3*num_species + 3; ~%"),
+  printf(fh, "  double Eq[3][~a], Bq[3][~a], extEq[3][~a], Jq[3][~a], tmp[~a]; ~%", NN, NN, NN, NN, NN),
+  printf(fh, "  for (int c = 0; c < 3; ++c) { ~%"),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_nodal(&em[c*~a], Eq[c]); ~%", cdim, NC),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_nodal(&em[(3 + c)*~a], Bq[c]); ~%", cdim, NC),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_nodal(&ext_em[(3 + c)*~a], tmp); ~%", cdim, NC),
+  printf(fh, "    for (int n = 0; n < ~a; ++n) Bq[c][n] += tmp[n]; ~%", NN),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_nodal(&ext_em[c*~a], extEq[c]); ~%", cdim, NC),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_nodal(&app_current[c*~a], Jq[c]); ~%", cdim, NC),
+  printf(fh, "  } ~%"),
+  printf(fh, "  // Ampere's law: epsilon0 Ebar + dt/2 sum_s qbym_s Mbar_s = epsilon0 E^n - dt/2 J_app. ~%"),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
+  printf(fh, "    for (int c = 0; c < 3; ++c) { ~%"),
+  printf(fh, "      const int rE = n*NU + 3*num_species + c; ~%"),
+  printf(fh, "      gkyl_mat_set(&lhs, rE, rE, 1.0); ~%"),
+  printf(fh, "      gkyl_mat_set(&rhs, rE, 0, epsilon0*Eq[c][n] - 0.5*dt*Jq[c][n]); ~%"),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  // Momentum: Mbar_s - dt/2 qbym_s (rho_s Ebar + Mbar_s x B) = M_s^n + dt/2 (qbym_s rho_s E_ext + rho_s a_s). ~%"),
+  printf(fh, "  for (int s = 0; s < num_species; ++s) { ~%"),
+  printf(fh, "    double rhoq[~a], Mq[3][~a], aq[3][~a]; ~%", NN, NN, NN),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_nodal(fluid[s], rhoq); ~%", cdim),
+  printf(fh, "    for (int c = 0; c < 3; ++c) { ~%"),
+  printf(fh, "      pkpm_em_coupling_~ax_ser_p1_nodal(&fluid[s][(1 + c)*~a], Mq[c]); ~%", cdim, NC),
+  printf(fh, "      pkpm_em_coupling_~ax_ser_p1_nodal(&app_accel[s][c*~a], aq[c]); ~%", cdim, NC),
+  printf(fh, "    } ~%"),
+  printf(fh, "    const double f = -0.5*dt*qbym[s]; ~%"),
+  printf(fh, "    for (int n = 0; n < ~a; ++n) { ~%", NN),
+  printf(fh, "      const int r = n*NU + 3*s, rE = n*NU + 3*num_species; ~%"),
+  printf(fh, "      for (int c = 0; c < 3; ++c) { ~%"),
+  printf(fh, "        gkyl_mat_set(&lhs, r + c, r + c, 1.0); ~%"),
+  printf(fh, "        gkyl_mat_set(&lhs, r + c, rE + c, f*rhoq[n]/epsilon0); ~%"),
+  printf(fh, "        gkyl_mat_set(&rhs, r + c, 0, Mq[c][n] + 0.5*dt*rhoq[n]*(qbym[s]*extEq[c][n] + aq[c][n])); ~%"),
+  printf(fh, "        if (!pkpm_field_static) gkyl_mat_set(&lhs, rE + c, r + c, 0.5*dt*qbym[s]); ~%"),
+  printf(fh, "      } ~%"),
+  printf(fh, "      // -dt/2 qbym (Mbar x B) ~%"),
+  printf(fh, "      gkyl_mat_set(&lhs, r + 0, r + 1, f*Bq[2][n]); ~%"),
+  printf(fh, "      gkyl_mat_set(&lhs, r + 0, r + 2, -f*Bq[1][n]); ~%"),
+  printf(fh, "      gkyl_mat_set(&lhs, r + 1, r + 2, f*Bq[0][n]); ~%"),
+  printf(fh, "      gkyl_mat_set(&lhs, r + 1, r + 0, -f*Bq[2][n]); ~%"),
+  printf(fh, "      gkyl_mat_set(&lhs, r + 2, r + 0, f*Bq[1][n]); ~%"),
+  printf(fh, "      gkyl_mat_set(&lhs, r + 2, r + 1, -f*Bq[0][n]); ~%"),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
+
+calcPKPMEMCouplingCopy(fh, funcNm, cdim) := block([NC, NN],
+  NC : 2^cdim, NN : 2^cdim,
+  printf(fh, "#include <gkyl_mat.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_em_coupling_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(int count, int num_species, double qbym[GKYL_MAX_SPECIES],
+  double epsilon0, struct gkyl_nmat *x, double* GKYL_RESTRICT fluid[GKYL_MAX_SPECIES], double* GKYL_RESTRICT em) ~%{ ~%", funcNm),
+  printf(fh, "  // count:       index of the solution of this cell in the batch. ~%"),
+  printf(fh, "  // x:           solution [Mbar_1, ..., Mbar_S, epsilon0 Ebar] per node. ~%"),
+  printf(fh, "  // fluid:       fluid state [rho, rho ux, rho uy, rho uz, E] per species: old time in, new time out ~%"),
+  printf(fh, "  //              (M^{n+1} = 2 Mbar - M^n; E gains the change of the bulk kinetic energy |M|^2/(2 rho) ~%"),
+  printf(fh, "  //              node by node, the work of the field on the fluid; rho is unchanged). ~%"),
+  printf(fh, "  // em:          [Ex, Ey, Ez, Bx, By, Bz]: E at the old time in, new time out (E^{n+1} = 2 Ebar - E^n). ~%"),
+  printf(fh, "  struct gkyl_mat sol = gkyl_nmat_get(x, count); ~%"),
+  printf(fh, "  const int NU = 3*num_species + 3; ~%"),
+  printf(fh, "  double q[~a], qnew[~a]; ~%", NN, NN),
+  printf(fh, "  for (int c = 0; c < 3; ++c) { ~%"),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_nodal(&em[c*~a], q); ~%", cdim, NC),
+  printf(fh, "    for (int n = 0; n < ~a; ++n) qnew[n] = 2.0*gkyl_mat_get(&sol, n*NU + 3*num_species + c, 0)/epsilon0 - q[n]; ~%", NN),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_modal(qnew, &em[c*~a]); ~%", cdim, NC),
+  printf(fh, "  } ~%"),
+  printf(fh, "  double rhoq[~a], dke[~a]; ~%", NN, NN),
+  printf(fh, "  for (int s = 0; s < num_species; ++s) { ~%"),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_nodal(fluid[s], rhoq); ~%", cdim),
+  printf(fh, "    for (int n = 0; n < ~a; ++n) dke[n] = 0.0; ~%", NN),
+  printf(fh, "    for (int c = 0; c < 3; ++c) { ~%"),
+  printf(fh, "      pkpm_em_coupling_~ax_ser_p1_nodal(&fluid[s][(1 + c)*~a], q); ~%", cdim, NC),
+  printf(fh, "      for (int n = 0; n < ~a; ++n) { ~%", NN),
+  printf(fh, "        qnew[n] = 2.0*gkyl_mat_get(&sol, n*NU + 3*s + c, 0) - q[n]; ~%"),
+  printf(fh, "        dke[n] += qnew[n]*qnew[n] - q[n]*q[n]; ~%"),
+  printf(fh, "      } ~%"),
+  printf(fh, "      pkpm_em_coupling_~ax_ser_p1_modal(qnew, &fluid[s][(1 + c)*~a]); ~%", cdim, NC),
+  printf(fh, "    } ~%"),
+  printf(fh, "    // the work of the field on the fluid is the change of its bulk kinetic energy ~%"),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_nodal(&fluid[s][4*~a], q); ~%", cdim, NC),
+  printf(fh, "    for (int n = 0; n < ~a; ++n) qnew[n] = q[n] + (rhoq[n] > 0.0 ? 0.5*dke[n]/rhoq[n] : 0.0); ~%", NN),
+  printf(fh, "    pkpm_em_coupling_~ax_ser_p1_modal(qnew, &fluid[s][4*~a]); ~%", cdim, NC),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$

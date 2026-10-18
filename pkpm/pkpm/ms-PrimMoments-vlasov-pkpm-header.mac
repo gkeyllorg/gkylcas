@@ -4,7 +4,7 @@
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 1$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
 
@@ -20,11 +20,11 @@ maxCdim_Tensor : 2$
 
 cvars : [x, y, z]$
 
-bName        : ["ser", "tensor"]$
-minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
-maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
-minCdim      : [minCdim_Ser, minCdim_Tensor]$
-maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+bName        : ["ser"]$
+minPolyOrder : [minPolyOrder_Ser]$
+maxPolyOrder : [maxPolyOrder_Ser]$
+minCdim      : [minCdim_Ser]$
+maxCdim      : [maxCdim_Ser]$
 
 printPKPMPrototype(deco, ci, bStr, pi) := block([si],
   printf(fh, "~avoid pkpm_self_prim_moments_~ax1v_~a_p~a(struct gkyl_mat *A, struct gkyl_mat *rhs, const double *vlasov_pkpm_moms, const double *boundary_corrections, const double *nu); ~%", deco, ci, bStr, pi),

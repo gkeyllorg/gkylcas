@@ -1,15 +1,16 @@
 /* pkpm-vel-flux-surf.mac --------------------------------------------------------
    v_par surface flux of the PKPM kinetic equations (velocity-space pass, stage B).
 
-   pkpm_vel_flux_vpar_<c>x1v_ser_p1(w, dxv, bvar, grad_b, u, grad_u, theta, a_P, f_l, f_r, flux)
-     On the LOWER v_par face of the current cell (f_r is the current cell, f_l the
+   pkpm_vel_flux_vpar_<c>x1v_ser_p1(w, dxv, bvar, grad_b, u, grad_u, xi, grad_xi, theta, alpha_0, c_h, f_l, f_r, flux)
+     On the LOWER w face of the current cell (f_r is the current cell, f_l the
      cell below), at the 3^cdim configuration Gauss-Legendre nodes, evaluate the
      single-valued configuration-space coefficients
 
-       alpha = a_P - v_face K,   K = b_i b_j d_i u_j,   beta = div b,   theta,
+       alpha = alpha_0 + (c - K) w_face - (b.grad xi) w_face^2,   K = b_i b_j d_i u_j,
+       beta = xi div b,   theta,
 
-     with d_i u_j and d_i b_i the weak (surface-averaged) gradients grad_u, grad_b of
-     pkpm-vars-grad-u.mac,
+     (alpha_0 = a_P/xi and c the closures of stage B) with d_i u_j, d_i b_i and d_i xi the
+     weak (surface-averaged) gradients grad_u, grad_b, grad_xi of pkpm-vars-grad-u.mac,
 
      and form the split upwind fluxes
 
@@ -66,18 +67,22 @@ calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
   laxEmitPrjFn(fh, funcNm, prjPre, NK, length(factP[1]), length(factP[2]), NO, 1, 0),
 
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *bvar, const double *grad_b, const double *u, const double *grad_u, const double *theta,
-  const double *a_P, const double *f_l, const double *f_r, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  const double *bvar, const double *grad_b, const double *u, const double *grad_u,
+  const double *xi, const double *grad_xi, const double *theta,
+  const double *alpha_0, const double *c_h, const double *f_l, const double *f_r, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:   Cell-center coordinates (current cell). ~%"),
   printf(fh, "  // dxv[NDIM]: Cell spacing (current cell). ~%"),
   printf(fh, "  // bvar:      Magnetic field unit vector [bx, by, bz]. ~%"),
   printf(fh, "  // grad_b:    Weak gradient of b, [d_i bx, d_i by, d_i bz] per direction i. ~%"),
   printf(fh, "  // u:         Flow velocity [ux, uy, uz]. ~%"),
   printf(fh, "  // grad_u:    Weak gradient of u, [d_i ux, d_i uy, d_i uz] per direction i. ~%"),
-  printf(fh, "  // theta:     T_perp/m. ~%"),
-  printf(fh, "  // a_P:       Pressure force closing the first moment. ~%"),
-  printf(fh, "  // f_l/f_r:   Distribution functions [F_0, G] in the cell below/current cell. ~%"),
-  printf(fh, "  // flux:      Output modal surface fluxes [F_0 flux, G flux] on the lower v_par face. ~%"),
+  printf(fh, "  // xi:        Thermal speed [xi, xi^2] (the first expansion is used). ~%"),
+  printf(fh, "  // grad_xi:   Weak gradient of [xi, 0, 0] (pkpm_vars_grad_u_* layout). ~%"),
+  printf(fh, "  // theta:     T_perp/T. ~%"),
+  printf(fh, "  // alpha_0:   Pressure force a_P/xi closing the first moment. ~%"),
+  printf(fh, "  // c_h:       Heating rate closing the scalar second moment. ~%"),
+  printf(fh, "  // f_l/f_r:   Distribution functions [F, G] in the cell below/current cell. ~%"),
+  printf(fh, "  // flux:      Output modal surface fluxes [F flux, G flux] on the lower w face. ~%"),
   printf(fh, "  // Returns the stable time-step estimate over the face nodes. ~%"),
   for d : 1 thru cdim do
     printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", d-1, d-1),
@@ -103,15 +108,18 @@ calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
   printf(fh, "  double cfl_max = 0.0; ~%"),
   printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
   printf(fh, "    // Configuration-space coefficients at node i. ~%"),
-  printf(fh, "    double b_q[3] = {0.0}, u_q[3] = {0.0}, gradu_q[3][3] = {{0.0}}, div_b = 0.0, theta_q = 0.0, aP_q = 0.0; ~%"),
+  printf(fh, "    double b_q[3] = {0.0}, u_q[3] = {0.0}, gradu_q[3][3] = {{0.0}}, gradxi_q[3] = {0.0}, div_b = 0.0, theta_q = 0.0, a0_q = 0.0, ch_q = 0.0, xi_q = 0.0; ~%"),
   printf(fh, "    for (int a = 0; a < ~a; ++a) { ~%", NC),
   printf(fh, "      const double ev = vst_~a_conf_ev[i*~a + a]; ~%", tag, NC),
   printf(fh, "      b_q[0] += ev*bx[a]; b_q[1] += ev*by[a]; b_q[2] += ev*bz[a]; ~%"),
   printf(fh, "      u_q[0] += ev*ux[a]; u_q[1] += ev*uy[a]; u_q[2] += ev*uz[a]; ~%"),
   printf(fh, "      theta_q += ev*theta[a]; ~%"),
-  printf(fh, "      aP_q += ev*a_P[a]; ~%"),
+  printf(fh, "      a0_q += ev*alpha_0[a]; ~%"),
+  printf(fh, "      ch_q += ev*c_h[a]; ~%"),
+  printf(fh, "      xi_q += ev*xi[a]; ~%"),
   for d : 1 thru cdim do (
     printf(fh, "      div_b += ev*grad_b[~a + a]; ~%", ((d-1)*3 + (d-1))*NC),
+    printf(fh, "      gradxi_q[~a] += ev*grad_xi[~a + a]; ~%", d-1, ((d-1)*3 + 0)*NC),
     for j : 1 thru 3 do
       printf(fh, "      gradu_q[~a][~a] += ev*grad_u[~a + a]; ~%", d-1, j-1, ((d-1)*3 + (j-1))*NC)
   ),
@@ -120,8 +128,10 @@ calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
   printf(fh, "    for (int d = 0; d < ~a; ++d) { ~%", cdim),
   printf(fh, "      for (int j = 0; j < 3; ++j) K += b_q[d]*b_q[j]*gradu_q[d][j]; ~%"),
   printf(fh, "    } ~%"),
-  printf(fh, "    const double alpha = aP_q - v_face*K; ~%"),
-  printf(fh, "    const double beta = div_b; ~%"),
+  printf(fh, "    double bgx = 0.0; ~%"),
+  printf(fh, "    for (int d = 0; d < ~a; ++d) bgx += b_q[d]*gradxi_q[d]; ~%", cdim),
+  printf(fh, "    const double alpha = a0_q + (ch_q - K)*v_face - bgx*v_face*v_face; ~%"),
+  printf(fh, "    const double beta = xi_q*div_b; ~%"),
   printf(fh, "    // Nodal traces of F and G on both sides of the face. ~%"),
   printf(fh, "    double F_l = 0.0, F_r = 0.0, G_l = 0.0, G_r = 0.0; ~%"),
   printf(fh, "    for (int a = 0; a < ~a; ++a) { ~%", NA),

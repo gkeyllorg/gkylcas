@@ -1,0 +1,46 @@
+/* pkpm-vars-int.mac --------------------------------------------------------------
+   Cell integrals of the diagnostics of the energy-constrained PKPM fluid state
+   [rho, rho ux, rho uy, rho uz, E] with the kinetic coupling moments [p_par, p_perp, q_par,
+   q_perp] and the nodal flow u:
+
+     int_pkpm_vars = integral over the cell (unit measure, the 1/2^cdim of the orthonormal
+                     cell-average basis) of [rho, rho ux, rho uy, rho uz, rho ux^2 (as M_x u_x),
+                     rho uy^2, rho uz^2, p_par, p_perp]. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcPKPMVarsInt(fh, funcNm, cdim) := block(
+  [varsC, bC, NC, rho_e, M_e, u_e, ppar_e, pperp_e, ints, i, c],
+
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis("ser", cdim, 1),
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *fluid, const double *vlasov_pkpm_moms, const double *u, double* GKYL_RESTRICT int_pkpm_vars) ~%{ ~%", funcNm),
+  printf(fh, "  // fluid:            Fluid state [rho, rho ux, rho uy, rho uz, E]. ~%"),
+  printf(fh, "  // vlasov_pkpm_moms: Kinetic coupling moments [p_par, p_perp, q_par, q_perp]. ~%"),
+  printf(fh, "  // u:                Flow velocity [ux, uy, uz]. ~%"),
+  printf(fh, "  // int_pkpm_vars:    Incremented cell integrals [rho, rho ux, rho uy, rho uz, rho ux^2, rho uy^2, rho uz^2, p_par, p_perp]. ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  const double *rho = &fluid[~a]; ~%", 0*NC),
+  for i : 1 thru 3 do (
+    printf(fh, "  const double *M~a = &fluid[~a]; ~%", i-1, i*NC),
+    printf(fh, "  const double *u~a = &u[~a]; ~%", i-1, (i-1)*NC)
+  ),
+  printf(fh, "  const double *ppar = &vlasov_pkpm_moms[~a]; ~%", 0*NC),
+  printf(fh, "  const double *pperp = &vlasov_pkpm_moms[~a]; ~%", 1*NC),
+  printf(fh, " ~%"),
+  rho_e : doExpand1(rho, bC),
+  M_e : makelist(doExpand1(concat(M, i-1), bC), i, 1, 3),
+  u_e : makelist(doExpand1(concat(u, i-1), bC), i, 1, 3),
+  ppar_e : doExpand1(ppar, bC),
+  pperp_e : doExpand1(pperp, bC),
+  ints : append([rho_e], M_e, makelist(M_e[i]*u_e[i], i, 1, 3), [ppar_e, pperp_e]),
+  for c : 1 thru 9 do
+    printf(fh, "  int_pkpm_vars[~a] += ~a; ~%", c-1, float(expand(calcInnerProdList(varsC, 1, [1], ints[c])[1]/2^cdim))),
+  printf(fh, "} ~%")
+)$

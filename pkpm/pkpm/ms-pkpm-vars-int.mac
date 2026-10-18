@@ -1,0 +1,11 @@
+load("pkpm/pkpm/pkpm-vars-int.mac")$
+load(stringproc)$
+/* This script generates the kernels pkpm_vars_int_<c>x_ser_p1 integrating the diagnostics
+   of the energy-constrained PKPM fluid state over a cell (see pkpm-vars-int.mac). */
+for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_vars_int_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMVarsInt(fh, funcName, c),
+  close(fh)
+)$

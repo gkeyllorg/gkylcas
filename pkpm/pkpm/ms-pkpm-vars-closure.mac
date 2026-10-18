@@ -1,0 +1,12 @@
+load("pkpm/pkpm/pkpm-vars-closure.mac")$
+load(stringproc)$
+/* This script generates the closure kernels pkpm_vars_closure_<c>x_ser_p1 of the
+   factored (p=1) PKPM kinetic update: the normalization c_0 and the pressure force a_P
+   from the moments of the stage-A right-hand side (see pkpm-vars-closure.mac). */
+for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_vars_closure_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMVarsClosure(fh, funcName, c, "ser", 1),
+  close(fh)
+)$

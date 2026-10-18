@@ -1,0 +1,24 @@
+load("pkpm/pkpm/pkpm-fluid-flux-absorb.mac")$
+load(stringproc)$
+/* Absorbing-boundary fluid flux kernels of the (p=1) PKPM solver for cdim = 1, 2, 3:
+   pkpm_fluid_flux_absorb_accum_{x,y,z}_<c>x1v_ser_p1 and
+   pkpm_fluid_flux_absorb_{x,y,z}_<c>x_ser_p1 (prototypes in gkyl_pkpm_fluid_kernels.h,
+   written by ms-pkpm-fluid.mac). */
+
+cvarsStr : ["x", "y", "z"]$
+
+for c : 1 thru 3 do (
+  for d : 1 thru c do (
+    funcName : sconcat("pkpm_fluid_flux_absorb_accum_", cvarsStr[d], "_", c, "x1v_ser_p1"),
+    disp(printf(false, "Creating ~a", funcName)),
+    fh : openw(sconcat("~/max-out/", funcName, ".c")),
+    calcPKPMFluidFluxAbsorbAccum(d, fh, funcName, c),
+    close(fh),
+
+    funcName : sconcat("pkpm_fluid_flux_absorb_", cvarsStr[d], "_", c, "x_ser_p1"),
+    disp(printf(false, "Creating ~a", funcName)),
+    fh : openw(sconcat("~/max-out/", funcName, ".c")),
+    calcPKPMFluidFluxAbsorb(d, fh, funcName, c),
+    close(fh)
+  )
+)$

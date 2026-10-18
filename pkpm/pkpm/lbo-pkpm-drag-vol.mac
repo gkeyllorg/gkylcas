@@ -81,12 +81,20 @@ calcVlasovPKPMLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := 
   /* Volume increment from configuration space. */
   incrDrag_F_0 : calcInnerProdList(varsP, 1, diff(bP,vx), alphaDrag_NoZero_e*F_0_e),
   incrDrag_G_1 : calcInnerProdList(varsP, 1, diff(bP,vx), alphaDrag_NoZero_e*G_1_e),
+  /* Collisional source of the perpendicular-energy moment: the Laguerre reduction of the
+     perpendicular drag and diffusion gives 2 nu vth^2 F_0 - 2 nu G (the LBO relaxes G
+     towards vth^2 F_0). Together with the parallel drag-diffusion this conserves the
+     energy p_par + 2 p_perp; it belongs to the collision operator, not to the
+     collisionless update. */
+  printf(fh, "  const double *sumNuVtSq = &nuPrimMomsSum[~a]; ~%", vdim*NC),
+  nuVtSq_e : doExpand1(sumNuVtSq, bC),
+  incrSrc_G_1 : calcInnerProdList(varsP, 1, bP, 2*nuVtSq_e*F_0_e - 2*nuSum_e*G_1_e),
 
   writeCIncrExprs1(out_F_0, incrDrag_F_0),
-  writeCIncrExprs1(out_G_1, incrDrag_G_1),
+  writeCIncrExprs1(out_G_1, incrDrag_G_1 + incrSrc_G_1),
   printf(fh, "~%"),
 
-  printf(fh, "  return fabs(~a); ~%", cflFreq_mid),
+  printf(fh, "  return fabs(~a) + 2.0*fabs(~a); ~%", cflFreq_mid, float(expand(subst(zr, nuSum_e)))),
 
   printf(fh, "~%"),
   printf(fh, "} ~%")

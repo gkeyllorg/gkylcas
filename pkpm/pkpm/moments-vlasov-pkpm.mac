@@ -22,7 +22,8 @@ let(dvpar^3, dvpar_cu)$
 let(wvpar^2, wvpar_sq)$
 let(dvpar^2, dvpar_sq)$
 
-/* Calculate mass density, parallel pressure, and perpendicular pressure sequentially */
+/* Update moments [rho, p_par, p_perp, M1, q_par, q_perp] (mass-weighted; with mass 1 and the
+   normalized distributions of the factored update these are [M0, M2, M0_G, M1, M3, M1_G]). */
 calcPKPMUpdateMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   [varsC,bC,varsP,bP,NP,NC,fl,vTrans,rho,ppar,pperp,PKPM_moments,clst],
   [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),
@@ -35,6 +36,7 @@ calcPKPMUpdateMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "  const double volFact = dxv[~a]/2.0; ~%", cdim),
   printf(fh, "  const double wvpar = w[~a], dvpar = dxv[~a]; ~%", cdim, cdim),
   printf(fh, "  const double wvpar_sq = wvpar*wvpar, dvpar_sq = dvpar*dvpar; ~%"),
+  printf(fh, "  const double wvpar_cu = wvpar*wvpar*wvpar, dvpar_cu = dvpar*dvpar*dvpar; ~%"),
   printf(fh, "~%"),
 
   /* Access F_0 and T_perp G, first two Laguerre moments */
@@ -49,8 +51,12 @@ calcPKPMUpdateMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   M1 : calcInnerProdList(varsP, vTrans, bC, F_0_e),
   ppar : calcInnerProdList(varsP, vTrans*vTrans, bC, F_0_e),
   pperp : calcInnerProdList(varsP, 1.0, bC, G_1_e),
+  /* Third moments for the heat flux of the energy equation: q_par = M3(F_0), q_perp = M1(G). */
+  qpar : calcInnerProdList(varsP, vTrans*vTrans*vTrans, bC, F_0_e),
+  qperp : calcInnerProdList(varsP, vTrans, bC, G_1_e),
   
   ppar : map(letsimp, ppar),
+  qpar : map(letsimp, qpar),
 
   clst : [volFact, mass],
   PKPM_moments : [],
@@ -58,6 +64,8 @@ calcPKPMUpdateMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   PKPM_moments : append(PKPM_moments, volFact*mass*ppar),
   PKPM_moments : append(PKPM_moments, volFact*mass*pperp),
   PKPM_moments : append(PKPM_moments, volFact*mass*M1),
+  PKPM_moments : append(PKPM_moments, volFact*mass*qpar),
+  PKPM_moments : append(PKPM_moments, volFact*mass*qperp),
   writeCIncrExprsCollect1(out, PKPM_moments, clst),
   printf(fh, "} ~%")
 )$

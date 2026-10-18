@@ -1,0 +1,12 @@
+load("pkpm/pkpm/pkpm-vars-prim.mac")$
+load(stringproc)$
+/* This script generates the kernels pkpm_vars_prim_<c>x_ser_p1 computing the nodal flow
+   velocity and thermal speed [xi, xi^2, p] of the energy-constrained PKPM fluid state
+   (see pkpm-vars-prim.mac). */
+for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_vars_prim_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMVarsPrim(fh, funcName, c),
+  close(fh)
+)$

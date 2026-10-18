@@ -1,0 +1,225 @@
+/* pkpm-vars-closure.mac ---------------------------------------------------------
+   Closures of the thermal-velocity-normalized (p=1) PKPM kinetic update, with the
+   characteristic velocity-space edges. The evolved distributions are F = xi F_0/n and
+   G = G_phys/(n xi) on the grid of w = v_par/xi, with the per-cell constraints (weakly,
+   for every p=1 test function)
+
+     M0(F) = 1,   M1(F) = 0,   M2(F) + 2 M0(G) = 3.
+
+   Stage A produces the partial right-hand sides rhs_A (streaming, forces, mirror and
+   explicit sources; not the closure terms). Stage B adds
+
+     c_0 F                        normalization (c_0 = div u in the continuum)
+     -d_w(alpha_0 [F, G])         pressure force, alpha_0 = a_P/xi
+     -d_w(c w [F, G]) + 2 c G     heating rate, c = -(1/xi) D xi/Dt in the continuum
+
+   and the fluxes through the two velocity-domain edges w_lo, w_up: the upwind flux of
+   the full force alpha(w) = alpha_0 + (c - K) w - (b.grad xi) w^2 against an empty state
+   outside (outflow where the force points outward, nothing enters otherwise), plus for G
+   the mirror flux beta H, beta = xi div b, H = 4 theta G - 2 theta^2 F. The interior
+   velocity faces telescope, so with N = [M0, M2, M0G, M1] of (F, G), R = [r0, r2, r0G, r1]
+   of rhs_A, the edge traces F_e, G_e, H_e, the switches s_e (1 where alpha points outward,
+   decided from the closures of the PREVIOUS stage) and sb_e (beta outward), and the known
+   part k_e = -K w_e - (b.grad xi) w_e^2 of the force at the edge, the three constraints are
+   a linear 3x3 system per node for (c_0, alpha_0, c):
+
+     M0:  c_0 M0 + sum_e n_e s_e (alpha_0 + c w_e + k_e) F_e = -r0
+     M1:  c_0 M1 + alpha_0 M0 + c M1 + sum_e n_e w_e s_e (alpha_0 + c w_e + k_e) F_e = -r1
+     E :  c_0 M2 + 2 alpha_0 M1 + 2 c (M2 + 2 M0G) + sum_e n_e w_e^2 s_e (...) F_e
+          + 2 sum_e n_e [s_e (...) G_e + sb_e beta H_e] = -(r2 + 2 r0G)
+
+   with n_e = +1 for the upper edge and -1 for the lower (the moment of the edge loss is
+   -n_e w_e^k Phi_e). The system is solved by Cramer's rule at the 2^cdim Gauss-Legendre
+   nodes and interpolated to p=1; the edge fluxes are then formed from the SAME closures and
+   written in the stored face format of the velocity-flux kernels (shape coefficients:
+   orthonormal surface coefficients divided by sqrt(1/2)^cdim (2 sqrt 3/5)^(linear factors
+   of the mode)), so that what the velocity pass applies at the edges is exactly what the
+   closure charged. Where the distribution does not reach the edges all edge terms vanish
+   and the system reduces to the former scalar + 2x2.
+
+   Policy: if M0(F) <= 0 or the determinant is not positive at any node, all closures and
+   both edge fluxes are zero in the cell and the kernel returns the number of such nodes.
+   cfl[0], cfl[1] receive the time-step rates of the edge fluxes for the lowest and
+   uppermost velocity cells, (2 p_v + 1)/2 dv1 max_n(|alpha| + (2 + sqrt 2)|theta beta|). */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load(stringproc)$
+fpprec : 24$
+
+cvarsClo : [x, y, z]$
+
+calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [lb, pkC, pkbC, pkP, pkbP, NC, NP, nodes, weights, NN, nodeSub, n, k, d, i, j, e,
+   n0_e, n1_e, n2_e, nG_e, r0_e, r1_e, r2_e, rG_e, a0p_e, cp_e, xi_e, th_e, b_e, gu_e, gb_e, gxi_e,
+   Flo_e, Glo_e, Fup_e, Gup_e, nlin, c0_c, a0_c, c_c, fl_c, fu_c, gl_c, gu_c, sc, Kstr, bgxstr, dbstr],
+
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
+  NC : length(pkbC),
+  NP : length(pkbP),
+  [nodes, weights] : gaussOrdWeight(2, cdim),
+  NN : length(nodes),
+  nlin : makelist(length(listofvars(pkbC[k])), k, 1, NC),
+
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH int ~a(double w_lo, double w_up, double dv, const double *norm_moms, const double *rhs_moms,
+  const double *bvar, const double *grad_b, const double *grad_u, const double *xi, const double *grad_xi, const double *theta,
+  const double *alpha_0_prev, const double *c_h_prev, const double *f_lo, const double *f_up,
+  double* GKYL_RESTRICT c_0, double* GKYL_RESTRICT alpha_0, double* GKYL_RESTRICT c_h,
+  double* GKYL_RESTRICT flux_lo, double* GKYL_RESTRICT flux_up, double* GKYL_RESTRICT cfl) ~%{ ~%", funcNm),
+  printf(fh, "  // w_lo, w_up:   Velocity domain edges; dv: velocity cell size. ~%"),
+  printf(fh, "  // norm_moms:    Input [M0, M2, M0_G, M1, ...] moments of the normalized distributions (stage state). ~%"),
+  printf(fh, "  // rhs_moms:     Input [M0, M2, M0_G, M1, ...] moments of the stage-A right-hand sides. ~%"),
+  printf(fh, "  // bvar, grad_b, grad_u, xi, grad_xi, theta: fields of the forces (pkpm_vars_grad_u_* layouts). ~%"),
+  printf(fh, "  // alpha_0_prev, c_h_prev: closures of the previous stage (may alias the outputs), for the upwind switch. ~%"),
+  printf(fh, "  // f_lo, f_up:   [F, G] of the lowest and uppermost velocity cells of this configuration cell. ~%"),
+  printf(fh, "  // c_0, alpha_0, c_h: Output closures at the ~a Gauss-Legendre nodes, interpolated to p=1. ~%", NN),
+  printf(fh, "  // flux_lo, flux_up: Output edge fluxes [F flux, G flux] in the stored face format. ~%"),
+  printf(fh, "  // cfl:          Output [lower, upper] edge-flux time-step rates. ~%"),
+  printf(fh, "  // Returns the number of nodes where the closures are undefined (everything is zero in the cell then). ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  const double dv1 = 2.0/dv; ~%"),
+  printf(fh, "  const double *n0 = &norm_moms[~a]; ~%", 0*NC),
+  printf(fh, "  const double *n2 = &norm_moms[~a]; ~%", 1*NC),
+  printf(fh, "  const double *nG = &norm_moms[~a]; ~%", 2*NC),
+  printf(fh, "  const double *n1 = &norm_moms[~a]; ~%", 3*NC),
+  printf(fh, "  const double *r0 = &rhs_moms[~a]; ~%", 0*NC),
+  printf(fh, "  const double *r2 = &rhs_moms[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rG = &rhs_moms[~a]; ~%", 2*NC),
+  printf(fh, "  const double *r1 = &rhs_moms[~a]; ~%", 3*NC),
+  for i : 1 thru 3 do printf(fh, "  const double *b~a = &bvar[~a]; ~%", i-1, (i-1)*NC),
+  for d : 1 thru cdim do for j : 1 thru 3 do
+    printf(fh, "  const double *gu~a~a = &grad_u[~a]; ~%", cvarsClo[d], j-1, ((d-1)*3 + (j-1))*NC),
+  for d : 1 thru cdim do printf(fh, "  const double *gb~a = &grad_b[~a]; ~%", cvarsClo[d], ((d-1)*3 + (d-1))*NC),
+  for d : 1 thru cdim do printf(fh, "  const double *gxi~a = &grad_xi[~a]; ~%", cvarsClo[d], ((d-1)*3 + 0)*NC),
+  printf(fh, "  const double *xi_1 = &xi[0]; ~%"),
+  printf(fh, "  const double *F_lo = &f_lo[0]; ~%"),
+  printf(fh, "  const double *G_lo = &f_lo[~a]; ~%", NP),
+  printf(fh, "  const double *F_up = &f_up[0]; ~%"),
+  printf(fh, "  const double *G_up = &f_up[~a]; ~%", NP),
+  printf(fh, " ~%"),
+
+  n0_e : doExpand1(n0, pkbC), n1_e : doExpand1(n1, pkbC), n2_e : doExpand1(n2, pkbC), nG_e : doExpand1(nG, pkbC),
+  r0_e : doExpand1(r0, pkbC), r1_e : doExpand1(r1, pkbC), r2_e : doExpand1(r2, pkbC), rG_e : doExpand1(rG, pkbC),
+  a0p_e : doExpand1(alpha_0_prev, pkbC), cp_e : doExpand1(c_h_prev, pkbC),
+  xi_e : doExpand1(xi_1, pkbC), th_e : doExpand1(theta, pkbC),
+  b_e : makelist(doExpand1(concat(b, i-1), pkbC), i, 1, 3),
+  gu_e : makelist(makelist(doExpand1(concat(gu, cvarsClo[d], j-1), pkbC), j, 1, 3), d, 1, cdim),
+  Flo_e : subst(vx = -1, doExpand1(F_lo, pkbP)), Glo_e : subst(vx = -1, doExpand1(G_lo, pkbP)),
+  Fup_e : subst(vx = 1, doExpand1(F_up, pkbP)), Gup_e : subst(vx = 1, doExpand1(G_up, pkbP)),
+
+  printf(fh, "  double c0_n[~a] = {0.0}, a0_n[~a] = {0.0}, c_n[~a] = {0.0}; ~%", NN, NN, NN),
+  printf(fh, "  double flo_n[~a] = {0.0}, glo_n[~a] = {0.0}, fup_n[~a] = {0.0}, gup_n[~a] = {0.0}; ~%", NN, NN, NN, NN),
+  printf(fh, "  double cfl_lo = 0.0, cfl_up = 0.0; ~%"),
+  printf(fh, "  int num_null = 0; ~%"),
+  printf(fh, " ~%"),
+  for n : 1 thru NN do (
+    nodeSub : makelist(pkC[d]=nodes[n][d], d, 1, cdim),
+    printf(fh, "  { ~%"),
+    printf(fh, "    const double n0_q = ~a; ~%", float(expand(subst(nodeSub, n0_e)))),
+    printf(fh, "    const double n1_q = ~a; ~%", float(expand(subst(nodeSub, n1_e)))),
+    printf(fh, "    const double n2_q = ~a; ~%", float(expand(subst(nodeSub, n2_e)))),
+    printf(fh, "    const double nG_q = ~a; ~%", float(expand(subst(nodeSub, nG_e)))),
+    printf(fh, "    const double r0_q = ~a; ~%", float(expand(subst(nodeSub, r0_e)))),
+    printf(fh, "    const double r1_q = ~a; ~%", float(expand(subst(nodeSub, r1_e)))),
+    printf(fh, "    const double r2_q = ~a + 2.0*(~a); ~%", float(expand(subst(nodeSub, r2_e))), float(expand(subst(nodeSub, rG_e)))),
+    printf(fh, "    const double a0p_q = ~a; ~%", float(expand(subst(nodeSub, a0p_e)))),
+    printf(fh, "    const double cp_q = ~a; ~%", float(expand(subst(nodeSub, cp_e)))),
+    printf(fh, "    const double xi_q = ~a; ~%", float(expand(subst(nodeSub, xi_e)))),
+    printf(fh, "    const double th_q = ~a; ~%", float(expand(subst(nodeSub, th_e)))),
+    for i : 1 thru 3 do
+      printf(fh, "    const double b~a_q = ~a; ~%", i-1, float(expand(subst(nodeSub, b_e[i])))),
+    for d : 1 thru cdim do for j : 1 thru 3 do
+      printf(fh, "    const double gu~a~a_q = ~a; ~%", d-1, j-1, float(expand(subst(nodeSub, gu_e[d][j])))),
+    for d : 1 thru cdim do
+      printf(fh, "    const double gxi~a_q = ~a; ~%", d-1, float(expand(subst(nodeSub, doExpand1(concat(gxi, cvarsClo[d]), pkbC))))),
+    for d : 1 thru cdim do
+      printf(fh, "    const double gb~a_q = ~a; ~%", d-1, float(expand(subst(nodeSub, doExpand1(concat(gb, cvarsClo[d]), pkbC))))),
+    Kstr : "0.0", bgxstr : "0.0", dbstr : "0.0",
+    for d : 1 thru cdim do (
+      for j : 1 thru 3 do Kstr : sconcat(Kstr, " + b", d-1, "_q*b", j-1, "_q*gu", d-1, j-1, "_q"),
+      bgxstr : sconcat(bgxstr, " + b", d-1, "_q*gxi", d-1, "_q"),
+      dbstr : sconcat(dbstr, " + gb", d-1, "_q")
+    ),
+    printf(fh, "    const double K_q = ~a; ~%", Kstr),
+    printf(fh, "    const double bgx_q = ~a; ~%", bgxstr),
+    printf(fh, "    const double beta_q = xi_q*(~a); ~%", dbstr),
+    printf(fh, "    const double Flo_q = ~a; ~%", float(expand(subst(nodeSub, Flo_e)))),
+    printf(fh, "    const double Glo_q = ~a; ~%", float(expand(subst(nodeSub, Glo_e)))),
+    printf(fh, "    const double Fup_q = ~a; ~%", float(expand(subst(nodeSub, Fup_e)))),
+    printf(fh, "    const double Gup_q = ~a; ~%", float(expand(subst(nodeSub, Gup_e)))),
+    printf(fh, "    const double Hlo_q = 4.0*th_q*Glo_q - 2.0*th_q*th_q*Flo_q, Hup_q = 4.0*th_q*Gup_q - 2.0*th_q*th_q*Fup_q; ~%"),
+    printf(fh, "    // known part of the force at the edges and the upwind switches (previous closures) ~%"),
+    printf(fh, "    const double k_lo = -K_q*w_lo - bgx_q*w_lo*w_lo, k_up = -K_q*w_up - bgx_q*w_up*w_up; ~%"),
+    printf(fh, "    const double s_lo = (a0p_q + cp_q*w_lo + k_lo) < 0.0 ? 1.0 : 0.0, s_up = (a0p_q + cp_q*w_up + k_up) > 0.0 ? 1.0 : 0.0; ~%"),
+    printf(fh, "    const double sb_lo = beta_q < 0.0 ? 1.0 : 0.0, sb_up = beta_q > 0.0 ? 1.0 : 0.0; ~%"),
+    printf(fh, "    // edge contributions to the moment rates: the k-th moment gains -n_e w_e^k Phi_e per edge, ~%"),
+    printf(fh, "    // n_e = +1 up, -1 lo, Phi_e the outward-switched +w flux (closure part times these, known part kF/bH) ~%"),
+    printf(fh, "    const double eF0 = s_lo*Flo_q - s_up*Fup_q; ~%"),
+    printf(fh, "    const double eF1 = s_lo*w_lo*Flo_q - s_up*w_up*Fup_q; ~%"),
+    printf(fh, "    const double eF2 = s_lo*w_lo*w_lo*Flo_q - s_up*w_up*w_up*Fup_q; ~%"),
+    printf(fh, "    const double eF3 = s_lo*w_lo*w_lo*w_lo*Flo_q - s_up*w_up*w_up*w_up*Fup_q; ~%"),
+    printf(fh, "    const double eG0 = s_lo*Glo_q - s_up*Gup_q; ~%"),
+    printf(fh, "    const double eG1 = s_lo*w_lo*Glo_q - s_up*w_up*Gup_q; ~%"),
+    printf(fh, "    const double kF0 = s_lo*k_lo*Flo_q - s_up*k_up*Fup_q; ~%"),
+    printf(fh, "    const double kF1 = s_lo*w_lo*k_lo*Flo_q - s_up*w_up*k_up*Fup_q; ~%"),
+    printf(fh, "    const double kF2 = s_lo*w_lo*w_lo*k_lo*Flo_q - s_up*w_up*w_up*k_up*Fup_q; ~%"),
+    printf(fh, "    const double kG0 = s_lo*k_lo*Glo_q - s_up*k_up*Gup_q; ~%"),
+    printf(fh, "    const double bH0 = sb_lo*beta_q*Hlo_q - sb_up*beta_q*Hup_q; ~%"),
+    printf(fh, "    // 3x3 system A [c_0, alpha_0, c] = rhs: stage-A rates + interior stage-B rates + edge rates = 0 ~%"),
+    printf(fh, "    const double A00 = n0_q, A01 = eF0, A02 = eF1; ~%"),
+    printf(fh, "    const double A10 = n1_q, A11 = n0_q + eF1, A12 = n1_q + eF2; ~%"),
+    printf(fh, "    const double A20 = n2_q, A21 = 2.0*n1_q + eF2 + 2.0*eG0, A22 = 2.0*(n2_q + 2.0*nG_q) + eF3 + 2.0*eG1; ~%"),
+    printf(fh, "    const double b0 = -r0_q - kF0, b1 = -r1_q - kF1, b2 = -r2_q - kF2 - 2.0*kG0 - 2.0*bH0; ~%"),
+    printf(fh, "    const double det = A00*(A11*A22 - A12*A21) - A01*(A10*A22 - A12*A20) + A02*(A10*A21 - A11*A20); ~%"),
+    printf(fh, "    if (n0_q > 0.0 && det > 0.0) { ~%"),
+    printf(fh, "      c0_n[~a] = (b0*(A11*A22 - A12*A21) - A01*(b1*A22 - A12*b2) + A02*(b1*A21 - A11*b2))/det; ~%", n-1),
+    printf(fh, "      a0_n[~a] = (A00*(b1*A22 - A12*b2) - b0*(A10*A22 - A12*A20) + A02*(A10*b2 - b1*A20))/det; ~%", n-1),
+    printf(fh, "      c_n[~a] = (A00*(A11*b2 - b1*A21) - A01*(A10*b2 - b1*A20) + b0*(A10*A21 - A11*A20))/det; ~%", n-1),
+    printf(fh, "      const double al_lo = a0_n[~a] + c_n[~a]*w_lo + k_lo, al_up = a0_n[~a] + c_n[~a]*w_up + k_up; ~%", n-1, n-1, n-1, n-1),
+    printf(fh, "      flo_n[~a] = s_lo*al_lo*Flo_q; ~%", n-1),
+    printf(fh, "      glo_n[~a] = s_lo*al_lo*Glo_q + sb_lo*beta_q*Hlo_q; ~%", n-1),
+    printf(fh, "      fup_n[~a] = s_up*al_up*Fup_q; ~%", n-1),
+    printf(fh, "      gup_n[~a] = s_up*al_up*Gup_q + sb_up*beta_q*Hup_q; ~%", n-1),
+    printf(fh, "      cfl_lo = fmax(cfl_lo, fabs(al_lo) + 3.414213562373095*fabs(th_q*beta_q)); ~%"),
+    printf(fh, "      cfl_up = fmax(cfl_up, fabs(al_up) + 3.414213562373095*fabs(th_q*beta_q)); ~%"),
+    printf(fh, "    } else { ~%"),
+    printf(fh, "      num_null += 1; ~%"),
+    printf(fh, "    } ~%"),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, " ~%"),
+  printf(fh, "  cfl[0] = 2.5*dv1*cfl_lo; ~%"),
+  printf(fh, "  cfl[1] = 2.5*dv1*cfl_up; ~%"),
+  printf(fh, "  if (num_null > 0) { ~%"),
+  for k : 1 thru NC do printf(fh, "    c_0[~a] = 0.0; alpha_0[~a] = 0.0; c_h[~a] = 0.0; ~%", k-1, k-1, k-1),
+  for k : 1 thru 2*NC do printf(fh, "    flux_lo[~a] = 0.0; flux_up[~a] = 0.0; ~%", k-1, k-1),
+  printf(fh, "    return num_null; ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+
+  /* nodal -> modal (2-point rule, exact for p=1) for the closures; the edge fluxes in the
+     stored face format (orthonormal coefficient / shape factor). */
+  c0_c : makelist(sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*c0_n[n-1], n, 1, NN), k, 1, NC),
+  a0_c : makelist(sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*a0_n[n-1], n, 1, NN), k, 1, NC),
+  c_c : makelist(sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*c_n[n-1], n, 1, NN), k, 1, NC),
+  writeCExprs1(c_0, c0_c),
+  writeCExprs1(alpha_0, a0_c),
+  writeCExprs1(c_h, c_c),
+  printf(fh, " ~%"),
+  sc : makelist(sqrt(2)^cdim*(5/(2*sqrt(3)))^nlin[k], k, 1, NC),
+  fl_c : makelist(sc[k]*sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*flo_n[n-1], n, 1, NN), k, 1, NC),
+  gl_c : makelist(sc[k]*sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*glo_n[n-1], n, 1, NN), k, 1, NC),
+  fu_c : makelist(sc[k]*sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*fup_n[n-1], n, 1, NN), k, 1, NC),
+  gu_c : makelist(sc[k]*sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*gup_n[n-1], n, 1, NN), k, 1, NC),
+  for k : 1 thru NC do printf(fh, "  flux_lo[~a] = ~a; ~%", k-1, float(expand(fl_c[k]))),
+  for k : 1 thru NC do printf(fh, "  flux_lo[~a] = ~a; ~%", NC+k-1, float(expand(gl_c[k]))),
+  for k : 1 thru NC do printf(fh, "  flux_up[~a] = ~a; ~%", k-1, float(expand(fu_c[k]))),
+  for k : 1 thru NC do printf(fh, "  flux_up[~a] = ~a; ~%", NC+k-1, float(expand(gu_c[k]))),
+  printf(fh, " ~%"),
+  printf(fh, "  return 0; ~%"),
+  printf(fh, "} ~%")
+)$

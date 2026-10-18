@@ -1,6 +1,6 @@
 /* Generate the header file for the PKPM configuration-space variable kernels of the
-   refactored (p=1) PKPM solver: nodal quotients, force closure, and fluid fluxes.
-   Legacy kernels remain declared in gkyl_euler_pkpm_kernels.h until retired. */
+   energy-constrained (p=1) PKPM solver: the weak division for the flow, nodal quotients,
+   closures, weak gradients, sources and diagnostics. */
 
 /* ...... USER INPUTS........ */
 
@@ -21,14 +21,22 @@ minCdim      : [minCdim_Ser]$
 maxCdim      : [maxCdim_Ser]$
 
 printPKPMVarsPrototype(deco, ci, bStr, pi) := block([si, d],
-  printf(fh, "~aint pkpm_vars_theta_~ax_~a_p~a(const double *vlasov_pkpm_moms, double* GKYL_RESTRICT theta); ~%", deco, ci, bStr, pi),
+  printf(fh, "~aint pkpm_vars_u_set_~ax_~a_p~a(int count, struct gkyl_nmat *A, struct gkyl_nmat *rhs, const double *vlasov_pkpm_moms, const double *euler_pkpm); ~%", deco, ci, bStr, pi),
+  printf(fh, "~avoid pkpm_vars_u_copy_~ax_~a_p~a(int count, struct gkyl_nmat *x, double* GKYL_RESTRICT pkpm_u); ~%", deco, ci, bStr, pi),
   for d : 1 thru ci do
     printf(fh, "~avoid pkpm_vars_grad_u_~a_~ax_~a_p~a(const double *dxv, const double *u_l, const double *u_c, const double *u_r, double* GKYL_RESTRICT grad_u); ~%", deco, cvars[d], ci, bStr, pi),
-  printf(fh, "~aint pkpm_vars_p_force_closure_~ax_~a_p~a(const double *vlasov_pkpm_moms, const double *rhs_moms, double* GKYL_RESTRICT a_P); ~%", deco, ci, bStr, pi),
-  printf(fh, "~avoid pkpm_vars_pressure_proj_~ax_~a_p~a(const double *vlasov_pkpm_moms, const double *bvar, double* GKYL_RESTRICT p_ij); ~%", deco, ci, bStr, pi),
+  printf(fh, "~aint pkpm_vars_closure_~ax_~a_p~a(double w_lo, double w_up, double dv, const double *norm_moms, const double *rhs_moms,
+  const double *bvar, const double *grad_b, const double *grad_u, const double *xi, const double *grad_xi, const double *theta,
+  const double *alpha_0_prev, const double *c_h_prev, const double *f_lo, const double *f_up,
+  double* GKYL_RESTRICT c_0, double* GKYL_RESTRICT alpha_0, double* GKYL_RESTRICT c_h,
+  double* GKYL_RESTRICT flux_lo, double* GKYL_RESTRICT flux_up, double* GKYL_RESTRICT cfl); ~%", deco, ci, bStr, pi),
+  printf(fh, "~aint pkpm_vars_grad_ln_n_~ax_~a_p~a(const double *rho, const double *grad_rho, double* GKYL_RESTRICT grad_ln_n); ~%", deco, ci, bStr, pi),
+  printf(fh, "~aint pkpm_vars_prim_~ax_~a_p~a(const double *fluid, double* GKYL_RESTRICT u, double* GKYL_RESTRICT xi); ~%", deco, ci, bStr, pi),
+  printf(fh, "~avoid pkpm_vars_int_~ax_~a_p~a(const double *fluid, const double *vlasov_pkpm_moms, const double *u, double* GKYL_RESTRICT int_pkpm_vars); ~%", deco, ci, bStr, pi),
+  printf(fh, "~avoid pkpm_vars_source_~ax_~a_p~a(const double *qmem, const double *fluid, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
   printf(fh, "~avoid pkpm_vars_diag_~ax_~a_p~a(const double *dxv, const double *vlasov_pkpm_moms, const double *euler_pkpm,
-  const double *bvar, const double *grad_b, const double *u, const double *grad_u, const double *theta, const double *a_P,
-  double* GKYL_RESTRICT fluid_io, double* GKYL_RESTRICT pkpm_vars_io); ~%", deco, ci, bStr, pi),
+  const double *bvar, const double *grad_b, const double *u, const double *grad_u, const double *theta, const double *alpha_0,
+  const double *xi, const double *c_h, double* GKYL_RESTRICT fluid_io, double* GKYL_RESTRICT pkpm_vars_io); ~%", deco, ci, bStr, pi),
   printf(fh, "~%")
 )$
 
@@ -37,7 +45,9 @@ fh : openw("~/max-out/gkyl_pkpm_vars_kernels.h")$
 
 printf(fh, "#pragma once ~%")$
 printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <stdbool.h> ~%")$
 printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, "#include <gkyl_mat.h> ~%")$
 printf(fh, "EXTERN_C_BEG ~%")$
 printf(fh, "~%")$
 

@@ -6,7 +6,7 @@ load("pkpm/pkpm/lbo-pkpm-drag-vol.mac")$
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 1$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
 
@@ -18,11 +18,11 @@ maxCdim_Tensor : 2$
 
 /* ...... END OF USER INPUTS........ */
 
-bName        : ["ser","tensor"]$
-minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
-maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
-minCdim      : [minCdim_Ser, minCdim_Tensor]$
-maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+bName        : ["ser"]$
+minPolyOrder : [minPolyOrder_Ser]$
+maxPolyOrder : [maxPolyOrder_Ser]$
+minCdim      : [minCdim_Ser]$
+maxCdim      : [maxCdim_Ser]$
 
 for bInd : 1 thru length(bName) do (
   for d : minCdim[bInd] thru maxCdim[bInd] do (

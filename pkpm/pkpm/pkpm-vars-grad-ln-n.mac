@@ -1,0 +1,56 @@
+/* pkpm-vars-grad-ln-n.mac -------------------------------------------------------
+   grad(ln n) = grad(rho)/rho of the factored (p=1) PKPM kinetic update, the
+   configuration-space factor of the source -v_par b.grad(ln n) Fbar. The weak
+   (face-averaged) gradient of rho is computed by the pkpm_vars_grad_u_* kernels applied
+   to the array [rho, 0, 0] (it occupies the first expansion of every direction block);
+   here each component is divided by the CELL AVERAGE of rho. The nodal quotient would be
+   the exact weak division, but near vacuum (the nodes of a cell with a large relative
+   slope) it makes the explicit source -v_par b.grad(ln n) Fbar arbitrarily stiff, while a
+   p=1 field cannot resolve a density scale length below the cell anyway; the average
+   bounds |grad(ln n)| by about 2/dx once the density is positivity-limited.
+
+   Policy: with a non-positive cell average the quotient is set to zero; the kernel returns
+   1 in that case, 0 otherwise. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load(stringproc)$
+fpprec : 24$
+
+cvars : [x, y, z]$
+
+calcPKPMVarsGradLnN(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC, bC, NC, nodes, weights, NN, nodeSub, rho_e, g_e, n, k, d, g_c],
+
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+  NC : length(bC),
+  [nodes, weights] : gaussOrdWeight(polyOrder+1, cdim),
+  NN : length(nodes),
+
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH int ~a(const double *rho, const double *grad_rho, double* GKYL_RESTRICT grad_ln_n) ~%{ ~%", funcNm),
+  printf(fh, "  // rho:       Input mass density. ~%"),
+  printf(fh, "  // grad_rho:  Input weak gradient of [rho, 0, 0] (pkpm_vars_grad_u_* layout, cdim x 3 expansions). ~%"),
+  printf(fh, "  // grad_ln_n: Output [d_x ln n, ...] (cdim expansions): grad(rho) divided by the cell average of rho. ~%"),
+  printf(fh, "  // Returns 1 if the cell average of rho is not positive (the quotient is zero then), 0 otherwise. ~%"),
+  printf(fh, " ~%"),
+  for d : 1 thru cdim do (
+    printf(fh, "  const double *grho_~a = &grad_rho[~a]; ~%", cvars[d], (d-1)*3*NC),
+    printf(fh, "  double *gln_~a = &grad_ln_n[~a]; ~%", cvars[d], (d-1)*NC)
+  ),
+  printf(fh, " ~%"),
+
+  printf(fh, "  const double rho_avg = ~a*rho[0]; ~%", float(bC[1])),
+  printf(fh, "  const double inv_rho = rho_avg > 0.0 ? 1.0/rho_avg : 0.0; ~%"),
+  printf(fh, " ~%"),
+
+  for d : 1 thru cdim do (
+    for k : 1 thru NC do
+      printf(fh, "  gln_~a[~a] = inv_rho*grho_~a[~a]; ~%", cvars[d], k-1, cvars[d], k-1)
+  ),
+  printf(fh, " ~%"),
+  printf(fh, "  return rho_avg > 0.0 ? 0 : 1; ~%"),
+  printf(fh, "} ~%")
+)$

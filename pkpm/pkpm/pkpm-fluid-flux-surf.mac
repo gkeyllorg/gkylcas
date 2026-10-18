@@ -1,39 +1,40 @@
 /* pkpm-fluid-flux-surf.mac ------------------------------------------------------
-   Momentum surface fluxes of the refactored (p=1) PKPM solver, and the hyper_dg
-   surface kernel scattering them.
+   Face fluxes of the fluid system [rho, M, E] of the factored, energy-constrained (p=1)
+   PKPM solver, and the hyper_dg surface kernel scattering them.
 
    pkpm_fluid_flux_<dir>_<c>x_ser_p1(wv_eqn, geom, w, dxv, moms_l, moms_r, bvar_l, bvar_r,
-                                     u_l, u_r, euler_l, euler_r, flux, mass_flux)
+                                     u_l, u_r, fluid_l, fluid_r, flux)
      On the LOWER face of the current cell in direction dir (the r side; the left
      neighbor is the l side), at three Gauss-Legendre nodes per transverse direction,
-     evaluate rho, p_par, p_perp, b, u and the evolved momentum M of both traces and
-     form the full pressure tensor POINTWISE, P_ij = p_perp delta_ij + (p_par - p_perp)
-     b_i b_j. At a node where both traces are admissible (rho > 0 and P_nn > 0 on both
-     sides) the momentum flux is the ten-moment Roe flux of the nodal states
-     (rho, M, P + M M/rho),
+     evaluate the evolved state [rho, M, E], the kinetic coupling moments
+     [p_par, p_perp, q_par, q_perp] (formed by the caller from the density, the thermal
+     speed and the normalized moments), b and u of both traces and form POINTWISE the
+     pressure tensor and the heat flux
 
-       F_i = (M_i^l u_n^l + M_i^r u_n^r)/2 + (P_in^l + P_in^r)/2 - (apdq_i - amdq_i)/2,
+       P_ij = p_perp delta_ij + (p_par - p_perp) b_i b_j,   q_n = b_n (q_par + 2 q_perp)/2,
 
-     and at a node where a trace is not admissible it is the HLL flux of the momentum
-     with the speed bounds S_L = min(u_n - c), S_R = max(u_n + c), c = sqrt(3 P_nn/rho)
-     (c = 0 for an inadmissible trace),
+     the physical fluxes F^s = [M_n, M u_n + P.n, u_n E + (P.u)_n + q_n] of each trace and
+     the HLL flux of the five components with the speed bounds
 
-       F_i = F_i^l (S_L >= 0),  F_i^r (S_R <= 0),
-             (S_R F_i^l - S_L F_i^r + S_L S_R (M_i^r - M_i^l))/(S_R - S_L) otherwise,
+       S_L = min(u_n^l - c_l, u_n^r - c_r),  S_R = max(u_n^l + c_l, u_n^r + c_r),
+       c = sqrt((3 + 2 b_n^2) P_nn/rho)
 
-     with F_i^s = M_i^s u_n^s + P_in^s. No Lax penalization and no precomputed
-     penalization arrays are used anywhere. Admissibility is decided before any
-     division, square root or Roe call. The nodal fluxes are projected onto the
-     orthonormal p=1 surface basis: flux = [F_x (NSurf), F_y (NSurf), F_z (NSurf)].
-     The mass flux of the same Riemann solve, F_rho = (M_n^l + M_n^r)/2 - (apdq_rho -
-     amdq_rho)/2 (Roe) or the HLL flux of rho with the flux M_n, is projected likewise
-     into mass_flux (NSurf); the kinetic configuration-space flux is constrained to
-     it (pkpm_conf_flux_corr_*). Returns the stable time-step estimate
-     (2p+1)/2 dx1 max(|u_n| + c) over the nodes.
+     (sqrt(3 P_nn/rho) is the ten-moment acoustic speed across the field, where the
+     PKPM closure carries no heat flux, and sqrt(5 P_nn/rho) the heat-flux-carrying
+     bound of the Hermite chain along it; c = 0 on a trace that is not admissible,
+     rho <= 0 or P_nn <= 0, decided before any division or square root):
+
+       F = F^l (S_L >= 0),  F^r (S_R <= 0),  (S_R F^l - S_L F^r + S_L S_R (q^r - q^l))/(S_R - S_L) otherwise.
+
+     No Lax penalization and no precomputed penalization arrays are used anywhere. The
+     nodal fluxes are projected onto the orthonormal p=1 surface basis in the order of
+     the fluid array: flux = [F_rho, F_x, F_y, F_z, F_E] (NSurf each). The wave-equation
+     and geometry arguments are kept for the characteristic limiter and are unused here.
+     Returns the stable time-step estimate (2p+1)/2 dx1 max(|u_n| + c) over the nodes.
 
    pkpm_fluid_surf<dir>_<c>x_ser_p1(w, dxv, flux_l, flux_r, out)
      Scatter the stored fluxes of the lower (flux_l) and upper (flux_r) faces into the
-     momentum increment. */
+     increment of [rho, M, E]. */
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 load("core/nodal_operations/quadrature_functions.mac")$
@@ -84,39 +85,44 @@ calcPKPMFluidFluxSurf(dir, fh, funcNm, cdim) := block(
   const struct gkyl_wv_eqn *wv_eqn, const struct gkyl_wave_cell_geom *geom,
   const double *w, const double *dxv,
   const double *moms_l, const double *moms_r, const double *bvar_l, const double *bvar_r,
-  const double *u_l, const double *u_r, const double *euler_l, const double *euler_r,
-  double* GKYL_RESTRICT flux, double* GKYL_RESTRICT mass_flux) ~%{ ~%", funcNm),
-  printf(fh, "  // wv_eqn:      Ten-moment wave equation for the Roe fluctuations. ~%"),
-  printf(fh, "  // geom:        Wave geometry of the current cell (normal and tangents of its lower face). ~%"),
+  const double *u_l, const double *u_r, const double *fluid_l, const double *fluid_r,
+  double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  printf(fh, "  // wv_eqn:      Ten-moment wave equation (unused; kept for the limiter interface). ~%"),
+  printf(fh, "  // geom:        Wave geometry of the current cell (unused). ~%"),
   printf(fh, "  // w/dxv:       Cell center and spacing of the current cell. ~%"),
-  printf(fh, "  // moms_l/r:    [rho, p_parallel, p_perp, M1] in the left/current cell. ~%"),
+  printf(fh, "  // moms_l/r:    Kinetic coupling moments [p_par, p_perp, q_par, q_perp] in the left/current cell. ~%"),
   printf(fh, "  // bvar_l/r:    Magnetic field unit vector [bx, by, bz] in the left/current cell. ~%"),
   printf(fh, "  // u_l/r:       Flow velocity [ux, uy, uz] in the left/current cell. ~%"),
-  printf(fh, "  // euler_l/r:   Momentum [rho ux, rho uy, rho uz] in the left/current cell. ~%"),
-  printf(fh, "  // flux:        Output momentum flux [F_x, F_y, F_z] on the lower face, surface modal. ~%"),
-  printf(fh, "  // mass_flux:   Output mass flux of the same Riemann solve on the lower face, surface modal. ~%"),
+  printf(fh, "  // fluid_l/r:   Evolved fluid state [rho, rho ux, rho uy, rho uz, E] in the left/current cell. ~%"),
+  printf(fh, "  // flux:        Output fluxes [F_rho, F_x, F_y, F_z, F_E] on the lower face, surface modal. ~%"),
   printf(fh, "  // Returns the stable time-step estimate from the normal speed bound at the nodes. ~%"),
   printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
-  printf(fh, "  const double *rho_l = &moms_l[~a]; ~%", 0*NC),
-  printf(fh, "  const double *ppar_l = &moms_l[~a]; ~%", 1*NC),
-  printf(fh, "  const double *pperp_l = &moms_l[~a]; ~%", 2*NC),
-  printf(fh, "  const double *rho_r = &moms_r[~a]; ~%", 0*NC),
-  printf(fh, "  const double *ppar_r = &moms_r[~a]; ~%", 1*NC),
-  printf(fh, "  const double *pperp_r = &moms_r[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rho_l = &fluid_l[~a]; ~%", 0*NC),
+  printf(fh, "  const double *E_l = &fluid_l[~a]; ~%", 4*NC),
+  printf(fh, "  const double *ppar_l = &moms_l[~a]; ~%", 0*NC),
+  printf(fh, "  const double *pperp_l = &moms_l[~a]; ~%", 1*NC),
+  printf(fh, "  const double *qpar_l = &moms_l[~a]; ~%", 2*NC),
+  printf(fh, "  const double *qperp_l = &moms_l[~a]; ~%", 3*NC),
+  printf(fh, "  const double *rho_r = &fluid_r[~a]; ~%", 0*NC),
+  printf(fh, "  const double *E_r = &fluid_r[~a]; ~%", 4*NC),
+  printf(fh, "  const double *ppar_r = &moms_r[~a]; ~%", 0*NC),
+  printf(fh, "  const double *pperp_r = &moms_r[~a]; ~%", 1*NC),
+  printf(fh, "  const double *qpar_r = &moms_r[~a]; ~%", 2*NC),
+  printf(fh, "  const double *qperp_r = &moms_r[~a]; ~%", 3*NC),
   for c : 1 thru 3 do (
     printf(fh, "  const double *b~a_l = &bvar_l[~a]; ~%", cvars[c], (c-1)*NC),
     printf(fh, "  const double *b~a_r = &bvar_r[~a]; ~%", cvars[c], (c-1)*NC),
     printf(fh, "  const double *u~a_l = &u_l[~a]; ~%", cvars[c], (c-1)*NC),
     printf(fh, "  const double *u~a_r = &u_r[~a]; ~%", cvars[c], (c-1)*NC),
-    printf(fh, "  const double *M~a_l = &euler_l[~a]; ~%", cvars[c], (c-1)*NC),
-    printf(fh, "  const double *M~a_r = &euler_r[~a]; ~%", cvars[c], (c-1)*NC)
+    printf(fh, "  const double *M~a_l = &fluid_l[~a]; ~%", cvars[c], c*NC),
+    printf(fh, "  const double *M~a_r = &fluid_r[~a]; ~%", cvars[c], c*NC)
   ),
   printf(fh, " ~%"),
 
   /* Face traces of all fields at the nodes: the left cell at cv = +1, the current cell at cv = -1. */
   /* Coefficient names are symbols (concat of a symbol and a string is a symbol;
      of two strings it would be a string, which cannot be indexed). */
-  fields : [rho, ppar, pperp, bx, by, bz, ux, uy, uz, Mx, My, Mz],
+  fields : [rho, E, ppar, pperp, qpar, qperp, bx, by, bz, ux, uy, uz, Mx, My, Mz],
   for fld in fields do (
     printf(fh, "  double ~a_lq[~a] = {0.0}; ~%", fld, NN),
     printf(fh, "  double ~a_rq[~a] = {0.0}; ~%", fld, NN)
@@ -125,76 +131,55 @@ calcPKPMFluidFluxSurf(dir, fh, funcNm, cdim) := block(
     pkpmWriteFaceEvals(fh, sconcat(fld, "_lq"), concat(fld, "_l"), bC, cv, 1, surfVars, nodes),
     pkpmWriteFaceEvals(fh, sconcat(fld, "_rq"), concat(fld, "_r"), bC, cv, -1, surfVars, nodes)
   ),
-  printf(fh, "  double F_q[3][~a] = {{0.0}}; ~%", NN),
-  printf(fh, "  double F0_q[~a] = {0.0}; ~%", NN),
+  printf(fh, "  double F_q[5][~a] = {{0.0}}; ~%", NN),
   printf(fh, "  double lambda_max = 0.0; ~%"),
-  printf(fh, "  double q_l[10] = {0.0}, q_r[10] = {0.0}, q_l_local[10] = {0.0}, q_r_local[10] = {0.0}; ~%"),
-  printf(fh, "  double delta[10] = {0.0}, waves[50] = {0.0}, speeds[5] = {0.0}; ~%"),
-  printf(fh, "  double amdq_local[10] = {0.0}, apdq_local[10] = {0.0}, amdq[10] = {0.0}, apdq[10] = {0.0}; ~%"),
   printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
-  printf(fh, "    // Full pressure tensor from the primitive factors at the node. ~%"),
+  printf(fh, "    // Pressure tensor and heat flux from the primitive factors at the node. ~%"),
   printf(fh, "    const double b_l[3] = {bx_lq[n], by_lq[n], bz_lq[n]}, b_r[3] = {bx_rq[n], by_rq[n], bz_rq[n]}; ~%"),
   printf(fh, "    const double u_lv[3] = {ux_lq[n], uy_lq[n], uz_lq[n]}, u_rv[3] = {ux_rq[n], uy_rq[n], uz_rq[n]}; ~%"),
   printf(fh, "    const double M_lv[3] = {Mx_lq[n], My_lq[n], Mz_lq[n]}, M_rv[3] = {Mx_rq[n], My_rq[n], Mz_rq[n]}; ~%"),
   printf(fh, "    const double dp_l = ppar_lq[n] - pperp_lq[n], dp_r = ppar_rq[n] - pperp_rq[n]; ~%"),
+  printf(fh, "    const double pperp_l = pperp_lq[n], pperp_r = pperp_rq[n]; ~%"),
   printf(fh, "    double P_l[3][3], P_r[3][3]; ~%"),
   printf(fh, "    for (int i = 0; i < 3; ++i) { ~%"),
   printf(fh, "      for (int j = 0; j < 3; ++j) { ~%"),
-  printf(fh, "        P_l[i][j] = dp_l*b_l[i]*b_l[j] + (i == j ? pperp_lq[n] : 0.0); ~%"),
-  printf(fh, "        P_r[i][j] = dp_r*b_r[i]*b_r[j] + (i == j ? pperp_rq[n] : 0.0); ~%"),
+  printf(fh, "        P_l[i][j] = dp_l*b_l[i]*b_l[j] + (i == j ? pperp_l : 0.0); ~%"),
+  printf(fh, "        P_r[i][j] = dp_r*b_r[i]*b_r[j] + (i == j ? pperp_r : 0.0); ~%"),
   printf(fh, "      } ~%"),
   printf(fh, "    } ~%"),
   printf(fh, "    const int d = ~a; ~%", dir-1),
+  printf(fh, "    const double qn_l = 0.5*b_l[d]*(qpar_lq[n] + 2.0*qperp_lq[n]); ~%"),
+  printf(fh, "    const double qn_r = 0.5*b_r[d]*(qpar_rq[n] + 2.0*qperp_rq[n]); ~%"),
   printf(fh, "    // Admissibility of both traces, decided before any division or square root. ~%"),
   printf(fh, "    const bool ok_l = rho_lq[n] > 0.0 && P_l[d][d] > 0.0; ~%"),
   printf(fh, "    const bool ok_r = rho_rq[n] > 0.0 && P_r[d][d] > 0.0; ~%"),
-  printf(fh, "    const double c_l = ok_l ? sqrt(3.0*P_l[d][d]/rho_lq[n]) : 0.0; ~%"),
-  printf(fh, "    const double c_r = ok_r ? sqrt(3.0*P_r[d][d]/rho_rq[n]) : 0.0; ~%"),
+  printf(fh, "    const double c_l = ok_l ? sqrt((3.0 + 2.0*b_l[d]*b_l[d])*P_l[d][d]/rho_lq[n]) : 0.0; ~%"),
+  printf(fh, "    const double c_r = ok_r ? sqrt((3.0 + 2.0*b_r[d]*b_r[d])*P_r[d][d]/rho_rq[n]) : 0.0; ~%"),
   printf(fh, "    lambda_max = fmax(lambda_max, fmax(fabs(u_lv[d]) + c_l, fabs(u_rv[d]) + c_r)); ~%"),
-  printf(fh, "    double F_lv[3], F_rv[3]; ~%"),
+  printf(fh, "    double F_lv[5], F_rv[5], q_lv[5], q_rv[5]; ~%"),
+  printf(fh, "    double Pu_l = 0.0, Pu_r = 0.0; ~%"),
   printf(fh, "    for (int i = 0; i < 3; ++i) { ~%"),
-  printf(fh, "      F_lv[i] = M_lv[i]*u_lv[d] + P_l[i][d]; ~%"),
-  printf(fh, "      F_rv[i] = M_rv[i]*u_rv[d] + P_r[i][d]; ~%"),
+  printf(fh, "      F_lv[1+i] = M_lv[i]*u_lv[d] + P_l[i][d]; ~%"),
+  printf(fh, "      F_rv[1+i] = M_rv[i]*u_rv[d] + P_r[i][d]; ~%"),
+  printf(fh, "      q_lv[1+i] = M_lv[i]; q_rv[1+i] = M_rv[i]; ~%"),
+  printf(fh, "      Pu_l += P_l[i][d]*u_lv[i]; Pu_r += P_r[i][d]*u_rv[i]; ~%"),
   printf(fh, "    } ~%"),
-  printf(fh, "    if (ok_l && ok_r) { ~%"),
-  printf(fh, "      // Ten-moment Roe flux of the nodal states. ~%"),
-  printf(fh, "      q_l[0] = rho_lq[n]; q_r[0] = rho_rq[n]; ~%"),
-  printf(fh, "      for (int i = 0; i < 3; ++i) { q_l[1+i] = M_lv[i]; q_r[1+i] = M_rv[i]; } ~%"),
-  printf(fh, "      q_l[4] = P_l[0][0] + M_lv[0]*M_lv[0]/rho_lq[n]; q_r[4] = P_r[0][0] + M_rv[0]*M_rv[0]/rho_rq[n]; ~%"),
-  printf(fh, "      q_l[5] = P_l[0][1] + M_lv[0]*M_lv[1]/rho_lq[n]; q_r[5] = P_r[0][1] + M_rv[0]*M_rv[1]/rho_rq[n]; ~%"),
-  printf(fh, "      q_l[6] = P_l[0][2] + M_lv[0]*M_lv[2]/rho_lq[n]; q_r[6] = P_r[0][2] + M_rv[0]*M_rv[2]/rho_rq[n]; ~%"),
-  printf(fh, "      q_l[7] = P_l[1][1] + M_lv[1]*M_lv[1]/rho_lq[n]; q_r[7] = P_r[1][1] + M_rv[1]*M_rv[1]/rho_rq[n]; ~%"),
-  printf(fh, "      q_l[8] = P_l[1][2] + M_lv[1]*M_lv[2]/rho_lq[n]; q_r[8] = P_r[1][2] + M_rv[1]*M_rv[2]/rho_rq[n]; ~%"),
-  printf(fh, "      q_l[9] = P_l[2][2] + M_lv[2]*M_lv[2]/rho_lq[n]; q_r[9] = P_r[2][2] + M_rv[2]*M_rv[2]/rho_rq[n]; ~%"),
-  printf(fh, "      rot_to_local(wv_eqn, geom->tau1[d], geom->tau2[d], geom->norm[d], q_l, q_l_local); ~%"),
-  printf(fh, "      rot_to_local(wv_eqn, geom->tau1[d], geom->tau2[d], geom->norm[d], q_r, q_r_local); ~%"),
-  printf(fh, "      for (int i = 0; i < 10; ++i) delta[i] = q_r_local[i] - q_l_local[i]; ~%"),
-  printf(fh, "      wave_roe(wv_eqn, delta, q_l_local, q_r_local, waves, speeds); ~%"),
-  printf(fh, "      for (int i = 0; i < 5; ++i) speeds[i] *= geom->lenr[d]; ~%"),
-  printf(fh, "      qfluct_roe(wv_eqn, q_l_local, q_r_local, waves, speeds, amdq_local, apdq_local); ~%"),
-  printf(fh, "      rot_to_global(wv_eqn, geom->tau1[d], geom->tau2[d], geom->norm[d], amdq_local, amdq); ~%"),
-  printf(fh, "      rot_to_global(wv_eqn, geom->tau1[d], geom->tau2[d], geom->norm[d], apdq_local, apdq); ~%"),
-  printf(fh, "      for (int i = 0; i < 3; ++i) F_q[i][n] = 0.5*(F_lv[i] + F_rv[i]) - 0.5*(apdq[1+i] - amdq[1+i]); ~%"),
-  printf(fh, "      F0_q[n] = 0.5*(M_lv[d] + M_rv[d]) - 0.5*(apdq[0] - amdq[0]); ~%"),
-  printf(fh, "    } else { ~%"),
-  printf(fh, "      // HLL flux of the momentum with the normal speed bounds (c = 0 on an inadmissible trace). ~%"),
-  printf(fh, "      const double S_L = fmin(u_lv[d] - c_l, u_rv[d] - c_r); ~%"),
-  printf(fh, "      const double S_R = fmax(u_lv[d] + c_l, u_rv[d] + c_r); ~%"),
-  printf(fh, "      for (int i = 0; i < 3; ++i) { ~%"),
-  printf(fh, "        if (S_L >= 0.0) F_q[i][n] = F_lv[i]; ~%"),
-  printf(fh, "        else if (S_R <= 0.0) F_q[i][n] = F_rv[i]; ~%"),
-  printf(fh, "        else F_q[i][n] = (S_R*F_lv[i] - S_L*F_rv[i] + S_L*S_R*(M_rv[i] - M_lv[i]))/(S_R - S_L); ~%"),
-  printf(fh, "      } ~%"),
-  printf(fh, "      if (S_L >= 0.0) F0_q[n] = M_lv[d]; ~%"),
-  printf(fh, "      else if (S_R <= 0.0) F0_q[n] = M_rv[d]; ~%"),
-  printf(fh, "      else F0_q[n] = (S_R*M_lv[d] - S_L*M_rv[d] + S_L*S_R*(rho_rq[n] - rho_lq[n]))/(S_R - S_L); ~%"),
+  printf(fh, "    F_lv[0] = M_lv[d]; F_rv[0] = M_rv[d]; q_lv[0] = rho_lq[n]; q_rv[0] = rho_rq[n]; ~%"),
+  printf(fh, "    F_lv[4] = u_lv[d]*E_lq[n] + Pu_l + qn_l; F_rv[4] = u_rv[d]*E_rq[n] + Pu_r + qn_r; q_lv[4] = E_lq[n]; q_rv[4] = E_rq[n]; ~%"),
+  printf(fh, "    // HLL flux with the normal speed bounds (c = 0 on an inadmissible trace). ~%"),
+  printf(fh, "    const double S_L = fmin(u_lv[d] - c_l, u_rv[d] - c_r); ~%"),
+  printf(fh, "    const double S_R = fmax(u_lv[d] + c_l, u_rv[d] + c_r); ~%"),
+  printf(fh, "    for (int i = 0; i < 5; ++i) { ~%"),
+  printf(fh, "      if (S_L >= 0.0) F_q[i][n] = F_lv[i]; ~%"),
+  printf(fh, "      else if (S_R <= 0.0) F_q[i][n] = F_rv[i]; ~%"),
+  printf(fh, "      else F_q[i][n] = (S_R*F_lv[i] - S_L*F_rv[i] + S_L*S_R*(q_rv[i] - q_lv[i]))/(S_R - S_L); ~%"),
   printf(fh, "    } ~%"),
   printf(fh, "  } ~%"),
   printf(fh, " ~%"),
 
   /* Quadrature projection onto the orthonormal surface basis. */
   printf(fh, "  // Projection of the nodal fluxes onto the surface basis. ~%"),
-  for c : 1 thru 3 do (
+  for c : 1 thru 5 do (
     for k : 1 thru NSurf do (
       expr : 0,
       for n : 1 thru NN do (
@@ -203,14 +188,6 @@ calcPKPMFluidFluxSurf(dir, fh, funcNm, cdim) := block(
       ),
       printf(fh, "  flux[~a] = ~a; ~%", (c-1)*NSurf + k-1, float(expand(expr)))
     )
-  ),
-  for k : 1 thru NSurf do (
-    expr : 0,
-    for n : 1 thru NN do (
-      chi : if cdim > 1 then subst(makelist(surfVars[d] = nodes[n][d], d, 1, cdim-1), bSurf[k]) else 1,
-      expr : expr + weights[n]*chi*F0_q[n-1]
-    ),
-    printf(fh, "  mass_flux[~a] = ~a; ~%", k-1, float(expand(expr)))
   ),
   printf(fh, "  return 1.5*dx1*lambda_max; ~%"),
   printf(fh, "} ~%")
@@ -232,15 +209,15 @@ calcPKPMFluidScatterSurf(dir, fh, funcNm, cdim) := block(
   printf(fh, "#include <gkyl_pkpm_fluid_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
   const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
-  printf(fh, "  // flux_l/flux_r: Stored momentum fluxes [F_x, F_y, F_z] on the lower/upper face of the cell. ~%"),
-  printf(fh, "  // out:           Incremented momentum increment [rho ux, rho uy, rho uz]. ~%"),
+  printf(fh, "  // flux_l/flux_r: Stored fluxes [F_rho, F_x, F_y, F_z, F_E] on the lower/upper face of the cell. ~%"),
+  printf(fh, "  // out:           Incremented increment of [rho, rho ux, rho uy, rho uz, E]. ~%"),
   printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
-  for c : 1 thru 3 do (
+  for c : 1 thru 5 do (
     printf(fh, "  const double *gl~a = &flux_l[~a]; ~%", c-1, (c-1)*NSurf),
     printf(fh, "  const double *gr~a = &flux_r[~a]; ~%", c-1, (c-1)*NSurf),
     printf(fh, "  double *out~a = &out[~a]; ~%", c-1, (c-1)*NC)
   ),
-  for c : 1 thru 3 do (
+  for c : 1 thru 5 do (
     if cdim > 1 then (
       gl_e : doExpand1(concat(gl, c-1), bSurf),
       gr_e : doExpand1(concat(gr, c-1), bSurf),
