@@ -25,7 +25,7 @@
 
      M0:  c_0 M0 + sum_e n_e s_e (alpha_0 + c w_e + k_e) F_e = -r0
      M1:  c_0 M1 + alpha_0 M0 + c M1 + sum_e n_e w_e s_e (alpha_0 + c w_e + k_e) F_e = -r1
-     E :  c_0 M2 + 2 alpha_0 M1 + 2 c (M2 + 2 M0G) + sum_e n_e w_e^2 s_e (...) F_e
+     E :  c_0 (M2 + 2 M0G) + 2 alpha_0 M1 + 2 c (M2 + 2 M0G) + sum_e n_e w_e^2 s_e (...) F_e
           + 2 sum_e n_e [s_e (...) G_e + sb_e beta H_e] = -(r2 + 2 r0G)
 
    with n_e = +1 for the upper edge and -1 for the lower (the moment of the edge loss is
@@ -69,7 +69,8 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   const double *bvar, const double *grad_b, const double *grad_u, const double *xi, const double *grad_xi, const double *theta,
   const double *alpha_0_prev, const double *c_h_prev, const double *f_lo, const double *f_up,
   double* GKYL_RESTRICT c_0, double* GKYL_RESTRICT alpha_0, double* GKYL_RESTRICT c_h,
-  double* GKYL_RESTRICT flux_lo, double* GKYL_RESTRICT flux_up, double* GKYL_RESTRICT cfl) ~%{ ~%", funcNm),
+  double* GKYL_RESTRICT flux_lo, double* GKYL_RESTRICT flux_up, double* GKYL_RESTRICT cfl,
+  double* GKYL_RESTRICT cond) ~%{ ~%", funcNm),
   printf(fh, "  // w_lo, w_up:   Velocity domain edges; dv: velocity cell size. ~%"),
   printf(fh, "  // norm_moms:    Input [M0, M2, M0_G, M1, ...] moments of the normalized distributions (stage state). ~%"),
   printf(fh, "  // rhs_moms:     Input [M0, M2, M0_G, M1, ...] moments of the stage-A right-hand sides. ~%"),
@@ -79,6 +80,9 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  // c_0, alpha_0, c_h: Output closures at the ~a Gauss-Legendre nodes, interpolated to p=1. ~%", NN),
   printf(fh, "  // flux_lo, flux_up: Output edge fluxes [F flux, G flux] in the stored face format. ~%"),
   printf(fh, "  // cfl:          Output [lower, upper] edge-flux time-step rates. ~%"),
+  printf(fh, "  // cond:         Output [1]: the smallest determinant of the 3x3 system over the nodes relative to ~%"),
+  printf(fh, "  //               its edge-free value (1 when the edge terms vanish; small or negative when the ~%"),
+  printf(fh, "  //               velocity-domain edges carry a non-negligible trace: too small velocity extents). ~%"),
   printf(fh, "  // Returns the number of nodes where the closures are undefined (everything is zero in the cell then). ~%"),
   printf(fh, " ~%"),
   printf(fh, "  const double dv1 = 2.0/dv; ~%"),
@@ -115,6 +119,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  double flo_n[~a] = {0.0}, glo_n[~a] = {0.0}, fup_n[~a] = {0.0}, gup_n[~a] = {0.0}; ~%", NN, NN, NN, NN),
   printf(fh, "  double cfl_lo = 0.0, cfl_up = 0.0; ~%"),
   printf(fh, "  int num_null = 0; ~%"),
+  printf(fh, "  double cond_min = 1.0; ~%"),
   printf(fh, " ~%"),
   for n : 1 thru NN do (
     nodeSub : makelist(pkC[d]=nodes[n][d], d, 1, cdim),
@@ -172,9 +177,14 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
     printf(fh, "    // 3x3 system A [c_0, alpha_0, c] = rhs: stage-A rates + interior stage-B rates + edge rates = 0 ~%"),
     printf(fh, "    const double A00 = n0_q, A01 = eF0, A02 = eF1; ~%"),
     printf(fh, "    const double A10 = n1_q, A11 = n0_q + eF1, A12 = n1_q + eF2; ~%"),
-    printf(fh, "    const double A20 = n2_q, A21 = 2.0*n1_q + eF2 + 2.0*eG0, A22 = 2.0*(n2_q + 2.0*nG_q) + eF3 + 2.0*eG1; ~%"),
+    printf(fh, "    const double A20 = n2_q + 2.0*nG_q, A21 = 2.0*n1_q + eF2 + 2.0*eG0, A22 = 2.0*(n2_q + 2.0*nG_q) + eF3 + 2.0*eG1; ~%"),
     printf(fh, "    const double b0 = -r0_q - kF0, b1 = -r1_q - kF1, b2 = -r2_q - kF2 - 2.0*kG0 - 2.0*bH0; ~%"),
     printf(fh, "    const double det = A00*(A11*A22 - A12*A21) - A01*(A10*A22 - A12*A20) + A02*(A10*A21 - A11*A20); ~%"),
+    printf(fh, "    // conditioning proxy: the determinant relative to its edge-free value ~%"),
+    printf(fh, "    // n0 (2 n0 (M2 + 2 M0G) - 2 M1^2) (positive for admissible moments); a small or negative ~%"),
+    printf(fh, "    // ratio means the traces at the velocity-domain edges are not small ~%"),
+    printf(fh, "    const double det0 = n0_q*(2.0*n0_q*(n2_q + 2.0*nG_q) - 2.0*n1_q*n1_q); ~%"),
+    printf(fh, "    if (det0 > 0.0) cond_min = fmin(cond_min, det/det0); ~%"),
     printf(fh, "    if (n0_q > 0.0 && det > 0.0) { ~%"),
     printf(fh, "      c0_n[~a] = (b0*(A11*A22 - A12*A21) - A01*(b1*A22 - A12*b2) + A02*(b1*A21 - A11*b2))/det; ~%", n-1),
     printf(fh, "      a0_n[~a] = (A00*(b1*A22 - A12*b2) - b0*(A10*A22 - A12*A20) + A02*(A10*b2 - b1*A20))/det; ~%", n-1),
@@ -194,7 +204,11 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, " ~%"),
   printf(fh, "  cfl[0] = 2.5*dv1*cfl_lo; ~%"),
   printf(fh, "  cfl[1] = 2.5*dv1*cfl_up; ~%"),
+  printf(fh, "  cond[0] = cond_min; ~%"),
   printf(fh, "  if (num_null > 0) { ~%"),
+  printf(fh, "    // a node with M0 <= 0 or a non-positive determinant zeroes everything in the cell, its ~%"),
+  printf(fh, "    // CFL rate included (the closures it would have needed are not applied) ~%"),
+  printf(fh, "    cfl[0] = 0.0; cfl[1] = 0.0; ~%"),
   for k : 1 thru NC do printf(fh, "    c_0[~a] = 0.0; alpha_0[~a] = 0.0; c_h[~a] = 0.0; ~%", k-1, k-1, k-1),
   for k : 1 thru 2*NC do printf(fh, "    flux_lo[~a] = 0.0; flux_up[~a] = 0.0; ~%", k-1, k-1),
   printf(fh, "    return num_null; ~%"),

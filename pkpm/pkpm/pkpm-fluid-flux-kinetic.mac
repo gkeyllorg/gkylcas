@@ -1,0 +1,301 @@
+/* pkpm-fluid-flux-kinetic.mac ----------------------------------------------------------
+   Fluid face fluxes of the (p=1) energy-constrained PKPM solver as the moments of the
+   kinetic configuration-space flux, so that the fluid system [rho, M, E] and the
+   normalized distributions [F, G] see ONE discrete transport (a kinetic flux-vector
+   splitting with the actual F and G rather than a Maxwellian).
+
+   At a face the kinetic flux (pkpm-conf-flux-surf.mac) is, per normalized velocity w and
+   face node, the HLL flux of the two-valued speed a_s = xi^s w b_n^s + u_n^s,
+     Phi(w) = A_l(w) F_l(w) + A_r(w) F_r(w),
+     A_l = (S_R a_l - S_L S_R)/(S_R - S_L) >= 0,   A_r = (S_L S_R - S_L a_r)/(S_R - S_L) <= 0,
+     S_L = min(a_l, a_r, 0),  S_R = max(a_l, a_r, 0)
+   (plain upwind max(a_l, 0) F_l + min(a_r, 0) F_r when the speeds have the same sign;
+   with a zero trace on one side it is the one-sided upwind flux of an absorbing wall, and
+   with mirrored traces the mass and energy fluxes vanish exactly). Since f = n F/xi with
+   v_par = u.b + xi w on each side, the physical fluxes through the face are, with the
+   one-sided moments I_k^s = int w^k A_s F_s dw (k = 0, 1, 2) and J^s = int A_s G_s dw,
+     F_rho = sum_s rho_s I_0^s,
+     F_Mi  = sum_s rho_s (u_i^s I_0^s + xi^s b_i^s I_1^s) + (1/2) sum_s p_perp^s (delta_in - b_i^s b_n^s),
+     F_E   = sum_s rho_s/2 (|u^s|^2 I_0^s + 2 xi^s (b^s.u^s) I_1^s + (xi^s)^2 I_2^s) + rho_s (xi^s)^2 J^s
+             + (1/2) sum_s p_perp^s (u_n^s - (b^s.u^s) b_n^s),
+   with p_perp = rho xi^2 theta, theta = T_perp/T = M0(G). The moments of the parallel
+   streaming carry the mass, the parallel momentum and pressure, the parallel and the
+   perpendicular thermal energy; the perpendicular pressure force and its work are not
+   transported by the streaming of F and G (the gyrotropic perpendicular motion does not
+   stream), so they enter as the average of the two traces (a central pressure flux)
+   together with a Rusanov dissipation of the perpendicular sound waves they carry,
+     - (1/2) s_perp (q_r - q_l),   s_perp = max_s xi^s sqrt(2 theta^s (1 - (b_n^s)^2)),
+   on all five components q = [rho, M, E] (the speed is the perpendicular sound speed
+   across the face; the advection by u_n is already upwinded by the kinetic part). With
+   b along the face normal (1D along b) both the central terms and s_perp vanish
+   identically; with mirrored traces the central terms cancel.
+
+   Two kernels per direction (the face is the LOWER face of the r cell in direction d; the
+   l cell is its lower neighbor, evaluated at its upper edge):
+   - pkpm_fluid_flux_accum_<d>_<c>x1v_ser_p1(w, dxv, jacob_pos_l, jacob_pos_r, bvar_l, bvar_r,
+       u_l, u_r, xi_l, xi_r, f_l, f_r, I):
+     accumulates the nodal moments I[k*NN + n], k = 0..7 for [I_0, I_1, I_2, J]^l then
+     [I_0, I_1, I_2, J]^r, of one velocity cell at the NN transverse Gauss-Legendre nodes of
+     the face (3 per transverse direction, the nodes of the kinetic flux kernel), with 3
+     Gauss-Legendre nodes in w. The traces of the Jacobian-weighted J [F, G] are divided by
+     the direction's Jacobian J_d of their cell, so the moments carry the face Jacobian
+     J/J_d of the evolved J-weighted fluid, as the kinetic flux does.
+   - pkpm_fluid_flux_<d>_<c>x_ser_p1(jacob_pos, bvar_l, bvar_r, u_l, u_r, xi_l, xi_r, theta_l, theta_r,
+       fluid_l, fluid_r, I, flux):
+     forms the fluxes above at the nodes from the PHYSICAL traces of both cells and
+     projects them onto the surface basis: flux = [F_rho, F_x, F_y, F_z, F_E] (NSurf each),
+     the layout read by pkpm_fluid_surf<d>_<c>x_ser_p1. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load("pkpm/pkpm/pkpm-fluid-flux-surf.mac")$
+load("pkpm/pkpm/pkpm-cas-util.mac")$
+load(stringproc)$
+
+pkpmKineticNumV : 3$
+
+calcPKPMFluidFluxKineticAccum(dir, fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, pkP, pkbP, NC, NP, cv, surfVars, sf, bSurf, nodes, weights, NN, vow, vnodes,
+   vweights, Fl_e, Gl_e, Fr_e, Gr_e, n, j, sub, cvarsStr],
+
+  cdimGlobal : cdim,
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
+  NC : length(pkbC),
+  NP : length(pkbP),
+  cv : pkC[dir],
+  surfVars : delete(cv, pkC),
+  sf : pkpmFluidSurf(cdim, surfVars),
+  bSurf : sf[1], nodes : sf[2], weights : sf[3],
+  NN : length(nodes),
+  vow : gaussOrdWeight(pkpmKineticNumV, 1),
+  vnodes : vow[1], vweights : vow[2],
+  cvarsStr : ["x", "y", "z"],
+
+  printf(fh, "#include <gkyl_pkpm_fluid_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const double *jacob_pos_l, const double *jacob_pos_r, const double *bvar_l, const double *bvar_r,
+  const double *u_l, const double *u_r, const double *xi_l, const double *xi_r,
+  const double *f_l, const double *f_r, double* GKYL_RESTRICT I) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]:   Cell-center coordinates of the phase-space cell (r side). ~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing of the phase-space cell. ~%"),
+  printf(fh, "  // jacob_pos_l/r: Position-map Jacobian per configuration direction (cdim blocks of 2 equal ~%"),
+  printf(fh, "  //            entries) of the left/right cell. ~%"),
+  printf(fh, "  // bvar_l/r:  Magnetic field unit vector [bx, by, bz] of the left/right cell. ~%"),
+  printf(fh, "  // u_l/r:     Flow velocity [ux, uy, uz] of the left/right cell. ~%"),
+  printf(fh, "  // xi_l/r:    Thermal speed [xi, xi^2, p] of the left/right cell (the first expansion is used). ~%"),
+  printf(fh, "  // f_l/r:     Jacobian-weighted normalized distribution functions J [F, G] of the left/right phase-space cell. ~%"),
+  printf(fh, "  // I:         Accumulated nodal moments of the kinetic HLL flux at the ~a transverse face nodes: ~%", NN),
+  printf(fh, "  //            I[k*~a + n], k = 0..3 for [int A_l F_l dw, int w A_l F_l dw, int w^2 A_l F_l dw, int A_l G_l dw] ~%", NN),
+  printf(fh, "  //            and k = 4..7 the same with the right trace and weight A_r; the traces are divided by ~%"),
+  printf(fh, "  //            J_~a of their cell, so the moments carry the face Jacobian J/J_~a. ~%", cvarsStr[dir], cvarsStr[dir]),
+  printf(fh, "  // Returns the largest speed bound max(-S_L, S_R) over the nodes (for the CFL rate). ~%"),
+  printf(fh, "  const double wv = w[~a], dv = dxv[~a]; ~%", cdim, cdim),
+  printf(fh, "  double alpha_max = 0.0; ~%"),
+  printf(fh, "  const double jdinv_l = 1.0/jacob_pos_l[~a], jdinv_r = 1.0/jacob_pos_r[~a]; ~%", 2*(dir-1), 2*(dir-1)),
+  printf(fh, "  const double *bdl = &bvar_l[~a]; ~%", (dir-1)*NC),
+  printf(fh, "  const double *bdr = &bvar_r[~a]; ~%", (dir-1)*NC),
+  printf(fh, "  const double *udl = &u_l[~a]; ~%", (dir-1)*NC),
+  printf(fh, "  const double *udr = &u_r[~a]; ~%", (dir-1)*NC),
+  printf(fh, "  const double *xdl = &xi_l[0]; ~%"),
+  printf(fh, "  const double *xdr = &xi_r[0]; ~%"),
+  printf(fh, "  const double *Fl = &f_l[0]; ~%"),
+  printf(fh, "  const double *Gl = &f_l[~a]; ~%", NP),
+  printf(fh, "  const double *Fr = &f_r[0]; ~%"),
+  printf(fh, "  const double *Gr = &f_r[~a]; ~%", NP),
+  printf(fh, "  const double vz[~a] = {~{~a~^, ~}}; ~%", pkpmKineticNumV, float(makelist(vnodes[j][1], j, 1, pkpmKineticNumV))),
+  printf(fh, "  const double vw[~a] = {~{~a~^, ~}}; ~%", pkpmKineticNumV, float(vweights)),
+  printf(fh, " ~%"),
+  printf(fh, "  double bql[~a] = {0.0}; ~%", NN),
+  printf(fh, "  double uql[~a] = {0.0}; ~%", NN),
+  printf(fh, "  double xql[~a] = {0.0}; ~%", NN),
+  printf(fh, "  double bqr[~a] = {0.0}; ~%", NN),
+  printf(fh, "  double uqr[~a] = {0.0}; ~%", NN),
+  printf(fh, "  double xqr[~a] = {0.0}; ~%", NN),
+  pkpmWriteFaceEvals(fh, "bql", bdl, pkbC, cv, 1, surfVars, nodes),
+  pkpmWriteFaceEvals(fh, "uql", udl, pkbC, cv, 1, surfVars, nodes),
+  pkpmWriteFaceEvals(fh, "xql", xdl, pkbC, cv, 1, surfVars, nodes),
+  pkpmWriteFaceEvals(fh, "bqr", bdr, pkbC, cv, -1, surfVars, nodes),
+  pkpmWriteFaceEvals(fh, "uqr", udr, pkbC, cv, -1, surfVars, nodes),
+  pkpmWriteFaceEvals(fh, "xqr", xdr, pkbC, cv, -1, surfVars, nodes),
+  printf(fh, " ~%"),
+
+  /* Traces of F and G of both cells at the face nodes and the w nodes of this velocity cell. */
+  Fl_e : doExpand1(Fl, pkbP),
+  Gl_e : doExpand1(Gl, pkbP),
+  Fr_e : doExpand1(Fr, pkbP),
+  Gr_e : doExpand1(Gr, pkbP),
+  printf(fh, "  double Flq[~a] = {0.0}; ~%", NN*pkpmKineticNumV),
+  printf(fh, "  double Glq[~a] = {0.0}; ~%", NN*pkpmKineticNumV),
+  printf(fh, "  double Frq[~a] = {0.0}; ~%", NN*pkpmKineticNumV),
+  printf(fh, "  double Grq[~a] = {0.0}; ~%", NN*pkpmKineticNumV),
+  for n : 1 thru NN do (
+    sub : if cdim > 1 then makelist(surfVars[d] = nodes[n][d], d, 1, cdim-1) else [],
+    for j : 1 thru pkpmKineticNumV do (
+      printf(fh, "  Flq[~a] = ~a; ~%", (n-1)*pkpmKineticNumV + j-1,
+        float(expand(subst(vx = vnodes[j][1], subst(cv = 1, subst(sub, Fl_e)))))),
+      printf(fh, "  Glq[~a] = ~a; ~%", (n-1)*pkpmKineticNumV + j-1,
+        float(expand(subst(vx = vnodes[j][1], subst(cv = 1, subst(sub, Gl_e)))))),
+      printf(fh, "  Frq[~a] = ~a; ~%", (n-1)*pkpmKineticNumV + j-1,
+        float(expand(subst(vx = vnodes[j][1], subst(cv = -1, subst(sub, Fr_e)))))),
+      printf(fh, "  Grq[~a] = ~a; ~%", (n-1)*pkpmKineticNumV + j-1,
+        float(expand(subst(vx = vnodes[j][1], subst(cv = -1, subst(sub, Gr_e))))))
+    )
+  ),
+  printf(fh, " ~%"),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
+  printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", pkpmKineticNumV),
+  printf(fh, "      const double wq = wv + 0.5*dv*vz[j]; ~%"),
+  printf(fh, "      const double a_l = xql[n]*bql[n]*wq + uql[n]; ~%"),
+  printf(fh, "      const double a_r = xqr[n]*bqr[n]*wq + uqr[n]; ~%"),
+  printf(fh, "      // HLL with S_L = min(a_l, a_r, 0), S_R = max(a_l, a_r, 0): Phi = A_l F_l + A_r F_r. ~%"),
+  printf(fh, "      const double s_l = fmin(fmin(a_l, a_r), 0.0); ~%"),
+  printf(fh, "      const double s_r = fmax(fmax(a_l, a_r), 0.0); ~%"),
+  printf(fh, "      const double ds = s_r - s_l; ~%"),
+  printf(fh, "      alpha_max = fmax(alpha_max, ds); ~%"),
+  printf(fh, "      const double A_l = ds > 0.0 ? (s_r*a_l - s_l*s_r)/ds : 0.0; ~%"),
+  printf(fh, "      const double A_r = ds > 0.0 ? (s_l*s_r - s_l*a_r)/ds : 0.0; ~%"),
+  printf(fh, "      const double phi_l = A_l*0.5*dv*vw[j]*jdinv_l; ~%"),
+  printf(fh, "      const double phi_r = A_r*0.5*dv*vw[j]*jdinv_r; ~%"),
+  printf(fh, "      const double flq = Flq[n*~a + j], glq = Glq[n*~a + j]; ~%", pkpmKineticNumV, pkpmKineticNumV),
+  printf(fh, "      const double frq = Frq[n*~a + j], grq = Grq[n*~a + j]; ~%", pkpmKineticNumV, pkpmKineticNumV),
+  printf(fh, "      I[0*~a + n] += phi_l*flq; ~%", NN),
+  printf(fh, "      I[1*~a + n] += wq*phi_l*flq; ~%", NN),
+  printf(fh, "      I[2*~a + n] += wq*wq*phi_l*flq; ~%", NN),
+  printf(fh, "      I[3*~a + n] += phi_l*glq; ~%", NN),
+  printf(fh, "      I[4*~a + n] += phi_r*frq; ~%", NN),
+  printf(fh, "      I[5*~a + n] += wq*phi_r*frq; ~%", NN),
+  printf(fh, "      I[6*~a + n] += wq*wq*phi_r*frq; ~%", NN),
+  printf(fh, "      I[7*~a + n] += phi_r*grq; ~%", NN),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  return alpha_max; ~%"),
+  printf(fh, "} ~%")
+)$
+
+calcPKPMFluidFluxKinetic(dir, fh, funcNm, cdim) := block(
+  [varsC, bC, NC, cv, surfVars, sf, bSurf, nodes, weights, NN, NSurf, i, n, c, k, chi, expr,
+   cvarsStr, side, sd, edge],
+
+  cdimGlobal : cdim,
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis("ser", cdim, 1),
+  NC : length(bC),
+  cv : varsC[dir],
+  surfVars : delete(cv, varsC),
+  sf : pkpmFluidSurf(cdim, surfVars),
+  bSurf : sf[1], nodes : sf[2], weights : sf[3],
+  NN : length(nodes),
+  NSurf : length(bSurf),
+  cvarsStr : ["x", "y", "z"],
+
+  printf(fh, "#include <gkyl_pkpm_fluid_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *jacob_pos, const double *bvar_l, const double *bvar_r,
+  const double *u_l, const double *u_r, const double *xi_l, const double *xi_r, const double *theta_l,
+  const double *theta_r, const double *fluid_l, const double *fluid_r, const double *I, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  printf(fh, "  // jacob_pos: Position-map Jacobian per configuration direction (cdim blocks of 2 equal entries) of ~%"),
+  printf(fh, "  //            either cell (the face Jacobian J/J_~a is the same on both sides). ~%", cvarsStr[dir]),
+  printf(fh, "  // bvar_l/r:  Magnetic field unit vector [bx, by, bz] of the left/right cell. ~%"),
+  printf(fh, "  // u_l/r:     Flow velocity [ux, uy, uz] of the left/right cell. ~%"),
+  printf(fh, "  // xi_l/r:    Thermal speed [xi, xi^2, p] of the left/right cell. ~%"),
+  printf(fh, "  // theta_l/r: T_perp/T = M0(G) of the left/right cell (p_perp = rho xi^2 theta). ~%"),
+  printf(fh, "  // fluid_l/r: PHYSICAL fluid state [rho, rho ux, rho uy, rho uz, E] of the left/right cell (Jacobian divided out). ~%"),
+  printf(fh, "  // I:         Nodal moments [I_0, I_1, I_2, J]^l, [I_0, I_1, I_2, J]^r of the kinetic HLL flux at the ~%"),
+  printf(fh, "  //            ~a face nodes (pkpm_fluid_flux_accum_~a_~ax1v_ser_p1 summed over the velocity cells); ~%", NN, cvarsStr[dir], cdim),
+  printf(fh, "  //            they carry the face Jacobian J/J_~a. ~%", cvarsStr[dir]),
+  printf(fh, "  // flux:      Output modal surface fluxes [F_rho, F_x, F_y, F_z, F_E] of the lower face of the right ~%"),
+  printf(fh, "  //            cell for the evolved J-weighted fluid. ~%"),
+  printf(fh, "  // Returns the largest perpendicular-sound bound |u_n| + xi sqrt(2 theta (1 - b_n^2)) over the ~%"),
+  printf(fh, "  //            nodes and traces (the perpendicular pressure is a central flux; its waves need ~%"),
+  printf(fh, "  //            their own CFL bound, the parallel streaming has the kinetic one). ~%"),
+  printf(fh, "  double cfl_max = 0.0; ~%"),
+  printf(fh, "  // face Jacobian J/J_~a of the perpendicular-pressure terms (the moments carry it already) ~%", cvarsStr[dir]),
+  printf(fh, "  const double jperp = ~a; ~%", if cdim = 1 then "1.0" else
+    simplode(makelist(sconcat("jacob_pos[", 2*(d-1), "]"), d, delete(dir, makelist(d, d, 1, cdim))), "*")),
+  for side : 1 thru 2 do (
+    sd : if side = 1 then "l" else "r",
+    printf(fh, "  const double *rho_~a = &fluid_~a[0]; ~%", sd, sd),
+    for i : 1 thru 4 do
+      printf(fh, "  const double *q~a_~a = &fluid_~a[~a]; ~%", i, sd, sd, i*NC),
+    printf(fh, "  const double *xd_~a = &xi_~a[0]; ~%", sd, sd),
+    printf(fh, "  const double *x2d_~a = &xi_~a[~a]; ~%", sd, sd, NC),
+    printf(fh, "  const double *thd_~a = &theta_~a[0]; ~%", sd, sd),
+    for i : 1 thru 3 do (
+      printf(fh, "  const double *b~a_~a = &bvar_~a[~a]; ~%", i-1, sd, sd, (i-1)*NC),
+      printf(fh, "  const double *u~a_~a = &u_~a[~a]; ~%", i-1, sd, sd, (i-1)*NC)
+    )
+  ),
+  printf(fh, " ~%"),
+  for side : 1 thru 2 do (
+    sd : if side = 1 then "l" else "r",
+    edge : if side = 1 then 1 else -1,
+    printf(fh, "  double rq_~a[~a] = {0.0}; ~%", sd, NN),
+    printf(fh, "  double xq_~a[~a] = {0.0}; ~%", sd, NN),
+    printf(fh, "  double x2q_~a[~a] = {0.0}; ~%", sd, NN),
+    printf(fh, "  double thq_~a[~a] = {0.0}; ~%", sd, NN),
+    for i : 1 thru 4 do
+      printf(fh, "  double qq~a_~a[~a] = {0.0}; ~%", i, sd, NN),
+    for i : 1 thru 3 do (
+      printf(fh, "  double bq~a_~a[~a] = {0.0}; ~%", i-1, sd, NN),
+      printf(fh, "  double uq~a_~a[~a] = {0.0}; ~%", i-1, sd, NN)
+    ),
+    pkpmWriteFaceEvals(fh, sconcat("rq_", sd), concat(rho_, sd), bC, cv, edge, surfVars, nodes),
+    pkpmWriteFaceEvals(fh, sconcat("xq_", sd), concat(xd_, sd), bC, cv, edge, surfVars, nodes),
+    pkpmWriteFaceEvals(fh, sconcat("x2q_", sd), concat(x2d_, sd), bC, cv, edge, surfVars, nodes),
+    pkpmWriteFaceEvals(fh, sconcat("thq_", sd), concat(thd_, sd), bC, cv, edge, surfVars, nodes),
+    for i : 1 thru 4 do
+      pkpmWriteFaceEvals(fh, sconcat("qq", i, "_", sd), concat(q, i, '_, sd), bC, cv, edge, surfVars, nodes),
+    for i : 1 thru 3 do (
+      pkpmWriteFaceEvals(fh, sconcat("bq", i-1, "_", sd), concat(b, i-1, '_, sd), bC, cv, edge, surfVars, nodes),
+      pkpmWriteFaceEvals(fh, sconcat("uq", i-1, "_", sd), concat(u, i-1, '_, sd), bC, cv, edge, surfVars, nodes)
+    )
+  ),
+  printf(fh, " ~%"),
+  printf(fh, "  // Nodal fluxes [F_rho, F_x, F_y, F_z, F_E]: the two one-sided contributions. ~%"),
+  printf(fh, "  double Fq[~a] = {0.0}; ~%", 5*NN),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
+  for side : 1 thru 2 do (
+    sd : if side = 1 then "l" else "r",
+    printf(fh, "    { ~%"),
+    printf(fh, "      const double I0 = I[~a + n], I1 = I[~a + n], I2 = I[~a + n], J0 = I[~a + n]; ~%",
+      (side-1)*4*NN, ((side-1)*4+1)*NN, ((side-1)*4+2)*NN, ((side-1)*4+3)*NN),
+    printf(fh, "      const double rq = rq_~a[n], xq = xq_~a[n], x2q = x2q_~a[n]; ~%", sd, sd, sd),
+    printf(fh, "      const double pperp = 0.5*jperp*rq*x2q*thq_~a[n]; // half: the central average of the two traces ~%", sd),
+    printf(fh, "      cfl_max = fmax(cfl_max, fabs(uq~a_~a[n]) + xq*sqrt(fmax(2.0*thq_~a[n]*(1.0 - bq~a_~a[n]*bq~a_~a[n]), 0.0))); ~%", dir-1, sd, sd, dir-1, sd, dir-1, sd),
+    printf(fh, "      const double bn = bq~a_~a[n]; ~%", dir-1, sd),
+    printf(fh, "      const double bu = bq0_~a[n]*uq0_~a[n] + bq1_~a[n]*uq1_~a[n] + bq2_~a[n]*uq2_~a[n]; ~%", sd, sd, sd, sd, sd, sd),
+    printf(fh, "      const double uu = uq0_~a[n]*uq0_~a[n] + uq1_~a[n]*uq1_~a[n] + uq2_~a[n]*uq2_~a[n]; ~%", sd, sd, sd, sd, sd, sd),
+    printf(fh, "      Fq[n] += rq*I0; ~%"),
+    for i : 1 thru 3 do
+      printf(fh, "      Fq[~a + n] += rq*(uq~a_~a[n]*I0 + xq*bq~a_~a[n]*I1) + pperp*(~a - bq~a_~a[n]*bn); ~%",
+        i*NN, i-1, sd, i-1, sd, if i = dir then "1.0" else "0.0", i-1, sd),
+    printf(fh, "      Fq[~a + n] += 0.5*rq*(uu*I0 + 2.0*xq*bu*I1 + x2q*I2) + rq*x2q*J0 + pperp*(uq~a_~a[n] - bu*bn); ~%", 4*NN, dir-1, sd),
+    printf(fh, "    } ~%")
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, "  // Rusanov dissipation of the perpendicular sound waves of the central pressure flux. ~%"),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
+  printf(fh, "    const double s_l = xq_l[n]*sqrt(fmax(2.0*thq_l[n]*(1.0 - bq~a_l[n]*bq~a_l[n]), 0.0)); ~%", dir-1, dir-1),
+  printf(fh, "    const double s_r = xq_r[n]*sqrt(fmax(2.0*thq_r[n]*(1.0 - bq~a_r[n]*bq~a_r[n]), 0.0)); ~%", dir-1, dir-1),
+  printf(fh, "    const double s = 0.5*jperp*fmax(s_l, s_r); ~%"),
+  printf(fh, "    Fq[n] -= s*(rq_r[n] - rq_l[n]); ~%"),
+  for i : 1 thru 4 do
+    printf(fh, "    Fq[~a + n] -= s*(qq~a_r[n] - qq~a_l[n]); ~%", i*NN, i, i),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  // Projection of the nodal fluxes onto the surface basis. ~%"),
+  for c : 1 thru 5 do (
+    for k : 1 thru NSurf do (
+      expr : "",
+      for n : 1 thru NN do (
+        chi : if cdim > 1 then subst(makelist(surfVars[d] = nodes[n][d], d, 1, cdim-1), bSurf[k]) else 1,
+        expr : sconcat(expr, if n > 1 then " + " else "", float(expand(weights[n]*chi)), "*Fq[", (c-1)*NN + n-1, "]")
+      ),
+      printf(fh, "  flux[~a] = ~a; ~%", (c-1)*NSurf + k-1, expr)
+    )
+  ),
+  printf(fh, "  return cfl_max; ~%"),
+  printf(fh, "} ~%")
+)$

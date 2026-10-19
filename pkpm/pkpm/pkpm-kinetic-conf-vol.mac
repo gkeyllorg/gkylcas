@@ -8,15 +8,19 @@
      streaming      integral( d_x phi . (xi w b + u) [F, G] )               (all conf directions)
      w forces       integral( d_w phi  ( -(w K + w^2 b.grad xi) [F, G] + xi beta [G, H] ) )
      F source       integral( phi ( -xi w b.grad(ln n) F ) )
-     G source       integral( phi ( (K - xi w beta - 2 w b.grad xi - xi w b.grad(ln n)) G ) )
+     G source       integral( phi ( (K - div u - xi w beta - 2 w b.grad xi - xi w b.grad(ln n)) G ) )
 
    with K = sum_ij b_i b_j d_i u_j, beta = div b, H = 4 theta G - 2 theta^2 F (F_2 = 0,
    lowest-order Laguerre closure). The factoring moves the density out of the kinetic
-   equation: the -div u G source cancels against the factoring term, and the div u F
-   source is not written explicitly because the normalization closure c_0 F of stage B
-   (pkpm-vars-closure.mac) reproduces it, with c_0 = div u in the continuum. The w forces
-   that depend on the closures, (a_P/xi + c w) [F, G], the sources c_0 F and 2 c G and the
-   w surface term belong to the velocity-space pass (stage B) once c_0, a_P/xi and c are
+   equation: the div u [F, G] sources it produces are not written here because the
+   normalization closure c_0 [F, G] of stage B (pkpm-vars-closure.mac) reproduces them
+   from the DISCRETE streaming loss (c_0 = div u in the continuum); F and G stream with the
+   same operator, so both must be renormalized by the same discrete rate (renormalizing G
+   with the resolved K instead drives T_perp/T wherever c_0 and bb:grad u differ, e.g. an
+   absorbing wall cell). What remains of G's source is the perpendicular compression
+   (K - div u) G = -(I - bb):grad u G, zero in 1D with b along x. The w forces that depend
+   on the closures, (a_P/xi + c w) [F, G], the sources c_0 [F, G] and 2 c G and the w
+   surface term belong to the velocity-space pass (stage B) once c_0, a_P/xi and c are
    closed from the moments of this right-hand side. The collision operator, including the
    G source 2 nu vth^2 F - 2 nu G, is a separate operator (lbo-pkpm-drag-vol.mac) applied
    after the closures: it conserves the normalized moments on its own.
@@ -200,7 +204,10 @@ calcPKPMKineticConfVol(fh, funcNm, cdim) := block(
   force_F : dv1*calcInnerProdList(pkP, 1, diff(pkbP, vx), -(vTrans*K_e + vTrans^2*bgx_e)*F_e + xi_e*div_b_e*G_e),
   force_G : dv1*calcInnerProdList(pkP, 1, diff(pkbP, vx), -(vTrans*K_e + vTrans^2*bgx_e)*G_e + xi_e*div_b_e*H_e),
   src_F : calcInnerProdList(pkP, 1, pkbP, -xi_e*vTrans*bgn_e*F_e),
-  src_G : calcInnerProdList(pkP, 1, pkbP, (K_e - xi_e*vTrans*div_b_e - 2*vTrans*bgx_e - xi_e*vTrans*bgn_e)*G_e),
+  /* The perpendicular compression (K - div u) G: the density renormalization of G, like
+     that of F, is the discrete closure c_0 G of stage B. */
+  divu_e : sum(gu_e[d][d], d, 1, cdim),
+  src_G : calcInnerProdList(pkP, 1, pkbP, (K_e - divu_e - xi_e*vTrans*div_b_e - 2*vTrans*bgx_e - xi_e*vTrans*bgn_e)*G_e),
 
   clst : [dx10, dx11, dx12, dv1, dvpar, wvpar],
   printf(fh, "  // Streaming, w forces and density-gradient source of F. ~%"),
@@ -210,7 +217,7 @@ calcPKPMKineticConfVol(fh, funcNm, cdim) := block(
   printf(fh, " ~%"),
 
   /* CFL estimate of the source rates at the cell center. */
-  cflK : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), K_e))),
+  cflK : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), K_e - divu_e))),
   cflDivB : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), div_b_e))),
   cflBgn : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), bgn_e))),
   cflBgx : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), bgx_e))),

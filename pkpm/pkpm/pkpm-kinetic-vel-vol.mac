@@ -3,7 +3,7 @@
    normalized p=1 PKPM kinetic update: the closure terms
 
      integral( d_w phi (alpha_0 + c w) [F, G] )     pressure force alpha_0 = a_P/xi and heating rate c
-     integral( phi c_0 F )                          normalization of F
+     integral( phi c_0 [F, G] )                     density renormalization of F and G
      integral( phi 2 c G )                          perpendicular contraction of G
 
    integrated exactly (c_0, alpha_0 and c are p=1 in configuration space; the test
@@ -32,7 +32,7 @@ calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
   const double *c_0, const double *alpha_0, const double *c_h, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:   Cell-center coordinates. ~%"),
   printf(fh, "  // dxv[NDIM]: Cell spacing. ~%"),
-  printf(fh, "  // c_0:       Normalization closure (c_0 F source). ~%"),
+  printf(fh, "  // c_0:       Normalization closure (c_0 [F, G] source). ~%"),
   printf(fh, "  // alpha_0:   Pressure force a_P/xi closing the first moment. ~%"),
   printf(fh, "  // c_h:       Heating rate closing the scalar second moment (force c w, source 2 c G). ~%"),
   printf(fh, "  // f:         Input normalized distribution functions [F, G]. ~%"),
@@ -56,7 +56,7 @@ calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
   force_F : dv1*calcInnerProdList(pkP, 1, diff(pkbP, pkV[1]), (a0_e + ch_e*vTrans)*F_e),
   force_G : dv1*calcInnerProdList(pkP, 1, diff(pkbP, pkV[1]), (a0_e + ch_e*vTrans)*G_e),
   src_F : calcInnerProdList(pkP, 1, pkbP, c0_e*F_e),
-  src_G : calcInnerProdList(pkP, 1, pkbP, 2*ch_e*G_e),
+  src_G : calcInnerProdList(pkP, 1, pkbP, (c0_e + 2*ch_e)*G_e),
 
   clst : [dv1, dvpar, wvpar],
   expr : float(expand(force_F + src_F)),
