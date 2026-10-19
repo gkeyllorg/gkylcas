@@ -62,7 +62,7 @@ for bInd : 1 thru length(bName) do (
           funcName : sconcat("vlasov_hamil_vel_dense_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
           if (bName[bInd] = "tensor") then (
             /* Generate mapped velocity grid kernels when utilizing the tensor basis. */
-            calcHamilVelSurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_dense", "cubic") 
+            if (polyOrder = 1) then calcHamilVelSurfStreamFactored(dir, fh, funcName, c, v, "vel_dense") else calcHamilVelSurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_dense", "cubic") 
           )
           else (
             calcHamilVelSurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_dense", "linear") 
@@ -77,7 +77,7 @@ for bInd : 1 thru length(bName) do (
             fh : openw(fname),
             funcName : sconcat("vlasov_hamil_vel_sparse_surf",clabels[dir],"_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
             if (bName[bInd] = "tensor") then (
-              calcHamilVelSurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_sparse", "cubic")
+              if (polyOrder = 1) then calcHamilVelSurfStreamFactored(dir, fh, funcName, c, v, "vel_sparse") else calcHamilVelSurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_sparse", "cubic")
             )
             else (
               calcHamilVelSurfStream(dir, fh, funcName, c, v, bName[bInd], polyOrder, "vel_sparse", "linear")

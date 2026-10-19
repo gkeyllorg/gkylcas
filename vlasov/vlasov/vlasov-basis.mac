@@ -465,3 +465,27 @@ loadSurfVelJacobian(vdim, nSurfPts, dir, nodes_vel, surfVVars, surfNodes, surfVa
 
   return([jacob_edge, jacob_vi_surf, jacob_surf_tot])
 )$ 
+/* Factorization of the tensor p=1 hybrid basis for the kernels that work one velocity direction at a
+   time: the phase-space modes as products bP[k] = coefL[k] bC[cIdx[k]] bV[mIdx[k]] (1-based
+   indices) and the velocity modes as products of the 1D orthonormal Legendre polynomials phi1 of
+   order pv, bV[m] = coefV[m] prod_d phi1[degV[m][d]+1](varsV[d]). Returns
+   [cIdx, mIdx, coefL, degV, coefV, vars1, phi1]; errors out if a mode does not factor. */
+hybFactorBasis(bP, bC, bV, varsV, pv) := block(
+  [vars1, phi1, NP, NC, NV, vdim, degV, coefV, cIdx, mIdx, coefL, k, c, m, d, r, found],
+  vdim : length(varsV), NP : length(bP), NC : length(bC), NV : length(bV),
+  [vars1, phi1] : loadBasis("Tensor", 1, pv),
+  degV : makelist(makelist(hipow(expand(bV[m]), varsV[d]), d, 1, vdim), m, 1, NV),
+  coefV : makelist(radcan(bV[m]/prod(subst(vars1[1] = varsV[d], phi1[degV[m][d]+1]), d, 1, vdim)), m, 1, NV),
+  for m : 1 thru NV do
+    if listofvars(coefV[m]) # [] then error("hybFactorBasis: velocity mode not a 1D product, m =", m),
+  cIdx : makelist(0, k, 1, NP), mIdx : makelist(0, k, 1, NP), coefL : makelist(0, k, 1, NP),
+  for k : 1 thru NP do (
+    found : false,
+    for c : 1 thru NC do for m : 1 thru NV do if not found then (
+      r : radcan(bP[k]/(bC[c]*bV[m])),
+      if listofvars(r) = [] then (found : true, cIdx[k] : c, mIdx[k] : m, coefL[k] : r)
+    ),
+    if not found then error("hybFactorBasis: not a conf x vel product, k =", k)
+  ),
+  [cIdx, mIdx, coefL, degV, coefV, vars1, phi1]
+)$

@@ -626,3 +626,105 @@ calcTriadNodalVolCellModes(fh, funcNm, cdim, vdim, hamil_rep, canonical) := bloc
   printf(fh, "  } ~%"),
   printf(fh, "} ~%")
 )$
+
+/* Magnetic-field force volume kernel of the tensor p=1 hybrid basis (the
+   vlasov_B<d>_hamil_<rep>_vol kernels of calcBVol) for the dense velocity ("vel_dense")
+   and phase-space ("phase") Hamiltonians, with the update at the 2^cdim
+   configuration-space Gauss-Legendre nodes. B along direction Bdir couples the two
+   velocity directions (a, b) (cyclic in 3V, (vx, vy) for Bz in 2V):
+     (2/dv_a)(2/dv_b) int [d_va(w) d_vb(H) - d_vb(w) d_va(H)] B_Bdir(x) F,
+   F = f_no_J times the velocity-map Jacobian of the third direction t in 3V (nodally
+   for the cubic map of the velocity Hamiltonians; the cell-constant J for the
+   phase-space Hamiltonian, as calcBVol's linear rep), F = f_no_J in 2V. In mode-table
+   form, per node: B(x_q) H_p [P_a (x) Q_b (x) C_t J_t] f minus the same with a, b swapped.
+   B(x) is the only configuration-dependent factor for a velocity Hamiltonian, so the
+   2-node quadrature is exact; a phase-space Hamiltonian adds the configuration
+   dependence of H (the interpolated-characteristic definition of the GR triads).
+   The sparse velocity Hamiltonian keeps the modal calcBVol kernels: d_v H depends on
+   one velocity coordinate there, the modal product is already compact, and the
+   per-node velocity contractions cost 1.2-1.8x its time. */
+calcTriadNodalBVol(fh, funcNm, cdim, vdim, hamil_rep, Bdir) := block(
+  [varsC, bC, varsV, bV, varsP, bP, NC, NV, NP, cIdx, mIdx, coefL, nodesC, NQ, sSyms, sub_q,
+   bC_q, varsP1, phi1D, degs, f_s, U_s, f_node_c, mats, a, b, t, d, k, m, p, lab, dv1s, tP, tQ,
+   tC, jac_s, MJ_s, hS, h_c, hB_s, A1, A2, order1, order2],
+
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis("tensor", cdim, vdim, 1),
+  NC : length(bC), NV : length(bV), NP : length(bP),
+  [cIdx, mIdx, coefL] : triadNodalFactorBasis(bP, bC, bV),
+  nodesC : gaussOrd(2, cdim),
+  NQ : length(nodesC),
+  [varsP1, phi1D] : loadBasis("Tensor", 1, 2),
+  degs : triadNodalVelDegrees(triadNodalVelBasis(vdim)[2], triadNodalVelBasis(vdim)[1], phi1D),
+  f_s : makelist(arraymake(f_node, [m-1]), m, 1, NV),
+  U_s : makelist(arraymake(U, [m-1]), m, 1, NV),
+  if vdim = 2 then [a, b, t] : [1, 2, 0]
+  else [a, b, t] : [[2, 3, 1], [3, 1, 2], [1, 2, 3]][Bdir],
+
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv,
+  const double *jacob_vel, const double *hamil,
+  const double *qmem, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  const double *Bc = &qmem[~a]; ~%", NC*(2 + Bdir)),
+
+  /* One-dimensional mode tables: P along the test-function derivative, Q along the
+     H derivative (both with 2/dv), C (times J_t) along the third direction. */
+  mats : triadNodalVolModeMats(vdim),
+  dv1s : [dv10, dv11, dv12],
+  tP : makelist(0, d, 1, vdim), tQ : makelist(0, d, 1, vdim), tC : makelist(0, d, 1, vdim),
+  for d in [a, b] do (
+    lab : clabels[d],
+    printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", d-1, cdim+d-1),
+    tP[d] : makelist(triadNodalWriteArr(triadNodalTabName("tP", lab, p), dv1s[d]*mats[d][1][p]), p, 1, 3),
+    tQ[d] : makelist(triadNodalWriteArr(triadNodalTabName("tQ", lab, p), dv1s[d]*mats[d][3][p]), p, 1, 3)
+  ),
+  if t > 0 then (
+    lab : clabels[t],
+    if hamil_rep = "phase" then (
+      printf(fh, "  const double jac_v~a = jacob_vel[~a]; ~%", lab, 3*(t-1)),
+      tC[t] : makelist(triadNodalWriteArr(triadNodalTabName("tCJ", lab, p),
+                eval_string(sconcat("jac_v", lab))*mats[t][5][p]), p, 1, 3)
+    ) else (
+      printf(fh, "  const double jac_v~a[3] = {jacob_vel[~a], jacob_vel[~a], jacob_vel[~a]}; ~%",
+        lab, 3*(t-1), 3*(t-1)+1, 3*(t-1)+2),
+      /* Nodal multiplication by J_t: the division matrix of triadNodalVolModeMats
+         with the node values J instead of 1/J. */
+      MJ_s : triadNodalWriteArr(eval_string(sconcat("jmul_v", lab)),
+               subst(eval_string(sconcat("jac_v", lab)), eval_string(sconcat("jinv_v", lab)), mats[t][7])),
+      tC[t] : makelist(triadNodalWriteArr(triadNodalTabName("tCJ", lab, p),
+                triadNodalMatMul3(mats[t][5][p], MJ_s)), p, 1, 3)
+    )
+  ),
+
+  sSyms : makelist(eval_string(sconcat("s", d-1)), d, 1, cdim),
+  sub_q : makelist(varsC[d] = sSyms[d]/sqrt(3), d, 1, cdim),
+  printf(fh, "  for (int q = 0; q < ~a; ++q) { ~%", NQ),
+  for d : 1 thru cdim do
+    printf(fh, "  const double ~a = ((q >> ~a) & 1) ? 1.0 : -1.0; ~%", sSyms[d], cdim-d),
+  bC_q : triadNodalWriteArr(bcq, makelist(subst(sub_q, bC[k]), k, 1, NC)),
+  printf(fh, "  const double Bq = ~a; ~%", float(expand(sum(bC_q[k]*Bc[k-1], k, 1, NC)))),
+  printf(fh, "  double f_node[~a] = {0.0}; ~%", NV),
+  printf(fh, "  double U[~a] = {0.0}; ~%", NV),
+  f_node_c : makelist(0, m, 1, NV),
+  for k : 1 thru NP do
+    f_node_c[mIdx[k]] : f_node_c[mIdx[k]] + coefL[k]*bC_q[cIdx[k]]*f[k-1],
+  writeCExprs1(f_node, f_node_c),
+
+  /* H modes (at the node for the phase-space Hamiltonian), times B(x_q). */
+  if hamil_rep = "phase" then (
+    h_c : makelist(0, m, 1, NV),
+    for k : 1 thru NP do h_c[mIdx[k]] : h_c[mIdx[k]] + coefL[k]*bC_q[cIdx[k]]*hamil[k-1],
+    hS : triadNodalWriteArr(hq, h_c)
+  ) else
+    hS : makelist(arraymake(hamil, [m-1]), m, 1, NV),
+  hB_s : triadNodalWriteArr(hB, makelist(Bq*hS[m], m, 1, NV)),
+
+  order1 : if t > 0 then [a, b, t] else [a, b],
+  order2 : if t > 0 then [b, a, t] else [b, a],
+  A1 : makelist(if d = a then tP[d] else if d = b then tQ[d] else tC[d], d, 1, vdim),
+  A2 : makelist(if d = b then tP[d] else if d = a then tQ[d] else tC[d], d, 1, vdim),
+  triadNodalTuckerApply(U_s, 1, hB_s, A1, order1, f_s, degs, "B1"),
+  triadNodalTuckerApply(U_s, -1, hB_s, A2, order2, f_s, degs, "B2"),
+  writeCIncrExprs1(out, makelist(coefL[k]*bC_q[cIdx[k]]*U[mIdx[k]-1], k, 1, NP)),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$

@@ -680,10 +680,13 @@ calcM0ReduceVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, upper, rep) := blo
   printf(fh, "} ~%")
 )$  
 
-calcMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder, calcHamilPhase) := block([rep],
+calcMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder, calcHamilPhase) := block([rep, hyb],
   /* Serendipity -> C^0 linear map (constant Jacobian); tensor -> C^1 cubic
      map (quadratic Jacobian) at EVERY p, including the p=1 hybrid. */
   rep : vlasovVelMapRep(basisFun),
+  /* The tensor p=1 hybrid factors the M1i and five-moment velocity integrals by direction
+     (calcMomHybFactored). */
+  hyb : is(basisFun = "tensor" and polyOrder = 1),
   printf(fh, "#include <gkyl_mom_vlasov_kernels.h> ~%"),  
   calcM0(fh, funcNm, cdim, vdim, basisFun, polyOrder), 
   /* New energy flux kernels which are formally H*dH/dv are very dense, 
@@ -695,21 +698,33 @@ calcMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder, calcHamilPhase) := bloc
   /* Velocity-space Hamiltonian moments. M1i = < (1/J_v,i) dH/dv_i Jf >: the
      dH/dv_i derivative picks up 1/J_v,i -- the velocity-map Jacobian in the
      DIRECTION OF THE DERIVATIVE only; the total map Jacobian stays on Jf. */
-  calcM1iVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_dense", rep),
+  if hyb then calcMomHybFactored(fh, funcNm, cdim, vdim, "vel_dense", "M1i")
+  else calcM1iVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_dense", rep),
   calcM2(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_dense"),
   /* The hamil_vel M3i energy flux is only in the Serendipity kernel tables. */
   if (basisFun = "ser") then calcM3i(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_dense", rep),
-  calcFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_dense", rep),
-  calcIntFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_dense", rep),
+  if hyb then (
+    calcMomHybFactored(fh, funcNm, cdim, vdim, "vel_dense", "five_moments"),
+    calcMomHybFactored(fh, funcNm, cdim, vdim, "vel_dense", "int_five_moments")
+  ) else (
+    calcFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_dense", rep),
+    calcIntFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_dense", rep)
+  ),
   /* Sparse (separable) velocity-space Hamiltonian moments. In 1V sparse and
      dense are identical: only generate for vdim > 1 and let the kernel tables
      alias the 1V sparse entries to dense. */
   if (vdim > 1) then (
-    calcM1iVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse", rep),
+    if hyb then calcMomHybFactored(fh, funcNm, cdim, vdim, "vel_sparse", "M1i")
+    else calcM1iVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse", rep),
     calcM2(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse"),
     if (basisFun = "ser") then calcM3i(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse", rep),
-    calcFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse", rep),
-    calcIntFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse", rep)
+    if hyb then (
+      calcMomHybFactored(fh, funcNm, cdim, vdim, "vel_sparse", "five_moments"),
+      calcMomHybFactored(fh, funcNm, cdim, vdim, "vel_sparse", "int_five_moments")
+    ) else (
+      calcFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse", rep),
+      calcIntFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel_sparse", rep)
+    )
   ), 
   /* Partial (threshold) M0 moments: 1V only for now, but defined for every
      basis/rep (the velocity map is folded into all bases uniformly). */
@@ -725,9 +740,139 @@ calcMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder, calcHamilPhase) := bloc
   /* Phase moments exist for Serendipity and the tensor p=1 hybrid (no phase
      rep for tensor p>1). */
   if (calcHamilPhase) then (
-    calcM1iVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase", rep),
+    if hyb then calcMomHybFactored(fh, funcNm, cdim, vdim, "phase", "M1i")
+    else calcM1iVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase", rep),
     calcM2(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase"),
-    calcFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase", rep),
-    calcIntFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase", rep)
+    if hyb then (
+      calcMomHybFactored(fh, funcNm, cdim, vdim, "phase", "five_moments"),
+      calcMomHybFactored(fh, funcNm, cdim, vdim, "phase", "int_five_moments")
+    ) else (
+      calcFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase", rep),
+      calcIntFiveMomentsVmap(fh, funcNm, cdim, vdim, basisFun, polyOrder, "phase", rep)
+    )
   )
+)$
+/* Moments of the tensor p=1 hybrid basis with the velocity integrals factored by direction:
+   mom = "M1i", "five_moments" or "int_five_moments" of calcM1iVmap, calcFiveMomentsVmap and
+   calcIntFiveMomentsVmap (cubic map; M2 alone, a plain product, stays the modal calcM2). In the
+   orthonormal 1D Legendre polynomials the velocity integral of a product is the dot product of
+   the coefficient tuples, d/dv_i is the 1D derivative matrix along direction i, and the division
+   of Jf by the velocity-map Jacobian J_i at the 3 Gauss-Legendre nodes along direction i is the 1D
+   matrix Et diag(1/J_i) E. A phase-space Hamiltonian evaluates the velocity integrals at the 2^cdim
+   configuration-space Gauss-Legendre nodes (exact: the configuration-space integrand is at most
+   cubic per direction), or, for the cell integrals, as the dot product of the configuration-space
+   coefficients; for a velocity-space Hamiltonian every configuration-space mode is a spectator.
+   Same as the modal kernels to round off. */
+calcMomHybFactored(fh, funcNm, cdim, vdim, hamil_rep, mom) := block(
+  [varsC, bC, varsV, bV, varsP, bP, NC, NV, NP, nq, NQV, cIdx, mIdx, coefL, degV, coefV, vars1,
+   phi1, x1, w1, E, Et, Dm, flat, tupOf, phase, sparse, needM0, needM1, needM2, intg, lab, Bt,
+   modalF, modalH, velH, m0, m1, m2, Fs, Hs, sSyms, bcq, nm, k, c, m, d, i, j, a, b, t, base],
+
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis("tensor", cdim, vdim, 1),
+  NC : length(bC), NV : length(bV), NP : length(bP), nq : 3, NQV : nq^vdim,
+  [cIdx, mIdx, coefL, degV, coefV, vars1, phi1] : hybFactorBasis(bP, bC, bV, varsV, nq - 1),
+  [x1, w1] : gaussOrdWeight1D(nq),
+  /* E[i][p] = phi_p(x_i), Et[p][i] = w_i phi_p(x_i), d phi_b/dx = sum_a Dm[a][b] phi_a. */
+  E : makelist(makelist(subst(vars1[1] = x1[i], phi1[b]), b, 1, nq), i, 1, nq),
+  Et : makelist(makelist(w1[i]*E[i][a], i, 1, nq), a, 1, nq),
+  Dm : makelist(makelist(integrate(phi1[a]*diff(phi1[b], vars1[1]), vars1[1], -1, 1), b, 1, nq), a, 1, nq),
+  flat : lambda([tp], sum(tp[d]*nq^(vdim-d), d, 1, vdim)),
+  tupOf : lambda([ii], makelist(mod(floor(ii/nq^(vdim-d)), nq), d, 1, vdim)),
+  phase : is(hamil_rep = "phase"), sparse : is(hamil_rep = "vel_sparse"),
+  needM0 : member(mom, ["five_moments", "int_five_moments"]),
+  needM1 : member(mom, ["M1i", "five_moments", "int_five_moments"]),
+  needM2 : member(mom, ["M2", "five_moments", "int_five_moments"]),
+  intg : is(mom = "int_five_moments"),
+
+  /* Coefficient tuples (flat 1D-degree index) of f and H: per configuration-space mode for the
+     phase-space expansions, and the velocity-space Hamiltonian (sparse: modes of at most one
+     velocity variable). */
+  modalF : lambda([cc, sym], block([F : makelist(0, ii, 1, NQV)],
+    for kk : 1 thru NP do if cIdx[kk] = cc then
+      F[flat(degV[mIdx[kk]])+1] : coefL[kk]*coefV[mIdx[kk]]*arraymake(sym, [kk-1]),
+    F)),
+  velH : makelist(0, ii, 1, NQV),
+  for m : 1 thru NV do
+    if not (sparse and length(sublist(degV[m], lambda([e], e > 0))) > 1) then
+      velH[flat(degV[m])+1] : coefV[m]*arraymake(hamil, [m-1]),
+
+  /* Velocity integrals of tuple vectors: m0 = int F, m2 = int H F, m1 = (2/dv_i) int dH/dv_i (Jf/J_i). */
+  m0 : lambda([F], 2^(vdim/2)*F[1]),
+  m2 : lambda([H, F], sum(H[ii]*F[ii], ii, 1, NQV)),
+  m1 : lambda([H, F, dd], block([lb : clabels[dd]], dv11[dd]*sum(block([tp : tupOf(ii-1)],
+    sum(Dm[tp[dd]+1][bb+1]*H[flat(makelist(if e = dd then bb else tp[e], e, 1, vdim))+1], bb, 0, nq-1)
+    *sum(arraymake(eval_string(sconcat("bdiv_v", lb)), [nq*tp[dd]+bb])*F[flat(makelist(if e = dd then bb else tp[e], e, 1, vdim))+1], bb, 0, nq-1)),
+    ii, 1, NQV))),
+
+  nm : sconcat(funcNm, "_hamil_", hamil_rep, "_", mom, "_", cdim, "x", vdim, "v_tensor_p1"),
+  if mom = "M2" then
+    printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const int *idx, 
+    const double *hamil, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", nm)
+  else
+    printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const int *idx, 
+    const double *jacob_vel, const double *hamil, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", nm),
+  if intg then printf(fh, "  double volFact = ~a*~a; ~%", volExprTot(cdim+vdim), float(1/(2^(cdim+vdim))))
+  else printf(fh, "  double volFact = ~a/~a; ~%", volExpr(cdim, vdim), 2^vdim),
+  if needM1 then for d : 1 thru vdim do block([lb : clabels[d]],
+    printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", d-1, cdim+d-1),
+    printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", lb, nq*(d-1)),
+    /* Division by J along direction d at its 3 nodes, as a 1D matrix on the coefficients. */
+    printf(fh, "  double bdiv_v~a[~a]; ~%", lb, nq*nq),
+    for a : 1 thru nq do for b : 1 thru nq do
+      printf(fh, "  bdiv_v~a[~a] = ~a; ~%", lb, nq*(a-1)+b-1,
+        float(expand(sum(Et[a][i]*E[i][b]/arraymake(eval_string(sconcat("jacob_v", lb)), [i-1]), i, 1, nq))))
+  ),
+
+  if not phase then (
+    for c : 1 thru NC do block([F : modalF(c, f), cf, outs : []],
+      /* int_five_moments: only the constant configuration-space mode has a nonzero cell integral. */
+      cf : if intg then (if c = 1 then 2^(cdim/2) else 0) else 1,
+      if cf # 0 then (
+        base : if intg then 0 else c-1,
+        if needM0 then outs : endcons([base, m0(F)], outs),
+        if needM1 then for d : 1 thru vdim do
+          outs : endcons([base + (if intg then d else NC*(d - (if mom = "M1i" then 1 else 0))), m1(velH, F, d)], outs),
+        if needM2 then
+          outs : endcons([base + (if mom = "M2" then 0 else (if intg then vdim+1 else NC*(vdim+1))), m2(velH, F)], outs),
+        for o in outs do printf(fh, "  out[~a] += ~a; ~%", o[1], float(expand(volFact*cf*o[2])))
+      )
+    )
+  ) else if intg then (
+    /* Cell integrals of products of the phase-space expansions: by orthonormality, the sum over the
+       configuration-space modes of the velocity integrals. */
+    printf(fh, "  out[0] += ~a; ~%", float(expand(volFact*2^(cdim/2)*m0(modalF(1, f))))),
+    for d : 1 thru vdim do
+      printf(fh, "  out[~a] += ~a; ~%", d, float(expand(volFact*sum(m1(modalF(c, hamil), modalF(c, f), d), c, 1, NC)))),
+    printf(fh, "  out[~a] += ~a; ~%", vdim+1, float(expand(volFact*sum(m2(modalF(c, hamil), modalF(c, f)), c, 1, NC))))
+  ) else (
+    /* M0 needs no node: the velocity integral only reads the constant velocity coefficient. */
+    if needM0 then for c : 1 thru (if intg then 1 else NC) do
+      printf(fh, "  out[~a] += ~a; ~%", c-1, float(expand(volFact*(if intg then 2^(cdim/2) else 1)*m0(modalF(c, f))))),
+    sSyms : makelist(eval_string(sconcat("s", d-1)), d, 1, cdim),
+    printf(fh, "  for (int q = 0; q < ~a; ++q) { ~%", 2^cdim),
+    for d : 1 thru cdim do
+      printf(fh, "  const double ~a = ((q >> ~a) & 1) ? 1.0 : -1.0; ~%", sSyms[d], cdim-d),
+    bcq : makelist(subst(makelist(varsC[d] = sSyms[d]/sqrt(3), d, 1, cdim), bC[c]), c, 1, NC),
+    printf(fh, "  double f_node[~a], h_node[~a]; ~%", NQV, NQV),
+    for i : 1 thru NQV do printf(fh, "  f_node[~a] = ~a; ~%", i-1,
+      float(expand(sum(bcq[c]*modalF(c, f)[i], c, 1, NC)))),
+    for i : 1 thru NQV do printf(fh, "  h_node[~a] = ~a; ~%", i-1,
+      float(expand(sum(bcq[c]*modalF(c, hamil)[i], c, 1, NC)))),
+    Fs : makelist(f_node[i-1], i, 1, NQV), Hs : makelist(h_node[i-1], i, 1, NQV),
+    if needM1 then for d : 1 thru vdim do
+      printf(fh, "  const double m1_~a = ~a; ~%", clabels[d], float(expand(m1(Hs, Fs, d)))),
+    if needM2 then printf(fh, "  const double m2q = ~a; ~%", float(expand(m2(Hs, Fs)))),
+    /* Projection onto the configuration-space modes (Gauss-Legendre weights 1). */
+    for c : 1 thru (if intg then 1 else NC) do block([cf : if intg then 1 else bcq[c]],
+      base : if intg then 0 else c-1,
+      if needM1 then for d : 1 thru vdim do
+        printf(fh, "  out[~a] += ~a; ~%", base + (if intg then d else NC*(d - (if mom = "M1i" then 1 else 0))),
+          float(expand(volFact*cf*eval_string(sconcat("m1_", clabels[d]))))),
+      if needM2 then
+        printf(fh, "  out[~a] += ~a; ~%", base + (if mom = "M2" then 0 else (if intg then vdim+1 else NC*(vdim+1))),
+          float(expand(volFact*cf*m2q)))
+    ),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, "} ~%")
 )$

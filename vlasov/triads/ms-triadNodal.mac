@@ -8,7 +8,8 @@
    identical and only the dense kernels are generated (the kernel tables alias them).
    Also the canonical-PB phase-space Hamiltonian volume kernels of the tensor p=1
    hybrid basis (vlasov_hamil_phase_vol_*_tensor_p1, declared in gkyl_vlasov_kernels.h),
-   from the same generator with the canonical bracket. */
+   from the same generator with the canonical bracket, and the magnetic-field force
+   volume kernels (vlasov_B<d>_hamil_<rep>_vol_*_tensor_p1). */
 load("vlasov/triads/triadNodalVolFuncs.mac")$
 load("vlasov/triads/triadNodalSurfFuncs.mac")$
 
@@ -60,6 +61,22 @@ for cv in [[1,1], [2,1], [1,2], [2,2], [1,3], [2,3], [3,3]] do block([nm],
   calcTriadNodalVolCellModes(fh, nm, cv[1], cv[2], "phase", true),
   close(fh)
 )$
+
+/* Magnetic-field force volume kernels of the tensor p=1 hybrid basis for the dense velocity
+   and phase-space Hamiltonians (vlasov_B<d>_hamil_<rep>_vol_*_tensor_p1, declared in
+   gkyl_vlasov_kernels.h): Bz in 2V, Bx, By, Bz in 3V; the phase-space Hamiltonian ones not
+   in 3x3v (NULL in the kernel tables). The sparse velocity Hamiltonian ones are the modal
+   kernels of vlasov/vlasov/ms-vlasovVol.mac. */
+for cv in [[1,2], [2,2], [1,3], [2,3], [3,3]] do
+  for hr in ["vel_dense", "phase"] do
+    if not(hr = "phase" and cv[1] + cv[2] = 6) then
+      for Bdir in (if cv[2] = 2 then [3] else [1, 2, 3]) do block([nm],
+        nm : sconcat("vlasov_B", dirLabels[Bdir], "_hamil_", hr, "_vol_", cv[1], "x", cv[2], "v_tensor_p1"),
+        disp(nm),
+        fh : openw(sconcat("~/max-out/", nm, ".c")),
+        calcTriadNodalBVol(fh, nm, cv[1], cv[2], hr, Bdir),
+        close(fh)
+      )$
 
 fh : openw("~/max-out/gkyl_vlasov_triad_nodal_kernels.h")$
 printf(fh, "#pragma once ~%#include <math.h> ~%#include <gkyl_util.h> ~%EXTERN_C_BEG ~%~%")$

@@ -4,6 +4,7 @@ load("core/nodal_operations/nodal_functions.mac")$
 load("core/recovery.mac")$
 load("util_maxima/utilities.mac")$
 load(stringproc)$
+load("vlasov/vlasov/hybFactoredOps.mac")$
 fpprec : 24$
 
 /* This script generates the kernels for the surface term
@@ -20,6 +21,10 @@ calcVmLBODragUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) := bl
    surf_cdim,surf_vdim,surfNodes,numNodes,alphaOrd_l_n,alphaOrd_r_n,surfNodesConfig,
    numNodesConfig,numNodesVel,i,rcoFac_l,rcoFac_r,j,fHatSurf_l_e,fHatSurf_r_e,Ghat_l_c,
    Ghat_r_c,glst1_l,Ghat_l_e,glst1_r,Ghat_r_e,drag_incr_r,drag_incr_l],
+
+  /* The tensor p=1 hybrid basis: the factored kernel of vlasov/vlasov/hybFactoredOps.mac (the face
+     nodes evaluated one direction at a time instead of with the basis helpers). */
+  if polyOrder = 1 and sdowncase(basisFun) = "tensor" then return(calcLBODragSurfFactored(dir, fh, funcNm, cdim, vdim)),
   
   /* Load basis of dimensionality requested. */
   [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),

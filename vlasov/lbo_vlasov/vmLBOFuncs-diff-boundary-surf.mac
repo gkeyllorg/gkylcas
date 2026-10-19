@@ -15,7 +15,7 @@ calcBoundaryDiffUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) :=
   [varsC,bC,varsP,bP,NP,NC,pDim,vid1,surfVar,surfIntVars,bPp,fEdge_e,fSkin_e,bType,
    hl_e,hr_e,hOrder,hsol_l,hsol_r,nuVtSqSum_e,bSurf,facDiff_c,expr,i,facDiff_NoZero,
    facDiff_e,vol_incr_e,Gdiff_c,Gdiff_e,Gdiff2_c,Gdiff2_e,edgeSurf_c,boundSurf_c,
-   edgeSurf_incr_c,boundSurf_incr_c,vol_out,diff_out,edge_out],
+   edgeSurf_incr_c,boundSurf_incr_c,vol_out,diff_out,edge_out,vol_g,side],
 
   /* Load basis of dimensionality requested. */
   [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
@@ -61,6 +61,38 @@ calcBoundaryDiffUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder) :=
   /* First compute the contribution coming from the second
      differentiation by parts to left and right cells. */
   nuVtSqSum_e : doExpand1(nuVtSqSum,bC),
+  if polyOrder=1 and sdowncase(basisFun)="tensor" then (  /* The tensor p=1 hybrid basis. */
+    /* The volume, edge and boundary terms are each the configuration-space weak product of
+       nuVtSqSum with a velocity-space operation on fSkin and fEdge, and the two commute (the
+       hybrid basis is a product of configuration- and velocity-space bases): sum the
+       velocity-space parts g and take one weak product. */
+    bSurf : basisFromVars("tenhyb",surfIntVars,polyOrder),
+    printf(fh, "  double g[~a] = {0.0}; ~%", NP),
+    vol_g : calcInnerProdList(varsP, 1, diff(bP,surfVar,2), fSkin_e),
+    for i : 1 thru NP do block([e : float(expand(vol_g[i]))],
+      if e # 0.0 then printf(fh, "  g[~a] = ~a; ~%", i-1, e)),
+    printf(fh, "~%"),
+    for side : 1 thru 2 do block([hs, sv, sg],
+      /* edge = -1: skin cell to the right of the edge cell, the skin cell's lower surface is the
+         zero-flux boundary; edge = +1 the mirror image. */
+      if side = 1 then (printf(fh, "  if (edge == -1) { ~%~%"), hs : hsol_r, sv : 1, sg : 1)
+      else (printf(fh, "~%  } else { ~%~%"), hs : hsol_l, sv : -1, sg : -1),
+      Gdiff_c  : calcInnerProdList(surfIntVars,1,bSurf,hs[2]),
+      Gdiff2_c : calcInnerProdList(surfIntVars,1,bSurf,hs[1]),
+      edgeSurf_c : fullratsimp(calcInnerProdList(surfIntVars, sg, subst(surfVar=sv, bP), doExpand(Gdiff_c, bSurf))
+                              -calcInnerProdList(surfIntVars, sg, subst(surfVar=sv, bPp), doExpand(Gdiff2_c, bSurf))),
+      boundSurf_c : -calcInnerProdList(surfIntVars, -sg, subst(surfVar=-sv, bPp), subst(surfVar=-sv, fSkin_e)),
+      for i : 1 thru NP do block([e : float(expand(edgeSurf_c[i] + boundSurf_c[i]))],
+        if e # 0.0 then printf(fh, "  g[~a] += ~a; ~%", i-1, e))
+    ),
+    printf(fh, "~%  } ~%~%"),
+    writeCIncrExprs1(out, rdvSq4*calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(g, bP))),
+    printf(fh, "~%"),
+    printf(fh, "  return 0.;~%"),
+    printf(fh, "~%"),
+    printf(fh, "} ~%"),
+    return(true)
+  ),
   if polyOrder=1 then (  /* Force p=1 to use hybrid basis. */
     bSurf : /* p=1 = TENSOR hybrid (p1 conf x p2 vel, graded ordering) -- the same basis
        loadPhaseBasis("tensor",...,1) and core gkyl_cart_modal_hybrid use; the

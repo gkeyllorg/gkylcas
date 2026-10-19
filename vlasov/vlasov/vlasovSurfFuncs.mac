@@ -25,6 +25,8 @@ load("util_maxima/out-scripts.mac");
 load("util_maxima/utilities.mac")$
 load("core/nodal_operations/nodal_functions.mac")$
 load("vlasov/vlasov/vlasov-basis.mac");
+/* Factored tensor p=1 hybrid versions of the streaming and force kernels. */
+load("vlasov/vlasov/hybFactoredOps.mac")$
 load("vlasov/vlasov/surf-eval-tables.mac");
 load(stringproc)$
 fpprec : 24$
