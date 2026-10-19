@@ -18,7 +18,10 @@
      F_Mi  = sum_s rho_s (u_i^s I_0^s + xi^s b_i^s I_1^s) + (1/2) sum_s p_perp^s (delta_in - b_i^s b_n^s),
      F_E   = sum_s rho_s/2 (|u^s|^2 I_0^s + 2 xi^s (b^s.u^s) I_1^s + (xi^s)^2 I_2^s) + rho_s (xi^s)^2 J^s
              + (1/2) sum_s p_perp^s (u_n^s - (b^s.u^s) b_n^s),
-   with p_perp = rho xi^2 theta, theta = T_perp/T = M0(G). The moments of the parallel
+   with p_perp = rho xi^2 theta, theta = T_perp/T = M0(G). Every xi here is the trace of the
+   cell's xi expansion that defines the w of the traces of F and G (and the normalization of G):
+   xi^2 is the square of that trace, never the trace of a separately interpolated xi^2. The
+   moments of the parallel
    streaming carry the mass, the parallel momentum and pressure, the parallel and the
    perpendicular thermal energy; the perpendicular pressure force and its work are not
    transported by the streaming of F and G (the gyrotropic perpendicular motion does not
@@ -199,7 +202,8 @@ calcPKPMFluidFluxKinetic(dir, fh, funcNm, cdim) := block(
   printf(fh, "  //            either cell (the face Jacobian J/J_~a is the same on both sides). ~%", cvarsStr[dir]),
   printf(fh, "  // bvar_l/r:  Magnetic field unit vector [bx, by, bz] of the left/right cell. ~%"),
   printf(fh, "  // u_l/r:     Flow velocity [ux, uy, uz] of the left/right cell. ~%"),
-  printf(fh, "  // xi_l/r:    Thermal speed [xi, xi^2, p] of the left/right cell. ~%"),
+  printf(fh, "  // xi_l/r:    Thermal speed [xi, xi^2, p] of the left/right cell (the first expansion is used: ~%"),
+  printf(fh, "  //            xi^2 is the square of its trace, the xi of the streaming speed). ~%"),
   printf(fh, "  // theta_l/r: T_perp/T = M0(G) of the left/right cell (p_perp = rho xi^2 theta). ~%"),
   printf(fh, "  // fluid_l/r: PHYSICAL fluid state [rho, rho ux, rho uy, rho uz, E] of the left/right cell (Jacobian divided out). ~%"),
   printf(fh, "  // I:         Nodal moments [I_0, I_1, I_2, J]^l, [I_0, I_1, I_2, J]^r of the kinetic HLL flux at the ~%"),
@@ -220,7 +224,6 @@ calcPKPMFluidFluxKinetic(dir, fh, funcNm, cdim) := block(
     for i : 1 thru 4 do
       printf(fh, "  const double *q~a_~a = &fluid_~a[~a]; ~%", i, sd, sd, i*NC),
     printf(fh, "  const double *xd_~a = &xi_~a[0]; ~%", sd, sd),
-    printf(fh, "  const double *x2d_~a = &xi_~a[~a]; ~%", sd, sd, NC),
     printf(fh, "  const double *thd_~a = &theta_~a[0]; ~%", sd, sd),
     for i : 1 thru 3 do (
       printf(fh, "  const double *b~a_~a = &bvar_~a[~a]; ~%", i-1, sd, sd, (i-1)*NC),
@@ -233,7 +236,6 @@ calcPKPMFluidFluxKinetic(dir, fh, funcNm, cdim) := block(
     edge : if side = 1 then 1 else -1,
     printf(fh, "  double rq_~a[~a] = {0.0}; ~%", sd, NN),
     printf(fh, "  double xq_~a[~a] = {0.0}; ~%", sd, NN),
-    printf(fh, "  double x2q_~a[~a] = {0.0}; ~%", sd, NN),
     printf(fh, "  double thq_~a[~a] = {0.0}; ~%", sd, NN),
     for i : 1 thru 4 do
       printf(fh, "  double qq~a_~a[~a] = {0.0}; ~%", i, sd, NN),
@@ -243,7 +245,6 @@ calcPKPMFluidFluxKinetic(dir, fh, funcNm, cdim) := block(
     ),
     pkpmWriteFaceEvals(fh, sconcat("rq_", sd), concat(rho_, sd), bC, cv, edge, surfVars, nodes),
     pkpmWriteFaceEvals(fh, sconcat("xq_", sd), concat(xd_, sd), bC, cv, edge, surfVars, nodes),
-    pkpmWriteFaceEvals(fh, sconcat("x2q_", sd), concat(x2d_, sd), bC, cv, edge, surfVars, nodes),
     pkpmWriteFaceEvals(fh, sconcat("thq_", sd), concat(thd_, sd), bC, cv, edge, surfVars, nodes),
     for i : 1 thru 4 do
       pkpmWriteFaceEvals(fh, sconcat("qq", i, "_", sd), concat(q, i, '_, sd), bC, cv, edge, surfVars, nodes),
@@ -261,7 +262,7 @@ calcPKPMFluidFluxKinetic(dir, fh, funcNm, cdim) := block(
     printf(fh, "    { ~%"),
     printf(fh, "      const double I0 = I[~a + n], I1 = I[~a + n], I2 = I[~a + n], J0 = I[~a + n]; ~%",
       (side-1)*4*NN, ((side-1)*4+1)*NN, ((side-1)*4+2)*NN, ((side-1)*4+3)*NN),
-    printf(fh, "      const double rq = rq_~a[n], xq = xq_~a[n], x2q = x2q_~a[n]; ~%", sd, sd, sd),
+    printf(fh, "      const double rq = rq_~a[n], xq = xq_~a[n], x2q = xq*xq; ~%", sd, sd),
     printf(fh, "      const double pperp = 0.5*jperp*rq*x2q*thq_~a[n]; // half: the central average of the two traces ~%", sd),
     printf(fh, "      cfl_max = fmax(cfl_max, fabs(uq~a_~a[n]) + xq*sqrt(fmax(2.0*thq_~a[n]*(1.0 - bq~a_~a[n]*bq~a_~a[n]), 0.0))); ~%", dir-1, sd, sd, dir-1, sd, dir-1, sd),
     printf(fh, "      const double bn = bq~a_~a[n]; ~%", dir-1, sd),
