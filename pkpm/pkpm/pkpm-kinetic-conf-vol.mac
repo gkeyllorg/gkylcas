@@ -1,51 +1,19 @@
 /* pkpm-kinetic-conf-vol.mac --------------------------------------------------
-   Volume kernel of the configuration-space pass (stage A) of the factored, thermal-velocity
-   normalized p=1 PKPM kinetic update. The evolved array is the eight blocks [F, G, M0_perp,
-   N_perp] with [F, G] = [xi F_0/n, G/(n xi)] on the grid of w = v_par/xi (so that M0(F) = 1,
-   M1(F) = 0, M0(G) = theta = T_perp/T and M2(F) + 2 M0(G) = 3); with the weak form
+   Streaming volume kernel of the configuration-space pass (stage A) of the factored,
+   thermal-velocity normalized p=1 PKPM kinetic update. The evolved array is the eight blocks
+   [F, G, M0_perp, N_perp] on the grid of w = v_par/xi; with the weak form
    integral(phi dF/dt) = + integral(grad phi . flux) - surface terms, the kernel increments out by
 
      streaming      integral( d_x phi . (xi w b + u) X )    (all eight blocks X, all conf directions)
 
-   and the F, G blocks by
-     w forces       integral( d_w phi  ( -(w K + w^2 b.grad xi) [F, G] + xi beta [G, H] ) )
-     F source       integral( phi ( -xi w b.grad(ln n) F ) )
-     G source       integral( phi ( (K - div u - xi w beta - 2 w b.grad xi - xi w b.grad(ln n)) G ) )
-
-   with K = sum_ij b_i b_j d_i u_j, beta = div b, H = 4 theta G - 2 theta^2 F (F_2 = 0,
-   lowest-order Laguerre closure). The factoring moves the density out of the kinetic
-   equation: the div u [F, G] sources it produces are not written here because the
-   normalization closure c_0 [F, G] of stage B (pkpm-vars-closure.mac) reproduces them
-   from the DISCRETE streaming loss (c_0 = div u in the continuum); F and G stream with the
-   same operator, so both must be renormalized by the same discrete rate (renormalizing G
-   with the resolved K instead drives T_perp/T wherever c_0 and bb:grad u differ, e.g. an
-   absorbing wall cell). What remains of G's source is the perpendicular compression
-   (K - div u) G = -(I - bb):grad u G, zero in 1D with b along x. The w forces that depend
-   on the closures, (a_P/xi + c w) [F, G], the sources c_0 [F, G] and 2 c G and the w
-   surface term belong to the velocity-space pass (stage B) once c_0, a_P/xi and c are
-   closed from the moments of this right-hand side. The collision operator, including the
-   G source 2 nu vth^2 F - 2 nu G, is a separate operator (lbo-pkpm-drag-vol.mac) applied
-   after the closures: it conserves the normalized moments on its own.
-
-   Everything is integrated EXACTLY: the products of modal fields are expanded symbolically
-   and the configuration-space factors that are not representable in the p=1 basis are
-   first projected, exactly, onto the tensor basis that contains them,
-
-     div b, K                from the weak (surface-averaged) gradients grad_b, grad_u
-                             computed by pkpm_vars_grad_u_* (pkpm-vars-grad-u.mac):
-                             the in-cell gradient of u feeds a slope sawtooth back into
-                             the sources; the weak gradient cancels it, and b is treated
-                             the same way for consistency
-     b.grad(ln n), b.grad xi tensor p=2 (grad(ln n) is the nodal quotient of the weak
-                             gradient of rho by rho, pkpm-vars-grad-ln-n.mac; grad xi the weak
-                             gradient of [xi, 0, 0] by pkpm_vars_grad_u_*)
-     theta^2                 tensor p=2
-     K                       tensor p=3 (three p=1 factors)
-     H = 4 theta G - 2 theta^2 F   (tensor p=3 in configuration space) x (p=2 in v_par)
-
-   so no product is projected back onto p=1 before it multiplies another field. The
-   returned CFL estimate covers the G source rate (the streaming and force speeds are
-   accumulated by the surface-flux updaters). */
+   integrated exactly: xi b_d, a product of two p=1 fields, is formed once per cell in the tensor
+   basis of degree <= 2 that contains it exactly (as the Vlasov kernels form their alpha), and the
+   streaming of each block is then bilinear in it, u and X (one generated helper for all eight).
+   Every known velocity-space term of the eight blocks (the w forces, the mirror and coupling
+   terms and the sources, F and G included) is in the stored operator of the configuration cell
+   and its volume kernel (pkpm-harm-ops.mac, pkpm-harm-vol.mac); the terms that depend on the
+   closures belong to the velocity-space pass (stage B, pkpm-kinetic-vel-vol.mac). The streaming
+   speeds are accumulated by the surface-flux updaters: the kernel returns 0. */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
@@ -57,192 +25,74 @@ fpprec : 24$
 
 cvars : [x, y, z]$
 dx1s : [dx10, dx11, dx12]$
-/* Names of the first-harmonic blocks 2..7 of the distribution array. */
-hBlk : [M0x, M0y, M0z, Nx, Ny, Nz]$
-
+/* Names of the eight blocks of the distribution array. */
+kBlk : [F_0, G_1, M0x, M0y, M0z, Nx, Ny, Nz]$
 
 calcPKPMKineticConfVol(fh, funcNm, cdim) := block(
-  [lb, pkC, pkbC, pkV, pkbV, pkP, pkbP, NC, NP, lb2, bC2, NC2, lb3, bC3, NC3, bP3, NP3,
-   vTrans, bx_e, by_e, bz_e, b_e, ux_e, uy_e, uz_e, u_e, theta_e, F_e, G_e,
-   div_b_c, theta_sq_c, K_c, div_b_e, theta_sq_e, K_e, H_c, H_e, clst, gln_e, bgn_c, bgn_e,
-   xi_e, gxi_e, bgx_c, bgx_e, cflXi, cflBgx,
-   stream_F, stream_G, force_F, force_G, src_F, src_G, d, i, j, cflK, cflDivB, cflBgn, gu_e,
-   X_e, stream_X],
+  [lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, vTrans, b_e, u_e, xi_e, X_e, stream_X, clst, d, i, b2, n2, xb_e, xb_c],
 
   lb : loadPKPMPhaseBasis(cdim),
-  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]), pkbV : copylist(lb[4]),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]),
   pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
   NC : length(pkbC),
   NP : length(pkbP),
+  b2 : pkpmP2Basis(pkC), n2 : length(b2),
 
-  /* Exact containers for the configuration-space products. */
-  lb2 : loadBasis("tensor", cdim, 2),
-  bC2 : copylist(lb2[2]),
-  NC2 : length(bC2),
-  lb3 : loadBasis("tensor", cdim, 3),
-  bC3 : copylist(lb3[2]),
-  NC3 : length(bC3),
-  /* (tensor p=3 conf) x (p=2 v_par): orthonormal products. */
-  bP3 : [],
-  for i : 1 thru NC3 do
-    for j : 1 thru length(pkbV) do
-      bP3 : endcons(bC3[i]*pkbV[j], bP3),
-  NP3 : length(bP3),
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%~%"),
+  /* the streaming of one block: the same operator for all eight */
+  printf(fh, "// Streaming volume term of one block X: out += integral( d_x phi . (xi b w + u) X ), with xb[d] the ~%"),
+  printf(fh, "// exact degree <= 2 expansion of xi b_d (k0 + 3 k1 + 9 k2). ~%"),
+  printf(fh, "GKYL_CU_DH static inline void ~a_block(const double *dx1, double wvpar, double dvpar, ~%", funcNm),
+  printf(fh, "  const double *xb, const double *u, const double *X, double* GKYL_RESTRICT out) ~%{ ~%"),
+  for d : 1 thru cdim do
+    printf(fh, "  const double dx1~a = dx1[~a]; ~%", d-1, d-1),
+  for d : 1 thru cdim do
+    printf(fh, "  const double *xb~a = &xb[~a]; ~%", cvars[d], (d-1)*n2),
+  printf(fh, "  const double *ux = &u[~a]; ~%", 0*NC),
+  printf(fh, "  const double *uy = &u[~a]; ~%", 1*NC),
+  printf(fh, "  const double *uz = &u[~a]; ~%", 2*NC),
+  vTrans : vx*dvpar/2 + wvpar,
+  xb_e : makelist(doExpand1(concat(xb, cvars[d]), b2), d, 1, cdim),
+  u_e : [doExpand1(ux, pkbC), doExpand1(uy, pkbC), doExpand1(uz, pkbC)],
+  clst : [dx10, dx11, dx12, dvpar, wvpar],
+  X_e : doExpand1(X, pkbP),
+  stream_X : 0,
+  for d : 1 thru cdim do
+    stream_X : stream_X + dx1s[d]*calcInnerProdList(pkP, 1, diff(pkbP, pkC[d]), (xb_e[d]*vTrans + u_e[d])*X_e),
+  pkpmWriteIncrExprs(fh, out, stream_X, clst),
+  printf(fh, "} ~%~%"),
 
-  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *jacob_pos,
-  const double *bvar, const double *grad_b, const double *u, const double *grad_u,
-  const double *xi, const double *grad_xi, const double *grad_ln_n,
-  const double *theta, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  const double *bvar, const double *u, const double *xi, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:      Cell-center coordinates (computational). ~%"),
   printf(fh, "  // dxv[NDIM]:    Cell spacing (computational). ~%"),
   printf(fh, "  // jacob_pos:    Position-map Jacobian per configuration direction (cdim blocks of 2 equal ~%"),
   printf(fh, "  //               entries); the streaming divergence in direction d carries 1/J_d. ~%"),
   printf(fh, "  // bvar:         Magnetic field unit vector [bx, by, bz]. ~%"),
-  printf(fh, "  // grad_b:       Weak gradient of b, [d_i bx, d_i by, d_i bz] per direction i. ~%"),
   printf(fh, "  // u:            Flow velocity [ux, uy, uz]. ~%"),
-  printf(fh, "  // grad_u:       Weak gradient of u, [d_i ux, d_i uy, d_i uz] per direction i. ~%"),
-  printf(fh, "  // xi:           Thermal speed [xi, xi^2] (the first expansion is used). ~%"),
-  printf(fh, "  // grad_xi:      Weak gradient of [xi, 0, 0] (pkpm_vars_grad_u_* layout). ~%"),
-  printf(fh, "  // grad_ln_n:    grad(ln n) = grad(rho)/rho, cdim expansions. ~%"),
-  printf(fh, "  // theta:        T_perp/T = M0(G). ~%"),
+  printf(fh, "  // xi:           Thermal speed [xi, xi^2, p] (the first expansion is used). ~%"),
   printf(fh, "  // f:            Input Jacobian-weighted normalized distributions J [F, G, M0_perp, N_perp]. ~%"),
   printf(fh, "  // out:          Incremented output for J [F, G, M0_perp, N_perp]. ~%"),
-  printf(fh, "  // Returns the CFL frequency estimate of the source rates. ~%"),
+  printf(fh, "  // Returns 0 (the streaming speeds are accumulated by the surface-flux updaters). ~%"),
+  printf(fh, "  double dx1[~a]; ~%", cdim),
   for d : 1 thru cdim do
-    printf(fh, "  const double dx1~a = 2.0/(dxv[~a]*jacob_pos[~a]); ~%", d-1, d-1, 2*(d-1)),
-  printf(fh, "  const double dv1 = 2.0/dxv[~a]; ~%", cdim),
-  printf(fh, "  const double dvpar = dxv[~a], wvpar = w[~a]; ~%", cdim, cdim),
+    printf(fh, "  dx1[~a] = 2.0/(dxv[~a]*jacob_pos[~a]); ~%", d-1, d-1, 2*(d-1)),
   printf(fh, "  const double *bx = &bvar[~a]; ~%", 0*NC),
   printf(fh, "  const double *by = &bvar[~a]; ~%", 1*NC),
   printf(fh, "  const double *bz = &bvar[~a]; ~%", 2*NC),
-  printf(fh, "  const double *ux = &u[~a]; ~%", 0*NC),
-  printf(fh, "  const double *uy = &u[~a]; ~%", 1*NC),
-  printf(fh, "  const double *uz = &u[~a]; ~%", 2*NC),
-  for d : 1 thru cdim do
-    for j : 1 thru 3 do
-      printf(fh, "  const double *gu~a~a = &grad_u[~a]; ~%", cvars[d], cvars[j], ((d-1)*3 + (j-1))*NC),
-  for d : 1 thru cdim do
-    printf(fh, "  const double *gb~a~a = &grad_b[~a]; ~%", cvars[d], cvars[d], ((d-1)*3 + (d-1))*NC),
-  for d : 1 thru cdim do
-    printf(fh, "  const double *gln~a = &grad_ln_n[~a]; ~%", cvars[d], (d-1)*NC),
   printf(fh, "  const double *xi_1 = &xi[~a]; ~%", 0*NC),
-  for d : 1 thru cdim do
-    printf(fh, "  const double *gxi~a = &grad_xi[~a]; ~%", cvars[d], ((d-1)*3 + 0)*NC),
-  printf(fh, "  const double *F_0 = &f[~a]; ~%", 0*NP),
-  printf(fh, "  const double *G_1 = &f[~a]; ~%", 1*NP),
-  printf(fh, "  double *out_F_0 = &out[~a]; ~%", 0*NP),
-  printf(fh, "  double *out_G_1 = &out[~a]; ~%", 1*NP),
-  for i : 1 thru 6 do (
-    printf(fh, "  const double *~a = &f[~a]; ~%", hBlk[i], (i+1)*NP),
-    printf(fh, "  double *out_~a = &out[~a]; ~%", hBlk[i], (i+1)*NP)
-  ),
-  printf(fh, " ~%"),
-
-  vTrans : vx*dvpar/2 + wvpar,
-
-  bx_e : doExpand1(bx, pkbC), by_e : doExpand1(by, pkbC), bz_e : doExpand1(bz, pkbC),
-  b_e : [bx_e, by_e, bz_e],
-  ux_e : doExpand1(ux, pkbC), uy_e : doExpand1(uy, pkbC), uz_e : doExpand1(uz, pkbC),
-  u_e : [ux_e, uy_e, uz_e],
-  gu_e : makelist(makelist(doExpand1(concat(gu, cvars[d], cvars[j]), pkbC), j, 1, 3), d, 1, cdim),
-  gln_e : makelist(doExpand1(concat(gln, cvars[d]), pkbC), d, 1, cdim),
+  b_e : [doExpand1(bx, pkbC), doExpand1(by, pkbC), doExpand1(bz, pkbC)],
   xi_e : doExpand1(xi_1, pkbC),
-  gxi_e : makelist(doExpand1(concat(gxi, cvars[d]), pkbC), d, 1, cdim),
-  theta_e : doExpand1(theta, pkbC),
-  F_e : doExpand1(F_0, pkbP),
-  G_e : doExpand1(G_1, pkbP),
-
-  /* div b: exact in p=1. */
-  div_b_c : calcInnerProdList(pkC, 1, pkbC, sum(doExpand1(concat(gb, cvars[d], cvars[d]), pkbC), d, 1, cdim)),
-  printf(fh, "  // div(b) from the weak gradient (p=1). ~%"),
-  printf(fh, "  double div_b[~a] = {0.0}; ~%", NC),
-  pkpmWriteDefExprs(fh, "div_b", div_b_c),
-  printf(fh, " ~%"),
-
-  /* b.grad(ln n): exact in tensor p=2. */
-  bgn_c : calcInnerProdList(pkC, 1, bC2, sum(b_e[d]*gln_e[d], d, 1, cdim)),
-  printf(fh, "  // b.grad(ln n): exact tensor p=2 expansion. ~%"),
-  printf(fh, "  double bgn[~a] = {0.0}; ~%", NC2),
-  pkpmWriteDefExprs(fh, "bgn", bgn_c),
-  printf(fh, " ~%"),
-
-  /* b.grad xi: exact in tensor p=2. */
-  bgx_c : calcInnerProdList(pkC, 1, bC2, sum(b_e[d]*gxi_e[d], d, 1, cdim)),
-  printf(fh, "  // b.grad xi: exact tensor p=2 expansion. ~%"),
-  printf(fh, "  double bgx[~a] = {0.0}; ~%", NC2),
-  pkpmWriteDefExprs(fh, "bgx", bgx_c),
-  printf(fh, " ~%"),
-
-  /* theta^2: exact in tensor p=2. */
-  theta_sq_c : calcInnerProdList(pkC, 1, bC2, theta_e^2),
-  printf(fh, "  // theta^2: exact tensor p=2 expansion. ~%"),
-  printf(fh, "  double theta_sq[~a] = {0.0}; ~%", NC2),
-  pkpmWriteDefExprs(fh, "theta_sq", theta_sq_c),
-  printf(fh, " ~%"),
-
-  /* K = sum_ij b_i b_j d_i u_j: exact in tensor p=3 (only the existing
-     configuration directions contribute derivatives). */
-  K_c : calcInnerProdList(pkC, 1, bC3,
-    sum(sum(b_e[i]*b_e[j]*gu_e[i][j], j, 1, 3), i, 1, cdim)),
-  printf(fh, "  // K = b_i b_j d_i u_j: exact tensor p=3 expansion. ~%"),
-  printf(fh, "  double K[~a] = {0.0}; ~%", NC3),
-  pkpmWriteDefExprs(fh, "K", K_c),
-  printf(fh, " ~%"),
-
-  div_b_e : doExpand1(div_b, pkbC),
-  bgn_e : doExpand1(bgn, bC2),
-  bgx_e : doExpand1(bgx, bC2),
-  theta_sq_e : doExpand1(theta_sq, bC2),
-  K_e : doExpand1(K, bC3),
-
-  /* H = 4 theta G - 2 theta^2 F: exact in (tensor p=3) x (p=2 v_par). */
-  H_c : calcInnerProdList(pkP, 1, bP3, 4*theta_e*G_e - 2*theta_sq_e*F_e),
-  printf(fh, "  // H = 4 theta G - 2 theta^2 F (F_2 = 0): exact (tensor p=3) x (p=2) expansion. ~%"),
-  printf(fh, "  double H[~a] = {0.0}; ~%", NP3),
-  pkpmWriteDefExprs(fh, "H", H_c),
-  printf(fh, " ~%"),
-  H_e : doExpand1(H, bP3),
-
-  /* Volume increments. */
-  stream_F : 0, stream_G : 0,
+  printf(fh, "  // xi b_d in the tensor basis of degree <= 2 (exact) ~%"),
+  printf(fh, "  double xb[~a]; ~%", cdim*n2),
   for d : 1 thru cdim do (
-    stream_F : stream_F + dx1s[d]*calcInnerProdList(pkP, 1, diff(pkbP, pkC[d]), (xi_e*vTrans*b_e[d] + u_e[d])*F_e),
-    stream_G : stream_G + dx1s[d]*calcInnerProdList(pkP, 1, diff(pkbP, pkC[d]), (xi_e*vTrans*b_e[d] + u_e[d])*G_e)
+    xb_c : calcInnerProdList(pkC, 1, b2, xi_e*b_e[d]),
+    for i : 1 thru n2 do
+      printf(fh, "  xb[~a] = ~a; ~%", (d-1)*n2 + i - 1, float(expand(xb_c[i])))
   ),
-  force_F : dv1*calcInnerProdList(pkP, 1, diff(pkbP, vx), -(vTrans*K_e + vTrans^2*bgx_e)*F_e + xi_e*div_b_e*G_e),
-  force_G : dv1*calcInnerProdList(pkP, 1, diff(pkbP, vx), -(vTrans*K_e + vTrans^2*bgx_e)*G_e + xi_e*div_b_e*H_e),
-  src_F : calcInnerProdList(pkP, 1, pkbP, -xi_e*vTrans*bgn_e*F_e),
-  /* The perpendicular compression (K - div u) G: the density renormalization of G, like
-     that of F, is the discrete closure c_0 G of stage B. */
-  divu_e : sum(gu_e[d][d], d, 1, cdim),
-  src_G : calcInnerProdList(pkP, 1, pkbP, (K_e - divu_e - xi_e*vTrans*div_b_e - 2*vTrans*bgx_e - xi_e*vTrans*bgn_e)*G_e),
-
-  clst : [dx10, dx11, dx12, dv1, dvpar, wvpar],
-  printf(fh, "  // Streaming, w forces and density-gradient source of F. ~%"),
-  pkpmWriteIncrExprs(fh, out_F_0, stream_F + force_F + src_F, clst),
-  printf(fh, "  // Streaming, w forces and mirror volume terms, and sources of G. ~%"),
-  pkpmWriteIncrExprs(fh, out_G_1, stream_G + force_G + src_G, clst),
-  /* The first-harmonic blocks stream with the same operator (their other terms are in the modal
-     updater gkyl_dg_pkpm_harm_vol). */
-  for i : 1 thru 6 do (
-    X_e : doExpand1(hBlk[i], pkbP),
-    stream_X : 0,
-    for d : 1 thru cdim do
-      stream_X : stream_X + dx1s[d]*calcInnerProdList(pkP, 1, diff(pkbP, pkC[d]), (xi_e*vTrans*b_e[d] + u_e[d])*X_e),
-    printf(fh, "  // Streaming of ~a. ~%", hBlk[i]),
-    pkpmWriteIncrExprs(fh, concat(out_, hBlk[i]), stream_X, clst)
-  ),
-  printf(fh, " ~%"),
-
-  /* CFL estimate of the source rates at the cell center. */
-  cflK : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), K_e - divu_e))),
-  cflDivB : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), div_b_e))),
-  cflBgn : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), bgn_e))),
-  cflBgx : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), bgx_e))),
-  cflXi : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), xi_e))),
-  printf(fh, "  const double vmax = fmax(fabs(wvpar - 0.5*dvpar), fabs(wvpar + 0.5*dvpar)); ~%"),
-  printf(fh, "  const double xi_c = ~a; ~%", cflXi),
-  printf(fh, "  return fabs(~a) + vmax*(fabs(xi_c)*(fabs(~a) + fabs(~a)) + 2.0*fabs(~a)); ~%", pkpmPowToC(cflK), pkpmPowToC(cflDivB), pkpmPowToC(cflBgn), pkpmPowToC(cflBgx)),
+  printf(fh, "  for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "    ~a_block(dx1, w[~a], dxv[~a], xb, u, &f[c*~a], &out[c*~a]); ~%", funcNm, cdim, cdim, NP, NP),
+  printf(fh, "  } ~%"),
+  printf(fh, "  return 0.0; ~%"),
   printf(fh, "} ~%")
 )$

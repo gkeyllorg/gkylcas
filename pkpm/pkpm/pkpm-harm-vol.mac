@@ -246,5 +246,12 @@ writePKPMHarmOpsHeader(fh) := block([ents, nent, e],
   printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const int pkpm_ho_ent[~a][4] = { ~%", nent),
   for e : 1 thru nent do
     printf(fh, "  {~a, ~a, ~a, ~a}, ~%", ents[e][1], ents[e][2], ents[e][3], ents[e][4]),
+  printf(fh, "}; ~%"),
+  printf(fh, "// The entry of each w-flux node value of the w-face and closure kernels (gkyl_pkpm_harm_slots.h, ~%"),
+  printf(fh, "// slots [0, 62)). ~%"),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const int pkpm_ho_wslot[62] = { ~%"),
+  block([ws], ws : pkpmHarmWslots(),
+    for e : 1 thru 62 do printf(fh, "~a~a", if mod(e - 1, 16) = 0 then "  " else " ", sconcat(ws[e], ",")),
+    printf(fh, " ~%")),
   printf(fh, "}; ~%")
 )$

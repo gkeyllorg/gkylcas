@@ -7,10 +7,12 @@
    (kind 0 source, 1 w flux) of the stored operator: its projection onto the tensor Legendre
    modes of degree <= 2 per configuration direction (pkpmP2Basis, 3^cdim modes), exact for every
    volume and w-face Galerkin integral (plan 17.15). Terms (plan 17.11, H = 4 theta G -
-   2 theta^2 F, O = 6 theta N - 6 theta^2 M0):
-     w flux:  M0, N: alpha_k = -K w - (b.grad xi) w^2 (the F, G parts are the stage-A kernel's);
-              F <- t.M0, G <- t.N, M0 <- G t + R_B1 N, N <- H t + R_B1 O  (t = t0 + w t1)
-     sources: F <- -ell_xi.M0; G <- f_perp.M0 - (ell_xi + 2 g).N;
+   2 theta^2 F, O = 6 theta N - 6 theta^2 M0, beta = xi div b):
+     w flux:  every block: alpha_k = -K w - (b.grad xi) w^2;
+              F <- beta G + t.M0, G <- beta H + t.N, M0 <- G t + R_B1 N, N <- H t + R_B1 O
+              (t = t0 + w t1)
+     sources: F <- -w (b.ell_xi) F - ell_xi.M0;
+              G <- (K - div u - w (beta + 2 b.grad xi + b.ell_xi)) G + f_perp.M0 - (ell_xi + 2 g).N;
               M0 <- f_perp F + (sigma_0 + L_perp) M0 - G (I_perp(ell_xi + g) + b beta) - b C.M0;
               N <- 2 G f_perp + (sigma_0 + L_perp - R_E1) N - H (I_perp(ell_xi + 3 g) + b beta)
                    - b C.N
@@ -22,7 +24,9 @@
 
 /* The entries [o, i, kind, j] in their stored order. */
 pkpmHarmEntries() := block([terms, ents, a, c, b, j, t],
-  terms : [],
+  /* F and G with themselves: alpha_k, the beta couplings and their sources */
+  terms : [[0, 0, 1, 1], [0, 0, 1, 2], [1, 1, 1, 1], [1, 1, 1, 2], [0, 1, 1, 0], [1, 1, 1, 0], [1, 0, 1, 0],
+    [0, 0, 0, 1], [1, 1, 0, 0], [1, 1, 0, 1]],
   for b : 2 thru 7 do terms : append(terms, [[b, b, 1, 1], [b, b, 1, 2]]),
   for a : 0 thru 2 do (
     for j : 0 thru 1 do
@@ -56,3 +60,124 @@ pkpmHarmGyration() := block([items, a, c1, c2, blk],
 /* The configuration-flux coupling q of direction d as [o, i]. */
 pkpmHarmConfCoupling(d, q) :=
   if q = 0 then [0, 2+d] else if q = 1 then [1, 5+d] else if q < 8 then [q, 1] else [q-3, 0]$
+
+/* Pointwise definitions of every stored coefficient at a configuration point, from the values
+   there of the precomputed p=1 fields (every quotient of the solver is one of these: b, u, xi,
+   theta, grad ln n, d_t B/|B|; the gradients are the weak ones). Field symbols: b0..b2, u0..u2,
+   d0..d2 (d_t B/|B|), qB0..qB2 (qbym B), th (theta), xi, gu<c>_<a> = d_c u_a, gb<c>_<a> = d_c b_a,
+   gx<c> = d_c xi, gl<c> = d_c ln n (c < cdim). Returns [defs, ents, gyr, cf]: defs the named
+   intermediates [symbol, expression] in order (each expression uses fields and earlier names),
+   ents the expression of every entry of pkpmHarmEntries(), gyr the three gyration entries and
+   cf the configuration-flux couplings cf[d][q]. */
+pkpmHarmPointwise(cdim) := block(
+  [defs, nm, def, B, Ufn, Dbf, gf, lf, bv, uv, dv, perp, C0, C1, Ub, UTb, K, divu, bg, beta, t0, t1,
+   PS, R, fp1, fp2, xil, xibl, plg, pl3g, bbeta, PU, PUU, PB, ents, e, o, i, kind, j, a, c, d, q,
+   ex, gyr, cf, hm, pd],
+  defs : [],
+  /* a named intermediate */
+  def : lambda([name, expr], (defs : endcons([name, expr], defs), name)),
+  bv : [b0, b1, b2], uv : [u0, u1, u2], dv : [d0, d1, d2],
+  Ufn : lambda([a, c], if c < cdim then concat(gu, c, "_", a) else 0),
+  Dbf : lambda([a, c], if c < cdim then concat(gb, c, "_", a) else 0),
+  gf : lambda([c], if c < cdim then concat(gx, c) else 0),
+  lf : lambda([c], if c < cdim then concat(gl, c) else 0),
+  /* I_perp v = v - b (b.v), the scalar b.v named */
+  pd : 0,
+  perp : lambda([v, nmv],
+    block([s, nms],
+      nms : parse_string(nmv),
+      s : def(concat(nms, "_bdot"), sum(bv[k+1]*v[k+1], k, 0, 2)),
+      makelist(def(concat(nms, "_", k), v[k+1] - bv[k+1]*s), k, 0, 2))),
+  C0 : perp(dv, "pdtb"),
+  C0 : makelist(def(parse_string(sconcat("C0_", a)), C0[a+1] + sum(uv[c+1]*Dbf(a, c), c, 0, 2)), a, 0, 2),
+  C1 : makelist(def(parse_string(sconcat("C1_", a)), xi*sum(bv[c+1]*Dbf(a, c), c, 0, 2)), a, 0, 2),
+  Ub : makelist(def(parse_string(sconcat("Ub_", a)), sum(Ufn(a, c)*bv[c+1], c, 0, 2)), a, 0, 2),
+  UTb : makelist(def(parse_string(sconcat("UTb_", c)), sum(Ufn(a, c)*bv[a+1], a, 0, 2)), c, 0, 2),
+  K : def('K, sum(bv[a+1]*Ub[a+1], a, 0, 2)),
+  divu : def('divu, sum(Ufn(c, c), c, 0, 2)),
+  bg : def('bg, sum(bv[c+1]*gf(c), c, 0, 2)),
+  beta : def('beta, xi*sum(Dbf(c, c), c, 0, 2)),
+  t0 : perp(makelist(C0[a+1] - UTb[a+1], a, 0, 2), "t0"),
+  t1 : perp(makelist(C1[a+1] - gf(a), a, 0, 2), "t1"),
+  PS : makelist(perp(makelist(xi*(Dbf(a, c) + Dbf(c, a)), a, 0, 2), concat("PS", c)), c, 0, 2),
+  /* R_B1 = (1/2)(beta I + I_perp (B_1 + B_1^T)), PS[c][a] = column c */
+  R : makelist(makelist(def(parse_string(sconcat("R", a, "_", c)), PS[c+1][a+1]/2 + (if a = c then beta/2 else 0)), c, 0, 2), a, 0, 2),
+  fp1 : perp(makelist(-(Ub[a+1] + C0[a+1]), a, 0, 2), "fp1"),
+  fp2 : perp(makelist(-C1[a+1], a, 0, 2), "fp2"),
+  xil : makelist(def(parse_string(sconcat("xil_", a)), xi*lf(a)), a, 0, 2),
+  xibl : def('xibl, sum(bv[a+1]*xil[a+1], a, 0, 2)),
+  plg : perp(makelist(xil[a+1] + gf(a), a, 0, 2), "plg"),
+  pl3g : perp(makelist(xil[a+1] + 3*gf(a), a, 0, 2), "pl3g"),
+  bbeta : makelist(def(parse_string(sconcat("bbeta_", a)), bv[a+1]*beta), a, 0, 2),
+  PU : makelist(perp(makelist(Ufn(a, c), a, 0, 2), concat("PU", c)), c, 0, 2),
+  PUU : makelist(perp(makelist(Ufn(a, c) + Ufn(c, a), a, 0, 2), concat("PUU", c)), c, 0, 2),
+  PB : makelist(perp(makelist(xi*Dbf(a, c), a, 0, 2), concat("PB", c)), c, 0, 2),
+
+  /* the entries: t[j] the power j of t, columns PS[c], PU[c], PUU[c], PB[c] */
+  ex : lambda([o, i, kind, j],
+    block([a, c, tt],
+      tt : if j = 0 then t0 else t1,
+      if kind = 1 then (
+        if o = i and j >= 1 then (if j = 1 then -K else -bg)
+        else if o = 0 and i = 1 then beta
+        else if o = 1 and i = 1 then 4*th*beta
+        else if o = 1 and i = 0 then -2*th^2*beta
+        else if (o = 0 and i >= 2 and i <= 4) then tt[i-1]
+        else if (o = 1 and i >= 5) then tt[i-4]
+        else if (o >= 2 and o <= 4 and i = 1) then tt[o-1]
+        else if (o >= 5 and i = 1) then 4*th*tt[o-4]
+        else if (o >= 5 and i = 0) then -2*th^2*tt[o-4]
+        else if (o >= 2 and o <= 4 and i >= 5) then R[o-1][i-4]
+        else if (o >= 5 and i >= 5) then 6*th*R[o-4][i-4]
+        else if (o >= 5 and i >= 2 and i <= 4) then -6*th^2*R[o-4][i-1]
+        else error("pkpmHarmPointwise: no flux entry", o, i, j)
+      ) else (
+        if o = 0 and i = 0 then -xibl
+        else if o = 1 and i = 1 then (if j = 0 then K - divu else -beta - 2*bg - xibl)
+        else if o = 0 and i >= 2 and i <= 4 then -xil[i-1]
+        else if o = 1 and i >= 5 then -xil[i-4] - 2*gf(i-5)
+        else if o = 1 and i >= 2 and i <= 4 then (if j = 1 then fp1[i-1] else fp2[i-1])
+        else if o >= 2 and o <= 4 and i = 0 then (if j = 1 then fp1[o-1] else fp2[o-1])
+        else if o >= 5 and i = 1 and j >= 1 then 2*(if j = 1 then fp1[o-4] else fp2[o-4])
+        else if o >= 2 and o <= 4 and i = 1 then -plg[o-1] - bbeta[o-1]
+        else if o >= 5 and i = 1 then -4*th*(pl3g[o-4] + bbeta[o-4])
+        else if o >= 5 and i = 0 then 2*th^2*(pl3g[o-4] + bbeta[o-4])
+        else if o >= 2 and o <= 4 and i >= 2 and i <= 4 then (
+          [a, c] : [o-2, i-2],
+          if j = 0 then -PU[c+1][a+1] - bv[a+1]*C0[c+1]
+          else -PB[c+1][a+1] - bv[a+1]*C1[c+1] + (if a = c then -xibl - bg else 0))
+        else if o >= 5 and i >= 5 then (
+          [a, c] : [o-5, i-5],
+          if j = 0 then -PU[c+1][a+1] - PUU[c+1][a+1]/2 - bv[a+1]*C0[c+1] + (if a = c then K/2 - divu/2 else 0)
+          else -PB[c+1][a+1] - PS[c+1][a+1]/2 - bv[a+1]*C1[c+1] + (if a = c then -xibl - 3*bg - beta/2 else 0))
+        else error("pkpmHarmPointwise: no source entry", o, i, j)
+      ))),
+  ents : makelist(ex(e[1], e[2], e[3], e[4]), e, pkpmHarmEntries()),
+  gyr : [qB0, qB1, qB2],
+  /* xi (e_d - b b_d)_a, 4 theta and -2 theta^2 times it */
+  cf : makelist(block([pa],
+      pa : makelist(xi*((if a = d then 1 else 0) - bv[a+1]*bv[d+1]), a, 0, 2),
+      append([xi, xi], pa, makelist(4*th*pa[a+1], a, 0, 2), makelist(-2*th^2*pa[a+1], a, 0, 2))), d, 0, cdim-1),
+  [defs, ents, gyr, cf]
+)$
+
+/* The entry of each w-flux node value of the w-face and closure kernels (gkyl_pkpm_harm_slots.h,
+   slots [0, 62)): alpha_k (2), t couplings TF, TG, TM, TNG, TNF (a, j), R_B1 couplings RMN, RNN, RNM
+   (a, c), then the beta couplings BF, BGG, BGF. */
+pkpmHarmWslots() := block([ents, eidx, ws, a, j, c],
+  ents : pkpmHarmEntries(),
+  eidx : lambda([o, i, kind, j], block([k], k : sublist_indices(ents, lambda([e], e = [o, i, kind, j])),
+    if length(k) # 1 then error("pkpmHarmWslots: no entry", o, i, kind, j), k[1] - 1)),
+  ws : [eidx(0, 0, 1, 1), eidx(0, 0, 1, 2)],
+  for a : 0 thru 2 do for j : 0 thru 1 do ws : endcons(eidx(0, 2+a, 1, j), ws),
+  for a : 0 thru 2 do for j : 0 thru 1 do ws : endcons(eidx(1, 5+a, 1, j), ws),
+  for a : 0 thru 2 do for j : 0 thru 1 do ws : endcons(eidx(2+a, 1, 1, j), ws),
+  for a : 0 thru 2 do for j : 0 thru 1 do ws : endcons(eidx(5+a, 1, 1, j), ws),
+  for a : 0 thru 2 do for j : 0 thru 1 do ws : endcons(eidx(5+a, 0, 1, j), ws),
+  for a : 0 thru 2 do for c : 0 thru 2 do ws : endcons(eidx(2+a, 5+c, 1, 0), ws),
+  for a : 0 thru 2 do for c : 0 thru 2 do ws : endcons(eidx(5+a, 5+c, 1, 0), ws),
+  for a : 0 thru 2 do for c : 0 thru 2 do ws : endcons(eidx(5+a, 2+c, 1, 0), ws),
+  ws : append(ws, [eidx(0, 1, 1, 0), eidx(1, 1, 1, 0), eidx(1, 0, 1, 0)]),
+  if length(ws) # 62 then error("pkpmHarmWslots: expected 62 slots"),
+  ws
+)$

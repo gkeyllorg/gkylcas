@@ -17,9 +17,7 @@ printf(fh, "~%")$
 deco : "GKYL_CU_DH "$
 for c : 1 thru 3 do (
   printf(fh, "~adouble pkpm_kinetic_conf_vol_~ax1v_ser_p1(const double *w, const double *dxv, const double *jacob_pos,
-  const double *bvar, const double *grad_b, const double *u, const double *grad_u,
-  const double *xi, const double *grad_xi, const double *grad_ln_n,
-  const double *theta, const double *f, double* GKYL_RESTRICT out); ~%", deco, c),
+  const double *bvar, const double *u, const double *xi, const double *f, double* GKYL_RESTRICT out); ~%", deco, c),
   printf(fh, "~aint pkpm_dist_normalize_~ax1v_ser_p1(const double *nmoms, const double *f, double* GKYL_RESTRICT fbar); ~%", deco, c),
   printf(fh, "~avoid pkpm_dist_transverse_~ax1v_ser_p1(const double *bvar, double* GKYL_RESTRICT f); ~%", deco, c),
   for d : 1 thru c do (
@@ -38,6 +36,9 @@ for c : 1 thru 3 do (
   printf(fh, "~adouble pkpm_kinetic_vel_vol_~ax1v_ser_p1(const double *w, const double *dxv,
   const double *c_0, const double *alpha_0, const double *c_h, const double *a_perp,
   const double *f, double* GKYL_RESTRICT out); ~%", deco, c),
+  printf(fh, "~avoid pkpm_harm_build_~ax_ser_p1(double qbym, const double *bvar, const double *grad_b, const double *u,
+  const double *grad_u, const double *xi, const double *grad_xi, const double *grad_ln_n, const double *theta,
+  const double *dtb, const double *em, double* GKYL_RESTRICT ho); ~%", deco, c),
   printf(fh, "~avoid pkpm_harm_mat_~ax_ser_p1(const double *dxv, const double *jacob_pos, const double *ho,
   double* GKYL_RESTRICT mat); ~%", deco, c),
   printf(fh, "~avoid pkpm_harm_vol_~ax1v_ser_p1(const double *w, const double *dxv, const double *mat, const double *f,

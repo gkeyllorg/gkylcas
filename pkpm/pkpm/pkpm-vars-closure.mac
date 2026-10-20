@@ -16,7 +16,8 @@
 
    and the fluxes through the two velocity-domain edges w_lo, w_up: the HLL flux of the full w flux
    alpha U + T(U) (alpha = alpha_0 + (c - K) w - (b.grad xi) w^2, T the coupling by beta, t, R_B1)
-   against an empty exterior, from the stored first-harmonic coefficients (gkyl_pkpm_harm_slots.h)
+   against an empty exterior, from the w-flux entries of the stored operator (pkpm_ho_wslot of
+   gkyl_pkpm_harm_ops.h, in the node layout of gkyl_pkpm_harm_slots.h)
    evaluated at the closure nodes and the node functions of gkyl_pkpm_harm_coeffs.h (the same as
    the w-face kernels'), with the speeds S_L, S_R = alpha + the bounds of T's spectrum taken from
    the closures of the PREVIOUS stage, so that the edge flux
@@ -60,6 +61,7 @@ load("util_maxima/out-scripts.mac")$
 load("core/nodal_operations/quadrature_functions.mac")$
 load("pkpm/pkpm/pkpm-flux-tables.mac")$
 load("pkpm/pkpm/pkpm-cas-util.mac")$
+load("pkpm/pkpm/pkpm-harm-ops.mac")$
 load(stringproc)$
 fpprec : 24$
 
@@ -68,7 +70,7 @@ cvarsClo : [x, y, z]$
 calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   [lb, pkC, pkbC, pkP, pkbP, NC, NP, nodes, weights, NN, nodeSub, n, k, d, i, j, c, nlin,
    n0_e, n1_e, n2_e, nG_e, r0_e, r1_e, r2_e, rG_e, mu_e, rM_e, a0p_e, cp_e, th_e, b_e,
-   Ulo_e, Uup_e, c0_c, a0_c, c_c, ap_c, fl_c, fu_c, sc, lst, bP2, n2, wslot_e, s],
+   Ulo_e, Uup_e, c0_c, a0_c, c_c, ap_c, fl_c, fu_c, sc, lst, bP2, n2, wslot_e, s, wsl],
 
   lb : loadPKPMPhaseBasis(cdim),
   pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
@@ -90,7 +92,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  // norm_moms:    Input [M0, M2, M0_G, M1, M3, M1_G, mu (x, y, z)] moments of the normalized distributions (stage state). ~%"),
   printf(fh, "  // rhs_moms:     Input moments of the stage-A right-hand sides, same layout. ~%"),
   printf(fh, "  // bvar:         Magnetic field unit vector [bx, by, bz]. ~%"),
-  printf(fh, "  // coef:         Stored first-harmonic coefficients of the cell (gkyl_pkpm_harm_slots.h). ~%"),
+  printf(fh, "  // coef:         Stored operator of the cell (gkyl_pkpm_harm_ops.h). ~%"),
   printf(fh, "  // theta:        T_perp/T. ~%"),
   printf(fh, "  // alpha_0_prev, c_h_prev: closures of the previous stage (may alias the outputs), for the edge speeds. ~%"),
   printf(fh, "  // f_lo, f_up:   [F, G, M0_perp, N_perp] of the lowest and uppermost velocity cells of this configuration cell. ~%"),
@@ -126,7 +128,9 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   b_e : makelist(doExpand1(concat(b, i-1), pkbC), i, 1, 3),
   /* the w-flux slots of the stored coefficients as expansions in the degree <= 2 tensor basis */
   bP2 : pkpmP2Basis(pkC), n2 : length(bP2),
-  wslot_e : makelist(sum(coef[(s-1)*n2 + k-1]*bP2[k], k, 1, n2), s, 1, 62),
+  /* the w-flux slots are entries of the stored operator (pkpmHarmWslots, gkyl_pkpm_harm_ops.h) */
+  wsl : pkpmHarmWslots(),
+  wslot_e : makelist(sum(coef[wsl[s]*n2 + k-1]*bP2[k], k, 1, n2), s, 1, 62),
   Ulo_e : makelist(subst(vx = -1, doExpand1(concat(lo, c-1), pkbP)), c, 1, 8),
   Uup_e : makelist(subst(vx = 1, doExpand1(concat(up, c-1), pkbP)), c, 1, 8),
 

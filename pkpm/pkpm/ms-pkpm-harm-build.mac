@@ -1,0 +1,11 @@
+load("pkpm/pkpm/pkpm-harm-build.mac")$
+load(stringproc)$
+/* Generates the build kernels pkpm_harm_build_<c>x_ser_p1 of the stored first-harmonic operator
+   (see pkpm-harm-build.mac, pkpm-harm-ops.mac). */
+for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_harm_build_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMHarmBuild(fh, funcName, c),
+  close(fh)
+)$

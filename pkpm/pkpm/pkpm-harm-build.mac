@@ -1,0 +1,196 @@
+/* pkpm-harm-build.mac ----------------------------------------------------------------
+   Build kernel of the stored first-harmonic operator of a configuration cell (pkpm-harm-ops.mac):
+   every coefficient is a product of precomputed p=1 fields (every quotient of the solver is one
+   of them), a polynomial of degree D <= 7 per configuration direction, and is stored as its
+   projection onto the tensor Legendre modes of degree <= 2 per direction. The projection is
+   computed EXACTLY by Gauss-Legendre quadrature with N points per direction, N chosen so that
+   2 N - 1 >= D + 2 (the generator computes D of every entry from the pointwise definitions):
+     1. the p=1 fields at the N^cdim nodes, direction by direction (sum factorization);
+     2. at every node the pointwise definitions (named intermediates, then every distinct
+        coefficient);
+     3. the projection of every distinct coefficient, direction by direction, copied to the
+        entries that share it.
+   No division: the fields are the solver's p=1 representations, multiplied at the nodes. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load("pkpm/pkpm/pkpm-cas-util.mac")$
+load("pkpm/pkpm/pkpm-harm-ops.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* The field symbols of pkpmHarmPointwise. */
+pkpmHarmFields(cdim) := append([b0, b1, b2, u0, u1, u2, d0, d1, d2, qB0, qB1, qB2, th, xi],
+  flatten(makelist(makelist([concat(gu, c, "_", a), concat(gb, c, "_", a)], a, 0, 2), c, 0, cdim-1)),
+  makelist(concat(gx, c), c, 0, cdim-1), makelist(concat(gl, c), c, 0, cdim-1))$
+
+/* Polynomial degree in one direction of each expression: every field has degree 1, the named
+   intermediates carry the degree polynomial of their definition. */
+pkpmHarmDegrees(cdim, defs, exprs) := block([zsub, nmsub, e],
+  zsub : makelist(f = (1 + zz), f, pkpmHarmFields(cdim)),
+  nmsub : [],
+  for e in defs do
+    nmsub : endcons(e[1] = expand(subst(nmsub, subst(zsub, e[2]))), nmsub),
+  makelist(hipow(expand(subst(nmsub, subst(zsub, e))), zz), e, exprs)
+)$
+
+/* Digits (direction 0 first) of a flat index in the mixed radix rad. */
+pkpmHarmDigits(idx, rad) := block([r, dig, m],
+  r : idx, dig : [],
+  for m : 1 thru length(rad) do (dig : endcons(mod(r, rad[m]), dig), r : floor(r/rad[m])),
+  dig
+)$
+pkpmHarmFlat(dig, rad) := block([r, m],
+  r : 0,
+  for m : length(rad) thru 1 step -1 do r : r*rad[m] + dig[m],
+  r
+)$
+
+calcPKPMHarmBuild(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, NC, n2, defs, ents, gyr, cf, allc, nop, degs, D, NQ, xw, x1, w1, NN, uniq, uidx,
+   e, k, sOf, q, pat, d, P1, Q2, radS, radD, src, dst, cnt, idx, dig, sd, sdig, expr, fields,
+   fsrc, nu, fnm],
+
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]),
+  NC : length(pkbC), n2 : 3^cdim,
+  [defs, ents, gyr, cf] : pkpmHarmPointwise(cdim),
+  allc : append(ents, gyr, flatten(cf)),
+  nop : length(allc),
+  degs : pkpmHarmDegrees(cdim, defs, allc),
+  D : lmax(degs),
+  NQ : ceiling((D + 3)/2),
+  xw : gaussOrdWeight1D(NQ), x1 : float(xw[1]), w1 : float(xw[2]),
+  NN : NQ^cdim,
+  /* the distinct coefficients and the one each entry copies */
+  uniq : [], uidx : [],
+  for e in allc do (
+    k : sublist_indices(uniq, lambda([z], z = e)),
+    if length(k) = 0 then (uniq : endcons(e, uniq), uidx : endcons(length(uniq) - 1, uidx))
+    else uidx : endcons(k[1] - 1, uidx)
+  ),
+  nu : length(uniq),
+  /* the gkyl p=1 coefficient index of each degree pattern s0 + 2 s1 + 4 s2 */
+  sOf : makelist(0, i, 1, 2^cdim),
+  for q : 1 thru NC do (
+    pat : sum(hipow(expand(pkbC[q]), pkC[d])*2^(d-1), d, 1, cdim),
+    sOf[pat + 1] : q - 1
+  ),
+  P1 : lambda([s, x], if s = 0 then 1/sqrt(2) else sqrt(3/2)*x),
+  Q2 : lambda([s, x], if s = 0 then 1/sqrt(2) else if s = 1 then sqrt(3/2)*x else sqrt(5/2)*(3*x^2 - 1)/2),
+
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%~%"),
+
+  /* 1. a p=1 field at the nodes: stage d contracts the pattern of direction d into its nodes */
+  printf(fh, "// The p=1 field f (gkyl basis) at the ~a Gauss-Legendre nodes, ~a per direction, node ~%", NN, NQ),
+  printf(fh, "// i0 + ~a i1 + ~a i2; direction by direction. ~%", NQ, NQ^2),
+  printf(fh, "GKYL_CU_DH static inline void ~a_nodes(const double *f, double* GKYL_RESTRICT fn) ~%{ ~%", funcNm),
+  for d : 0 thru cdim - 1 do (
+    radS : makelist(if m < d then NQ else 2, m, 0, cdim-1),
+    radD : makelist(if m <= d then NQ else 2, m, 0, cdim-1),
+    dst : if d = cdim - 1 then "fn" else sconcat("ev", d+1),
+    cnt : product(radD[m], m, 1, cdim),
+    if d < cdim - 1 then printf(fh, "  double ~a[~a]; ~%", dst, cnt),
+    for idx : 0 thru cnt - 1 do (
+      dig : pkpmHarmDigits(idx, radD),
+      expr : 0,
+      for sd : 0 thru 1 do (
+        sdig : copylist(dig), sdig[d+1] : sd,
+        fsrc : if d = 0 then f[sOf[1 + sum(sdig[m]*2^(m-1), m, 1, cdim)]]
+               else arraymake(eval_string(sconcat("ev", d)), [pkpmHarmFlat(sdig, radS)]),
+        expr : expr + float(P1(sd, x1[dig[d+1] + 1]))*fsrc
+      ),
+      printf(fh, "  ~a[~a] = ~a; ~%", dst, idx, expr)
+    )
+  ),
+  printf(fh, "} ~%~%"),
+
+  /* 3. projection of node values onto the degree <= 2 modes, k = k0 + 3 k1 + 9 k2 */
+  printf(fh, "// Projection of the node values v onto the tensor Legendre modes of degree <= 2 (k0 + 3 k1 + 9 k2), ~%"),
+  printf(fh, "// exact for polynomials of degree <= ~a per direction; direction by direction. ~%", 2*NQ - 3),
+  printf(fh, "GKYL_CU_DH static inline void ~a_proj(const double *v, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  for d : 0 thru cdim - 1 do (
+    radS : makelist(if m < d then 3 else NQ, m, 0, cdim-1),
+    radD : makelist(if m <= d then 3 else NQ, m, 0, cdim-1),
+    src : if d = 0 then "v" else sconcat("pr", d),
+    dst : if d = cdim - 1 then "out" else sconcat("pr", d+1),
+    cnt : product(radD[m], m, 1, cdim),
+    if d < cdim - 1 then printf(fh, "  double ~a[~a]; ~%", dst, cnt),
+    for idx : 0 thru cnt - 1 do (
+      dig : pkpmHarmDigits(idx, radD),
+      expr : 0,
+      for sd : 0 thru NQ - 1 do (
+        sdig : copylist(dig), sdig[d+1] : sd,
+        expr : expr + float(w1[sd+1]*Q2(dig[d+1], x1[sd+1]))*arraymake(eval_string(src), [pkpmHarmFlat(sdig, radS)])
+      ),
+      printf(fh, "  ~a[~a] = ~a; ~%", dst, idx, expr)
+    )
+  ),
+  printf(fh, "} ~%~%"),
+
+  /* the kernel */
+  fields : pkpmHarmFields(cdim),
+  printf(fh, "GKYL_CU_DH void ~a(double qbym, const double *bvar, const double *grad_b, const double *u,
+  const double *grad_u, const double *xi, const double *grad_xi, const double *grad_ln_n, const double *theta,
+  const double *dtb, const double *em, double* GKYL_RESTRICT ho) ~%{ ~%", funcNm),
+  printf(fh, "  // qbym:      Charge to mass ratio (the gyration entries qbym B). ~%"),
+  printf(fh, "  // bvar:      Magnetic field unit vector [bx, by, bz]. ~%"),
+  printf(fh, "  // grad_b:    Weak gradient of b, [d_i bx, d_i by, d_i bz] per direction i. ~%"),
+  printf(fh, "  // u:         Flow velocity [ux, uy, uz]. ~%"),
+  printf(fh, "  // grad_u:    Weak gradient of u, [d_i ux, d_i uy, d_i uz] per direction i. ~%"),
+  printf(fh, "  // xi:        Thermal speed [xi, xi^2, p] (the first expansion is used). ~%"),
+  printf(fh, "  // grad_xi:   Weak gradient of [xi, 0, 0] (the first expansion of each direction is used). ~%"),
+  printf(fh, "  // grad_ln_n: grad(ln n), cdim expansions. ~%"),
+  printf(fh, "  // theta:     T_perp/T. ~%"),
+  printf(fh, "  // dtb:       d_t B/|B|. ~%"),
+  printf(fh, "  // em:        Electromagnetic field (B for the gyration). ~%"),
+  printf(fh, "  // ho:        Output stored operator (gkyl_pkpm_harm_ops.h): ~a entries of ~a modes, exact ~%", nop, n2),
+  printf(fh, "  //            projections by ~a-point Gauss-Legendre quadrature per direction (coefficient degree <= ~a). ~%", NQ, D),
+  /* field sources: [symbol, pointer expression, scale] */
+  fnm : lambda([sym], sconcat(sym, "_n")),
+  block([srcs, a, c],
+    srcs : append(
+      makelist([concat(b, a), sconcat("&bvar[", a*NC, "]")], a, 0, 2),
+      makelist([concat(u, a), sconcat("&u[", a*NC, "]")], a, 0, 2),
+      makelist([concat(d, a), sconcat("&dtb[", a*NC, "]")], a, 0, 2),
+      makelist([concat(qB, a), sconcat("&em[", (3+a)*NC, "]")], a, 0, 2),
+      [[th, "theta"], [xi, "xi"]],
+      block([gl], gl : [],
+        for c : 0 thru cdim-1 do for a : 0 thru 2 do
+          gl : append(gl, [[concat(gu, c, "_", a), sconcat("&grad_u[", (c*3 + a)*NC, "]")],
+            [concat(gb, c, "_", a), sconcat("&grad_b[", (c*3 + a)*NC, "]")]]),
+        gl),
+      makelist([concat(gx, c), sconcat("&grad_xi[", (c*3)*NC, "]")], c, 0, cdim-1),
+      makelist([concat(gl, c), sconcat("&grad_ln_n[", c*NC, "]")], c, 0, cdim-1)),
+    printf(fh, " ~%  // the p=1 fields at the nodes ~%"),
+    for e in srcs do (
+      printf(fh, "  double ~a[~a]; ~%", fnm(e[1]), NN),
+      printf(fh, "  ~a_nodes(~a, ~a); ~%", funcNm, e[2], fnm(e[1]))
+    ),
+    printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
+    for a : 0 thru 2 do printf(fh, "    qB~a_n[n] *= qbym; ~%", a),
+    printf(fh, "  } ~%")
+  ),
+  /* 2. the pointwise definitions at every node */
+  printf(fh, " ~%  // the distinct coefficients at the nodes ~%"),
+  printf(fh, "  double cv[~a]; ~%", nu*NN),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
+  for e in fields do printf(fh, "    const double ~a = ~a[n]; ~%", e, fnm(e)),
+  for e in defs do printf(fh, "    const double ~a = ~a; ~%", e[1], pkpmPowToC(float(expand(e[2])))),
+  for k : 1 thru nu do printf(fh, "    cv[~a + n] = ~a; ~%", (k-1)*NN, pkpmPowToC(float(expand(uniq[k])))),
+  printf(fh, "  } ~%"),
+  /* 3. projections */
+  printf(fh, " ~%  // their projections, copied to the entries sharing them ~%"),
+  for k : 1 thru nop do (
+    if not member(uidx[k], makelist(uidx[m], m, 1, k-1)) then
+      printf(fh, "  ~a_proj(&cv[~a], &ho[~a]); ~%", funcNm, uidx[k]*NN, (k-1)*n2)
+    else
+      block([fi],
+        fi : sublist_indices(uidx, lambda([z], z = uidx[k]))[1],
+        printf(fh, "  for (int k = 0; k < ~a; ++k) ho[~a + k] = ho[~a + k]; ~%", n2, (k-1)*n2, (fi-1)*n2))
+  ),
+  printf(fh, "} ~%"),
+  [D, NQ, nu, nop]
+)$
