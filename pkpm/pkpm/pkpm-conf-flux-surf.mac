@@ -1,34 +1,32 @@
 /* pkpm-conf-flux-surf.mac -------------------------------------------------------
-   Configuration-space surface fluxes of the PKPM kinetic equations and the
-   hyper_dg surface kernels that scatter stored modal fluxes.
+   Configuration-space surface fluxes of the PKPM kinetic equations of the eight blocks
+   X = [F, G, M0_perp (x, y, z), N_perp (x, y, z)] and the hyper_dg surface kernels that scatter
+   stored modal fluxes.
 
-   pkpm_conf_flux_<dir>_<c>x1v_ser_p1(w, dxv, b_l, b_r, u_l, u_r, xi_l, xi_r, f_l, f_r, flux)
-     On the LOWER face of the current cell in direction dir, evaluate at the
-     surface nodes (3 Gauss-Legendre points per transverse configuration
-     direction and in w) the two traces of the streaming speed
+   pkpm_conf_flux_<dir>_<c>x1v_ser_p1(w, dxv, jacob_pos_l, jacob_pos_r, b_l, b_r, u_l, u_r,
+       xi_l, xi_r, theta_l, theta_r, f_l, f_r, flux)
+     On the LOWER face of the current cell in direction dir (normal e_d), at the face nodes
+     (pkpmConfFluxNumPts Gauss-Legendre points per transverse configuration direction,
+     pkpmConfFluxNumWPts in w), the HLL flux of the eight blocks (plan 17.14),
 
-       a_l = xi^l w b_dir^l + u_dir^l   (left cell, evaluated at its upper edge)
-       a_r = xi^r w b_dir^r + u_dir^r   (current cell, evaluated at its lower edge)
+       J(X) = V_n X + T(X),  V_n = u_d + xi w b_d,
+       T_F = xi M0_d, T_G = xi N_d, T_M0 = xi G (e_d - b b_d), T_N = xi H (e_d - b b_d),
 
-     from the modal p=1 b, u and thermal speed xi of each cell, form the HLL flux of F
-     and G with the speed bounds S_L = min(a_l, a_r, 0), S_R = max(a_l, a_r, 0),
-
-       (S_R a_l f_l - S_L a_r f_r + S_L S_R (f_r - f_l))/(S_R - S_L)
-
-     (plain upwind, max(a_l, 0) f_l + min(a_r, 0) f_r, when the speeds have the same
-     sign), and project each onto the surface modal basis: flux = [F flux (NK),
-     G flux (NK)] for this direction. The distributions are the normalized [F, G] of
-     the factored, thermal-velocity normalized update: the flux moves only the shape,
-     the density and the energy are moved by the fluid system.
-     Returns the stable time-step estimate (2p+1)/2 dx1 max(|S_L|, S_R) with p = 1
-     in configuration space.
+     H = 4 theta G - 2 theta^2 F, with every factor the trace of its own cell (the left cell at its
+     upper edge, the current cell at its lower edge), formed by pkpm_harm_conf_flux
+     (gkyl_pkpm_harm_coeffs.h), and its projection onto the surface modal basis of each block:
+     flux = [8 blocks x NK]. The distributions are the normalized blocks of the factored,
+     thermal-velocity normalized update; the traces of the Jacobian-weighted J X are scaled by
+     1/J_d of their cell. Returns the stable time-step estimate (2p+1)/2 dx1 max(-S_L, S_R)/J_d.
 
    pkpm_stream_surf<dir>_<c>x1v_ser_p1(w, dxv, flux_l, flux_r, out)
-     Scatter the stored modal fluxes of the lower (flux_l) and upper (flux_r)
-     faces of the cell into the volume increment of both components, through
-     the consumer projection maps of the table header.
+     Scatter the stored modal fluxes of the lower (flux_l) and upper (flux_r) faces of the cell
+     into the volume increment of the eight blocks, through the consumer projection maps of the
+     table header.
 
-   The f arrays hold [F_0, G] (2 NP coefficients), out likewise. */
+   The node loop (traces, HLL) is emitted by pkpmEmitConfFaceFlux, which the fluid-moment kernel
+   pkpm_fluid_flux_accum_* (pkpm-fluid-flux-kinetic.mac) shares: the fluid flux is the moment of
+   this flux, node by node, with the same arithmetic. */
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 load("core/nodal_operations/nodal_functions.mac")$
@@ -58,72 +56,120 @@ pkpmFaceNodeExprs(coeff, bC, cv, edge, cdim, surfCVars, nodes) := block([e],
     i, 1, length(nodes))
 )$
 
-/* Node function of the configuration-space flux: nodal traces of f from the
-   stage-1 arrays, then the HLL flux of the two-valued speed (max(a_l, 0) f_l +
-   min(a_r, 0) f_r when the speeds have the same sign). Returns the largest speed
-   bound for the CFL reduction. */
-pkpmHllEmitNodeFn(fh, funcNm, prefix, NA, NI) := block(
-  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j, double a_l, double a_r,
-  const double *G_l, const double *G_r, double* GKYL_RESTRICT Fhat_nodal) ~%{ ~%", funcNm),
-  printf(fh, "  double f_l_quad = 0.0; ~%"),
-  printf(fh, "  double f_r_quad = 0.0; ~%"),
-  printf(fh, "  for (int a = 0; a < ~a; ++a) { ~%", NA),
-  printf(fh, "    f_l_quad += ~a_Cm[i*~a + a]*G_l[j*~a + a]; ~%", prefix, NA, NA),
-  printf(fh, "    f_r_quad += ~a_Cm[i*~a + a]*G_r[j*~a + a]; ~%", prefix, NA, NA),
+/* Sizes of the configuration-face tables of direction dir: [NC, NP, NO, NI, NA, nodes_crem,
+   nodes_vvol, surfCVars, cv, pkbC, tabP]. */
+pkpmConfFaceSizes(dir, cdim) := block(
+  [tag, lb, pkC, pkbC, pkV, pkbP, cv, surfCVars, nodes_crem, nodes_vvol, fact],
+  tag : pkpmFluxTag(cdim),
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]), pkbP : copylist(lb[6]),
+  cv : pkC[dir],
+  surfCVars : delete(cv, pkC),
+  nodes_crem : if cdim > 1 then gaussOrd(pkpmConfFluxNumPts, cdim-1) else [1],
+  nodes_vvol : gaussOrd(pkpmConfFluxNumWPts, 1),
+  fact : laxFactorizeBasis(pkbP, if cdim > 1 then surfCVars else [prjdummy], cons(cv, pkV)),
+  [length(pkbC), length(pkbP), length(nodes_crem), length(nodes_vvol),
+   laxFactorSizes(fact, cv)[1], laxFactorSizes(fact, cv)[2], nodes_crem, nodes_vvol, surfCVars, cv,
+   pkbC, sconcat("vst_", tag, "_ph_x", dir-1)]
+)$
+
+/* Emit the trace factors function funcNm_g of the eight blocks (one block per call). */
+pkpmEmitConfFaceStage1(fh, funcNm, dir, cdim) := block([sz],
+  sz : pkpmConfFaceSizes(dir, cdim),
+  laxEmitStage1Fn(fh, funcNm, sz[12], sz[5], sz[6], sz[4])
+)$
+
+/* Emit the body of a configuration-face flux kernel up to and including the call of
+   pkpm_harm_conf_flux at every face node: the traces of b, u_d, xi and theta of both cells at the
+   transverse nodes, the trace factors of the eight blocks (scaled by 1/J_d of their cell), and, in
+   the loop over the transverse node i and the w node j (w value wq), the side contributions
+   phi_l[8], phi_r[8] and the bounds sb[2]. consumer(fh) emits the statements that use them, inside
+   the loop. The kernel arguments are named w, dxv, jacob_pos_l/r, b_l/r, u_l/r, xi_l/r, theta_l/r,
+   f_l/r. */
+pkpmEmitConfFaceFlux(fh, funcNm, dir, cdim, consumer) := block(
+  [sz, NC, NP, NO, NI, NA, nodes_crem, nodes_vvol, surfCVars, cv, pkbC, tabP, a, j],
+  sz : pkpmConfFaceSizes(dir, cdim),
+  NC : sz[1], NP : sz[2], NO : sz[3], NI : sz[4], NA : sz[5],
+  nodes_crem : sz[7], nodes_vvol : sz[8], surfCVars : sz[9], cv : sz[10], pkbC : sz[11],
+  tabP : sz[12],
+  printf(fh, "  const double jdinv_l = 1.0/jacob_pos_l[~a], jdinv_r = 1.0/jacob_pos_r[~a]; ~%", 2*(dir-1), 2*(dir-1)),
+  printf(fh, "  const double wv = w[~a], dv = dxv[~a]; ~%", cdim, cdim),
+  printf(fh, "  // w of the nodes: wv + wn[j] dv ~%"),
+  printf(fh, "  const double wn[~a] = {~{~a~^, ~}}; ~%", NI, makelist(float(0.5*nodes_vvol[j][1]), j, 1, NI)),
+  for a : 1 thru 3 do (
+    printf(fh, "  const double *b~a_l = &b_l[~a], *b~a_r = &b_r[~a]; ~%", a-1, (a-1)*NC, a-1, (a-1)*NC)
+  ),
+  printf(fh, "  const double *ud_l = &u_l[~a], *ud_r = &u_r[~a]; ~%", (dir-1)*NC, (dir-1)*NC),
+  printf(fh, "  const double *xd_l = &xi_l[0], *xd_r = &xi_r[0]; ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  // Traces of b, u_~a, xi and theta at the transverse nodes: the left cell at its upper ~%", cvars[dir]),
+  printf(fh, "  // edge, the current cell at its lower edge. ~%"),
+  for a : 1 thru 3 do (
+    printf(fh, "  double bq~a_l[~a], bq~a_r[~a]; ~%", a-1, NO, a-1, NO),
+    pkpmWriteNodeExprs(fh, sconcat("bq", a-1, "_l"), pkpmFaceNodeExprs(concat(b, a-1, '_l), pkbC, cv, 1, cdim, surfCVars, nodes_crem)),
+    pkpmWriteNodeExprs(fh, sconcat("bq", a-1, "_r"), pkpmFaceNodeExprs(concat(b, a-1, '_r), pkbC, cv, -1, cdim, surfCVars, nodes_crem))
+  ),
+  printf(fh, "  double uq_l[~a], uq_r[~a], xq_l[~a], xq_r[~a], thq_l[~a], thq_r[~a]; ~%", NO, NO, NO, NO, NO, NO),
+  pkpmWriteNodeExprs(fh, "uq_l", pkpmFaceNodeExprs(ud_l, pkbC, cv, 1, cdim, surfCVars, nodes_crem)),
+  pkpmWriteNodeExprs(fh, "uq_r", pkpmFaceNodeExprs(ud_r, pkbC, cv, -1, cdim, surfCVars, nodes_crem)),
+  pkpmWriteNodeExprs(fh, "xq_l", pkpmFaceNodeExprs(xd_l, pkbC, cv, 1, cdim, surfCVars, nodes_crem)),
+  pkpmWriteNodeExprs(fh, "xq_r", pkpmFaceNodeExprs(xd_r, pkbC, cv, -1, cdim, surfCVars, nodes_crem)),
+  pkpmWriteNodeExprs(fh, "thq_l", pkpmFaceNodeExprs(theta_l, pkbC, cv, 1, cdim, surfCVars, nodes_crem)),
+  pkpmWriteNodeExprs(fh, "thq_r", pkpmFaceNodeExprs(theta_r, pkbC, cv, -1, cdim, surfCVars, nodes_crem)),
+  printf(fh, " ~%"),
+  printf(fh, "  // Trace factors of the eight blocks, scaled by 1/J_~a of their cell. ~%", cvars[dir]),
+  printf(fh, "  double GU_l[8][~a], GU_r[8][~a]; ~%", NI*NA, NI*NA),
+  printf(fh, "  for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "    for (int tid = 0; tid < ~a; ++tid) ~a_g(tid, &f_l[c*~a], &f_r[c*~a], GU_l[c], GU_r[c]); ~%", NI*NA, funcNm, NP, NP),
+  printf(fh, "    for (int k = 0; k < ~a; ++k) { GU_l[c][k] *= jdinv_l; GU_r[c][k] *= jdinv_r; } ~%", NI*NA),
   printf(fh, "  } ~%"),
-  printf(fh, "  const int n = i*~a + j; ~%", NI),
-  printf(fh, "  // HLL with S_L = min(a_l, a_r, 0), S_R = max(a_l, a_r, 0). ~%"),
-  printf(fh, "  const double s_l = fmin(fmin(a_l, a_r), 0.0); ~%"),
-  printf(fh, "  const double s_r = fmax(fmax(a_l, a_r), 0.0); ~%"),
-  printf(fh, "  const double ds = s_r - s_l; ~%"),
-  printf(fh, "  Fhat_nodal[n] = ds > 0.0 ? (s_r*a_l*f_l_quad - s_l*a_r*f_r_quad + s_l*s_r*(f_r_quad - f_l_quad))/ds : 0.0; ~%"),
-  printf(fh, "  return fmax(-s_l, s_r); ~%"),
-  printf(fh, "} ~%~%")
+  printf(fh, " ~%"),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
+  printf(fh, "    const double bn_l[3] = {bq0_l[i], bq1_l[i], bq2_l[i]}, bn_r[3] = {bq0_r[i], bq1_r[i], bq2_r[i]}; ~%"),
+  printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
+  printf(fh, "      const double wq = wv + wn[j]*dv; ~%"),
+  printf(fh, "      double X_l[8], X_r[8]; ~%"),
+  printf(fh, "      for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "        double x_l = 0.0, x_r = 0.0; ~%"),
+  printf(fh, "        for (int a = 0; a < ~a; ++a) { ~%", NA),
+  printf(fh, "          x_l += ~a_Cm[i*~a + a]*GU_l[c][j*~a + a]; ~%", tabP, NA, NA),
+  printf(fh, "          x_r += ~a_Cm[i*~a + a]*GU_r[c][j*~a + a]; ~%", tabP, NA, NA),
+  printf(fh, "        } ~%"),
+  printf(fh, "        X_l[c] = x_l; X_r[c] = x_r; ~%"),
+  printf(fh, "      } ~%"),
+  printf(fh, "      double phi_l[8], phi_r[8], sb[2]; ~%"),
+  printf(fh, "      pkpm_harm_conf_flux(~a, X_l, X_r, xq_l[i]*bn_l[~a]*wq + uq_l[i], xq_r[i]*bn_r[~a]*wq + uq_r[i], ~%", dir-1, dir-1, dir-1),
+  printf(fh, "        xq_l[i], xq_r[i], bn_l, bn_r, thq_l[i], thq_r[i], phi_l, phi_r, sb); ~%"),
+  consumer(fh),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%")
 )$
 
 calcPKPMConfFluxSurf(dir, fh, funcNm, cdim) := block(
-  [tag, lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, cv, surfCVars, nodes_crem, nodes_vvol,
-   NO, NI, fact, sizesNA, NA, NMV, tabP, bSurfP, NK, factP, prjPre, bd_l_e, ud_l_e,
-   bd_r_e, ud_r_e, xl_e, xr_e, nodeSub, xq, j, i],
-
+  [tag, lb, pkC, pkV, pkP, NO, NI, cv, surfCVars, bSurfP, NK, factP, prjPre, NMVp, sz],
   tag : pkpmFluxTag(cdim),
-  /* Private copies: the basis loaders assign the dynamically scoped basis names. */
   lb : loadPKPMPhaseBasis(cdim),
-  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]),
-  pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
-  NC : length(pkbC),
-  NP : length(pkbP),
-
+  pkC : copylist(lb[1]), pkV : copylist(lb[3]), pkP : copylist(lb[5]),
+  sz : pkpmConfFaceSizes(dir, cdim),
+  NO : sz[3], NI : sz[4],
   cv : pkC[dir],
   surfCVars : delete(cv, pkC),
-  nodes_crem : if cdim > 1 then gaussOrd(pkpmFluxNumPts, cdim-1) else [1],
-  nodes_vvol : gaussOrd(pkpmFluxNumPts, 1),
-  NO : length(nodes_crem),
-  NI : length(nodes_vvol),
-
-  /* Factorization sizes must reproduce the table generator's. */
-  fact : laxFactorizeBasis(pkbP, if cdim > 1 then surfCVars else [prjdummy], cons(cv, pkV)),
-  sizesNA : laxFactorSizes(fact, cv),
-  NA : sizesNA[1],
-  NMV : sizesNA[2],
-  tabP : sconcat("vst_", tag, "_ph_x", dir-1),
   bSurfP : basisFromVars("tenhyb", delete(cv, pkP), 1),
   NK : length(bSurfP),
   factP : laxFactorizeBasis(bSurfP, if cdim > 1 then surfCVars else [prjdummy], pkV),
+  NMVp : length(factP[2]),
   prjPre : sconcat("vst_", tag, "_prj_x", dir-1),
 
   printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
   pkpmFluxTabInclude(fh, cdim),
-
-  /* Stage-1 nodal evaluation of f, the HLL node flux, and the modal projection. */
-  laxEmitStage1Fn(fh, funcNm, tabP, NA, NMV, NI),
-  pkpmHllEmitNodeFn(fh, funcNm, tabP, NA, NI),
-  laxEmitPrjFn(fh, funcNm, prjPre, NK, length(factP[1]), length(factP[2]), NO, NI, 0),
+  pkpmEmitConfFaceStage1(fh, funcNm, dir, cdim),
+  laxEmitPrjFn(fh, funcNm, prjPre, NK, length(factP[1]), NMVp, NO, NI, 0),
 
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *jacob_pos_l, const double *jacob_pos_r,
-  const double *b_l, const double *b_r, const double *u_l, const double *u_r,
-  const double *xi_l, const double *xi_r, const double *f_l, const double *f_r,
+  const double *jacob_pos_l, const double *jacob_pos_r, const double *b_l, const double *b_r,
+  const double *u_l, const double *u_r, const double *xi_l, const double *xi_r,
+  const double *theta_l, const double *theta_r, const double *f_l, const double *f_r,
   double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:   Cell-center coordinates (current cell, computational). ~%"),
   printf(fh, "  // dxv[NDIM]: Cell spacing (current cell, computational). ~%"),
@@ -132,89 +178,37 @@ calcPKPMConfFluxSurf(dir, fh, funcNm, cdim) := block(
   printf(fh, "  // b_l/b_r:   Magnetic field unit vector [bx, by, bz] in the left/current cell. ~%"),
   printf(fh, "  // u_l/u_r:   Flow velocity [ux, uy, uz] in the left/current cell. ~%"),
   printf(fh, "  // xi_l/xi_r: Thermal speed [xi, xi^2] in the left/current cell (the first expansion is used). ~%"),
-  printf(fh, "  // f_l/f_r:   Jacobian-weighted normalized distribution functions J [F, G] in the left/current cell. ~%"),
-  printf(fh, "  // flux:      Output modal surface fluxes of the evolved J [F, G] on the lower face of the ~%"),
+  printf(fh, "  // theta_l/r: T_perp/T in the left/current cell. ~%"),
+  printf(fh, "  // f_l/f_r:   Jacobian-weighted normalized distributions J [F, G, M0_perp, N_perp] in the left/current cell. ~%"),
+  printf(fh, "  // flux:      Output modal surface fluxes of the eight evolved blocks on the lower face of the ~%"),
   printf(fh, "  //            current cell in direction ~a: the physical HLL flux of the physical traces ~%", cvars[dir]),
   printf(fh, "  //            (J f)/J times the face Jacobian J/J_~a, i.e. the traces scaled by 1/J_~a of their cell. ~%", cvars[dir], cvars[dir]),
   printf(fh, "  // Returns the stable time-step estimate from the largest speed bound over the nodes. ~%"),
   printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
-  printf(fh, "  const double jdinv_l = 1.0/jacob_pos_l[~a], jdinv_r = 1.0/jacob_pos_r[~a]; ~%", 2*(dir-1), 2*(dir-1)),
-  printf(fh, "  const double wv = w[~a], dv = dxv[~a]; ~%", cdim, cdim),
-  printf(fh, "  const double *bd_l = &b_l[~a]; ~%", (dir-1)*NC),
-  printf(fh, "  const double *bd_r = &b_r[~a]; ~%", (dir-1)*NC),
-  printf(fh, "  const double *ud_l = &u_l[~a]; ~%", (dir-1)*NC),
-  printf(fh, "  const double *ud_r = &u_r[~a]; ~%", (dir-1)*NC),
-  printf(fh, "  const double *xd_l = &xi_l[0]; ~%"),
-  printf(fh, "  const double *xd_r = &xi_r[0]; ~%"),
-  printf(fh, " ~%"),
-
-  /* Edge traces of b_dir and u_dir at the transverse nodes: the left cell at
-     its upper edge (cv = +1), the current cell at its lower edge (cv = -1). */
-  bd_l_e : doExpand1(bd_l, pkbC),
-  ud_l_e : doExpand1(ud_l, pkbC),
-  bd_r_e : doExpand1(bd_r, pkbC),
-  ud_r_e : doExpand1(ud_r, pkbC),
-  xl_e : doExpand1(xd_l, pkbC),
-  xr_e : doExpand1(xd_r, pkbC),
-  printf(fh, "  double bl_q[~a] = {0.0}; ~%", NO),
-  printf(fh, "  double ul_q[~a] = {0.0}; ~%", NO),
-  printf(fh, "  double br_q[~a] = {0.0}; ~%", NO),
-  printf(fh, "  double ur_q[~a] = {0.0}; ~%", NO),
-  printf(fh, "  double xl_q[~a] = {0.0}; ~%", NO),
-  printf(fh, "  double xr_q[~a] = {0.0}; ~%", NO),
-  pkpmWriteNodeExprs(fh, "xl_q", pkpmFaceNodeExprs(xd_l, pkbC, cv, 1, cdim, surfCVars, nodes_crem)),
-  pkpmWriteNodeExprs(fh, "xr_q", pkpmFaceNodeExprs(xd_r, pkbC, cv, -1, cdim, surfCVars, nodes_crem)),
-  pkpmWriteNodeExprs(fh, "bl_q", makelist(subst(cv = 1,
-    if cdim > 1 then subst(makelist(surfCVars[d] = nodes_crem[i][d], d, 1, cdim-1), bd_l_e) else bd_l_e), i, 1, NO)),
-  pkpmWriteNodeExprs(fh, "ul_q", makelist(subst(cv = 1,
-    if cdim > 1 then subst(makelist(surfCVars[d] = nodes_crem[i][d], d, 1, cdim-1), ud_l_e) else ud_l_e), i, 1, NO)),
-  pkpmWriteNodeExprs(fh, "br_q", makelist(subst(cv = -1,
-    if cdim > 1 then subst(makelist(surfCVars[d] = nodes_crem[i][d], d, 1, cdim-1), bd_r_e) else bd_r_e), i, 1, NO)),
-  pkpmWriteNodeExprs(fh, "ur_q", makelist(subst(cv = -1,
-    if cdim > 1 then subst(makelist(surfCVars[d] = nodes_crem[i][d], d, 1, cdim-1), ud_r_e) else ud_r_e), i, 1, NO)),
-  printf(fh, " ~%"),
-
-  /* w at the inner nodes and the two-sided speeds, inner node fastest. */
-  printf(fh, "  double a_l[~a] = {0.0}; ~%", NO*NI),
-  printf(fh, "  double a_r[~a] = {0.0}; ~%", NO*NI),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
-  for j : 1 thru NI do (
-    xq : float(nodes_vvol[j][1]),
-    printf(fh, "    a_l[i*~a + ~a] = xl_q[i]*bl_q[i]*(wv + ~a*dv) + ul_q[i]; ~%", NI, j-1, 0.5*xq),
-    printf(fh, "    a_r[i*~a + ~a] = xr_q[i]*br_q[i]*(wv + ~a*dv) + ur_q[i]; ~%", NI, j-1, 0.5*xq)
-  ),
-  printf(fh, "  } ~%"),
-  printf(fh, " ~%"),
-
-  printf(fh, "  double G_l[~a]; ~%", NI*NA),
-  printf(fh, "  double G_r[~a]; ~%", NI*NA),
-  printf(fh, "  double Fhat_nodal[~a]; ~%", NO*NI),
+  printf(fh, "  double Fhat[8][~a]; ~%", NO*NI),
   printf(fh, "  double alpha_max = 0.0; ~%"),
-  printf(fh, "  for (int c = 0; c < 2; ++c) { ~%"),
-  printf(fh, "    for (int tid = 0; tid < ~a; ++tid) ~a_g(tid, &f_l[c*~a], &f_r[c*~a], G_l, G_r); ~%", NI*NA, funcNm, NP, NP),
-  printf(fh, "    for (int k = 0; k < ~a; ++k) { G_l[k] *= jdinv_l; G_r[k] *= jdinv_r; } ~%", NI*NA),
-  printf(fh, "    for (int i = 0; i < ~a; ++i) { ~%", NO),
-  printf(fh, "      for (int j = 0; j < ~a; ++j) { ~%", NI),
-  printf(fh, "        alpha_max = fmax(alpha_max, ~a_node(i, j, a_l[i*~a + j], a_r[i*~a + j], G_l, G_r, Fhat_nodal)); ~%", funcNm, NI, NI),
-  printf(fh, "      } ~%"),
-  printf(fh, "    } ~%"),
-  printf(fh, "    for (int tid = 0; tid < ~a; ++tid) ~a_prj(tid, Fhat_nodal, &flux[c*~a]); ~%", NO*NI, funcNm, NK),
+  pkpmEmitConfFaceFlux(fh, funcNm, dir, cdim, lambda([fh],
+    printf(fh, "      for (int c = 0; c < 8; ++c) Fhat[c][i*~a + j] = phi_l[c] + phi_r[c]; ~%", NI),
+    printf(fh, "      alpha_max = fmax(alpha_max, fmax(-sb[0], sb[1])); ~%"))),
+  printf(fh, " ~%"),
+  printf(fh, "  for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "    for (int tid = 0; tid < ~a; ++tid) ~a_prj(tid, Fhat[c], &flux[c*~a]); ~%", NMVp, funcNm, NK),
   printf(fh, "  } ~%"),
   printf(fh, "  return 1.5*dx1*jdinv_r*alpha_max; ~%"),
   printf(fh, "} ~%")
 )$
 
-/* Surface kernel scattering stored modal fluxes of both components into the
+/* Surface kernel scattering stored modal fluxes of the eight blocks into the
    volume increment (surface-mode CSR form of the consumer maps). dirLabel is
    the C name suffix, pre the projection-table prefix, dxIdx the dxv index of
    the surface direction. */
 calcPKPMScatterSurf(fh, funcNm, pre, NK, NP, dxIdx) := block(
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
   const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
-  printf(fh, "  // flux_l/flux_r: Stored modal fluxes [F_0, G] on the lower/upper face of the cell. ~%"),
-  printf(fh, "  // out:           Incremented output [F_0, G]. ~%"),
+  printf(fh, "  // flux_l/flux_r: Stored modal fluxes [F, G, M0_perp, N_perp] on the lower/upper face of the cell. ~%"),
+  printf(fh, "  // out:           Incremented output [F, G, M0_perp, N_perp]. ~%"),
   printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dxIdx),
-  printf(fh, "  for (int c = 0; c < 2; ++c) { ~%"),
+  printf(fh, "  for (int c = 0; c < 8; ++c) { ~%"),
   printf(fh, "    const double *fl = &flux_l[c*~a]; ~%", NK),
   printf(fh, "    const double *fr = &flux_r[c*~a]; ~%", NK),
   printf(fh, "    double *o = &out[c*~a]; ~%", NP),

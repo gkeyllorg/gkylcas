@@ -1,0 +1,12 @@
+load("pkpm/pkpm/pkpm-harm-modal-tables.mac")$
+load(stringproc)$
+/* This script generates gkyl_pkpm_harm_modal_tables.h, the constant tables of the modal
+   (sum-factorized) first-harmonic volume integrals (see pkpm-harm-modal-tables.mac). */
+fh : openw("~/max-out/gkyl_pkpm_harm_modal_tables.h")$
+printf(fh, "#pragma once ~%")$
+printf(fh, "// Generated (gkylcas/pkpm/pkpm/pkpm-harm-modal-tables.mac): constant tables of the modal ~%")$
+printf(fh, "// first-harmonic volume integrals in the tensor product of orthonormal Legendre polynomials. ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+writePKPMHarmModal1D(fh)$
+for c : 1 thru 3 do writePKPMHarmModalMaps(fh, c)$
+close(fh)$

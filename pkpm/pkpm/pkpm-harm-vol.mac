@@ -1,0 +1,250 @@
+/* pkpm-harm-vol.mac ------------------------------------------------------------------
+   Volume terms of the known first-harmonic operator of the configuration-space pass (stage A)
+   of the normalized p=1 PKPM kinetic update, from the stored operator of the configuration cell
+   (pkpm-harm-ops.mac): for every entry [o, i, kind, j] with coefficient c (degree <= 2 per
+   configuration direction)
+     kind 0 (source):  out_o += integral( phi c w^j U_i )
+     kind 1 (w flux):  out_o += integral( d_w phi c w^j U_i )
+   the gyration out_a += sign qbym B_e U_c (entries qbym B_e), and the configuration-flux
+   couplings out_o += integral( d_d phi cf_{d,q} U_i )/J_d. Everything is exact.
+
+   Two kernels, factorized like the w factors of the Vlasov kernels. The phase basis is (p=1
+   configuration basis) x (orthonormal Legendre in w):
+   - pkpm_harm_mat_<c>x_ser_p1, once per configuration cell: every entry contracted with the
+     configuration triples int phi_m Q_k phi_l (int d_d phi_m Q_k phi_l / (dx_d J_d / 2) for the
+     couplings), an nc x nc matrix per entry;
+   - pkpm_harm_vol_<c>x1v_ser_p1, per phase cell: with w = w_c + (dv/2) eta each input block is
+     contracted once with the w tables int P_m (w_c + dv eta/2)^j P_l and (2/dv) int P_m' (...)^j P_l
+     into configuration expansions V (the source table of power 0 is the identity, V = U, and the
+     couplings are w independent), and every entry adds its matrix times V: plain multiply-adds.
+   The source-rate estimate is formed by the updater from the stored operator. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load("pkpm/pkpm/pkpm-cas-util.mac")$
+load("pkpm/pkpm/pkpm-harm-ops.mac")$
+load(stringproc)$
+fpprec : 24$
+
+cvarsHv : [x, y, z]$
+
+/* pidx[lc][lw] (0-based): the phase basis function pkbC[lc] pkbV[lw], matched numerically (the
+   radicals of the two normalizations do not always simplify symbolically). */
+pkpmHarmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP) := block([pts, tab, lc, lw, m, hit, evp, row],
+  pts : [[0.31, -0.57, 0.83, 0.47], [-0.73, 0.21, -0.39, -0.61], [0.67, 0.89, -0.13, 0.29]],
+  evp : lambda([e, p], float(subst(append(makelist(pkC[d] = p[d], d, 1, length(pkC)), [vv = p[4]]), e))),
+  tab : [],
+  for lc : 1 thru length(pkbC) do (
+    row : [],
+    for lw : 1 thru length(pkbV) do (
+      hit : -1,
+      for m : 1 thru length(pkbP) do
+        if every(lambda([p], abs(evp(pkbP[m], p) - evp(pkbC[lc]*pkbV[lw], p)) < 1.0e-12), pts) then hit : m - 1,
+      if hit < 0 then error("pkpmHarmPhaseIndex: no phase basis function for", lc, lw),
+      row : endcons(hit, row)
+    ),
+    tab : endcons(row, tab)
+  ),
+  tab
+)$
+
+/* The configuration triples [mc, k, lc, value] (1-based mc, k, lc) of int a_mc Q_k phi_lc, where a
+   is the test list (pkbC or its derivatives) and Q the degree <= 2 basis. */
+pkpmHarmTriples(pkC, testList, b2, pkbC) := block([tr, k, lc, vals, mc, v],
+  tr : [],
+  for k : 1 thru length(b2) do
+    for lc : 1 thru length(pkbC) do (
+      vals : calcInnerProdList(pkC, 1, testList, b2[k]*pkbC[lc]),
+      for mc : 1 thru length(testList) do (
+        v : ratsimp(vals[mc]),
+        if v # 0 then tr : endcons([mc, k, lc, float(v)], tr)
+      )
+    ),
+  tr
+)$
+
+/* Nonzero pattern [mc][lc] (booleans) of the matrices of a triple list. */
+pkpmHarmPattern(tr, NC) := block([nz, t],
+  nz : makelist(makelist(false, lc, 1, NC), mc, 1, NC),
+  for t in tr do nz[t[1]][t[3]] : true,
+  nz
+)$
+
+/* Per configuration cell: mat[e][mc][lc] = sum_k int phi_mc Q_k phi_lc ho[e][k] for the entries and
+   the gyration, and (2/(dx_d J_d)) sum_k int d_d phi_mc Q_k phi_lc ho[e][k] for the couplings. */
+calcPKPMHarmMat(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, NC, b2, n2, ents, nent, offCf, nop, tr, trd, d, e, q, acc, t, mc, lc, dd, tt],
+
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]),
+  NC : length(pkbC),
+  b2 : pkpmP2Basis(pkC), n2 : length(b2),
+  ents : pkpmHarmEntries(), nent : length(ents),
+  offCf : nent + 3, nop : offCf + 11*cdim,
+  tr : pkpmHarmTriples(pkC, pkbC, b2, pkbC),
+  trd : makelist(pkpmHarmTriples(pkC, diff(pkbC, pkC[d]), b2, pkbC), d, 1, cdim),
+
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *dxv, const double *jacob_pos, const double *ho,
+  double* GKYL_RESTRICT mat) ~%{ ~%", funcNm),
+  printf(fh, "  // dxv[NDIM]: Cell spacing (computational). ~%"),
+  printf(fh, "  // jacob_pos: Position-map Jacobian per configuration direction (cdim blocks of 2 equal entries). ~%"),
+  printf(fh, "  // ho:        Stored operator of the configuration cell (gkyl_pkpm_harm_ops.h): ~a entries of ~a modes. ~%", nop, n2),
+  printf(fh, "  // mat:       Output ~a x ~a matrix of every entry: int phi_m Q_k phi_l ho[k] (the couplings of ~%", NC, NC),
+  printf(fh, "  //            direction d: (2/(dx_d J_d)) int d_d phi_m Q_k phi_l ho[k]); structural zeros are not written. ~%"),
+  for d : 1 thru cdim do
+    printf(fh, "  const double dx1~a = 2.0/(dxv[~a]*jacob_pos[~a]); ~%", d-1, d-1, 2*(d-1)),
+  printf(fh, " ~%"),
+  for e : 0 thru nop - 1 do (
+    if e >= offCf then (dd : floor((e - offCf)/11) + 1, tt : trd[dd]) else (dd : 0, tt : tr),
+    acc : makelist(makelist(0, lc, 1, NC), mc, 1, NC),
+    for t in tt do
+      acc[t[1]][t[3]] : acc[t[1]][t[3]] + t[4]*ho[e*n2 + t[2] - 1],
+    for mc : 1 thru NC do
+      for lc : 1 thru NC do
+        if acc[mc][lc] # 0 then
+          printf(fh, "  mat[~a] = ~a; ~%", (e*NC + mc - 1)*NC + lc - 1,
+            if dd > 0 then eval_string(sconcat("dx1", dd-1))*acc[mc][lc] else acc[mc][lc])
+  ),
+  printf(fh, "} ~%")
+)$
+
+/* Per phase cell: the w tables, V of every input block, then out += mat V for every entry. */
+calcPKPMHarmVol(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, vv, pkbV, pkbP, NC, NP, NV, ents, nent, gyr, offCf, pidx, hv, TS, TF, tval, tnm,
+   rowzero, vnm, vsym, need, key, e, it, i, kind, j, mw, lw, lc, mc, t, vval, o, d, q, oi, acc, sgn, mnm,
+   b2, nzV, nzD],
+
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), vv : lb[3][1], pkbV : copylist(lb[4]),
+  pkbP : copylist(lb[6]),
+  NC : length(pkbC), NP : length(pkbP), NV : length(pkbV),
+  pidx : pkpmHarmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP),
+  ents : pkpmHarmEntries(), nent : length(ents),
+  gyr : pkpmHarmGyration(),
+  offCf : nent + 3,
+  b2 : pkpmP2Basis(pkC),
+  nzV : pkpmHarmPattern(pkpmHarmTriples(pkC, pkbC, b2, pkbC), NC),
+  nzD : makelist(pkpmHarmPattern(pkpmHarmTriples(pkC, diff(pkbC, pkC[d]), b2, pkbC), NC), d, 1, cdim),
+
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *mat, const double *f,
+  double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]:   Cell-center coordinates (computational). ~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing (computational). ~%"),
+  printf(fh, "  // mat:       Matrices of the stored operator of the configuration cell (pkpm_harm_mat_~ax_ser_p1). ~%", cdim),
+  printf(fh, "  // f:         Input Jacobian-weighted distributions J [F, G, M0_perp, N_perp]. ~%"),
+  printf(fh, "  // out:       Incremented output. ~%"),
+  printf(fh, "  const double wvpar = w[~a], dvpar = dxv[~a]; ~%", cdim, cdim),
+  printf(fh, " ~%"),
+
+  /* w tables: TS[j][mw][lw] = int P_mw (w_c + dv eta/2)^j P_lw, TF with (2/dv) P_mw' */
+  hv : wvpar + dvpar/2*vv,
+  TS : makelist(makelist(makelist(expand(integrate(pkbV[mw]*hv^j*pkbV[lw], vv, -1, 1)), lw, 1, NV), mw, 1, NV), j, 0, 2),
+  TF : makelist(makelist(makelist(expand(2/dvpar*integrate(diff(pkbV[mw], vv)*hv^j*pkbV[lw], vv, -1, 1)), lw, 1, NV), mw, 1, NV), j, 0, 2),
+  /* a w-table entry: its value when it is a number, else its named constant */
+  tval : lambda([kind, j, mw, lw], (if kind = 0 then TS else TF)[j+1][mw][lw]),
+  tnm : lambda([kind, j, mw, lw],
+    if numberp(float(tval(kind, j, mw, lw))) then float(tval(kind, j, mw, lw))
+    else eval_string(sconcat(if kind = 0 then "tS" else "tF", j, mw-1, lw-1))),
+  /* rows of a table that vanish identically (d_w of the constant mode) give V = 0 */
+  rowzero : lambda([kind, j, mw], every(lambda([lw], ratsimp(tval(kind, j, mw, lw)) = 0), makelist(lw, lw, 1, NV))),
+
+  /* the (input block, kind, power) contractions the entries and the gyration need */
+  need : [],
+  for e in ents do (key : [e[2], e[3], e[4]], if not member(key, need) then need : endcons(key, need)),
+  for it in gyr do (key : [it[2], 0, 0], if not member(key, need) then need : endcons(key, need)),
+
+  printf(fh, "  // w tables of the shifted powers of w (int P_m (w_c + dv eta/2)^j P_l and its d_w form) ~%"),
+  for kind : 0 thru 1 do
+    for j : 0 thru 2 do (
+      if not (kind = 0 and j = 0) and member(true, makelist(member([i, kind, j], need), i, 0, 7)) then
+        for mw : 1 thru NV do
+          for lw : 1 thru NV do (
+            t : tval(kind, j, mw, lw),
+            if ratsimp(t) # 0 and not numberp(float(t)) then
+              printf(fh, "  const double ~a = ~a; ~%", tnm(kind, j, mw, lw), pkpmPowToC(float(expand(t))))
+          )
+    ),
+  printf(fh, " ~%"),
+
+  /* V[i, kind, j][mw NC + lc] = sum_lw T[mw][lw] f_i(lc, lw) */
+  vnm : lambda([i, kind, j], eval_string(sconcat("v", if kind = 0 then "S" else "F", i, "_", j))),
+  vsym : lambda([i, kind, j, mw, lc],
+    if kind = 0 and j = 0 then f[i*NP + pidx[lc][mw]]
+    else if rowzero(kind, j, mw) then 0
+    else arraymake(vnm(i, kind, j), [(mw-1)*NC + lc - 1])),
+  printf(fh, "  // the input blocks contracted with the w tables ~%"),
+  for key in need do (
+    [i, kind, j] : key,
+    if not (kind = 0 and j = 0) then (
+      printf(fh, "  double ~a[~a]; ~%", vnm(i, kind, j), NV*NC),
+      for mw : 1 thru NV do
+        if not rowzero(kind, j, mw) then
+          for lc : 1 thru NC do (
+            vval : 0,
+            for lw : 1 thru NV do (
+              t : tval(kind, j, mw, lw),
+              if ratsimp(t) # 0 then vval : vval + tnm(kind, j, mw, lw)*f[i*NP + pidx[lc][lw]]
+            ),
+            printf(fh, "  ~a = ~a; ~%", vsym(i, kind, j, mw, lc), vval)
+          )
+    )
+  ),
+  printf(fh, " ~%"),
+
+  /* out[o][mc, mw] += sum over the entries of o of mat[e][mc][lc] V[mw][lc] */
+  /* matrix entry of stored entry e (0-based), zero where the pattern of its triples is zero */
+  mnm : lambda([e, mc, lc],
+    if (if e >= offCf then nzD[floor((e - offCf)/11) + 1][mc][lc] else nzV[mc][lc])
+    then mat[(e*NC + mc - 1)*NC + lc - 1] else 0),
+  for o : 0 thru 7 do (
+    printf(fh, "  // output block ~a ~%", o),
+    for mw : 1 thru NV do
+      for mc : 1 thru NC do (
+        acc : 0,
+        for e : 1 thru nent do
+          if ents[e][1] = o then (
+            [i, kind, j] : [ents[e][2], ents[e][3], ents[e][4]],
+            if not (kind = 1 and rowzero(kind, j, mw)) then
+              for lc : 1 thru NC do acc : acc + mnm(e-1, mc, lc)*vsym(i, kind, j, mw, lc)
+          ),
+        for it in gyr do
+          if it[1] = o then (
+            [i, e, sgn] : [it[2], it[3], it[4]],
+            for lc : 1 thru NC do acc : acc + sgn*mnm(nent + e, mc, lc)*vsym(i, 0, 0, mw, lc)
+          ),
+        for d : 1 thru cdim do
+          for q : 0 thru 10 do (
+            oi : pkpmHarmConfCoupling(d-1, q),
+            if oi[1] = o then
+              for lc : 1 thru NC do acc : acc + mnm(offCf + 11*(d-1) + q, mc, lc)*vsym(oi[2], 0, 0, mw, lc)
+          ),
+        if acc # 0 then printf(fh, "  out[~a] += ~a; ~%", o*NP + pidx[mc][mw], acc)
+      )
+  ),
+  printf(fh, "} ~%")
+)$
+
+/* Header of the stored-operator layout (shared by the updater and, later, the build). */
+writePKPMHarmOpsHeader(fh) := block([ents, nent, e],
+  ents : pkpmHarmEntries(), nent : length(ents),
+  printf(fh, "#pragma once ~%"),
+  printf(fh, "// Generated (gkylcas/pkpm/pkpm/pkpm-harm-ops.mac): layout of the stored first-harmonic operator of a ~%"),
+  printf(fh, "// configuration cell. Entry e = [o, i, kind, j] is the coefficient of w^j of the source (kind 0) or ~%"),
+  printf(fh, "// w flux (kind 1) of output block o from input block i, blocks [F, G, M0_perp (x, y, z), ~%"),
+  printf(fh, "// N_perp (x, y, z)]; then the gyration entries qbym B_e and the configuration-flux couplings of ~%"),
+  printf(fh, "// direction d (q = 0 F <- M0_d, 1 G <- N_d, 2 + a M0_a <- G, 5 + a N_a <- G, 8 + a N_a <- F). Each ~%"),
+  printf(fh, "// entry holds the 3^cdim tensor Legendre modes of degree <= 2 (k = k0 + 3 k1 + 9 k2). ~%"),
+  printf(fh, "#include <gkyl_util.h> ~%"),
+  printf(fh, "#define PKPM_HO_NENT ~a ~%", nent),
+  printf(fh, "#define PKPM_HO_GYR(e) (~a + (e)) ~%", nent),
+  printf(fh, "#define PKPM_HO_CF(d, q) (~a + 11 * (d) + (q)) ~%", nent + 3),
+  printf(fh, "#define PKPM_HO_NOP(cdim) (~a + 11 * (cdim)) ~%", nent + 3),
+  printf(fh, "#define PKPM_HO_NOP_MAX ~a ~%", nent + 3 + 33),
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const int pkpm_ho_ent[~a][4] = { ~%", nent),
+  for e : 1 thru nent do
+    printf(fh, "  {~a, ~a, ~a, ~a}, ~%", ents[e][1], ents[e][2], ents[e][3], ents[e][4]),
+  printf(fh, "}; ~%")
+)$

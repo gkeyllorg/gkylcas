@@ -1,0 +1,58 @@
+/* pkpm-harm-ops.mac --------------------------------------------------------------
+   The known velocity-space operator of the first-harmonic blocks of the normalized p=1 PKPM
+   kinetic update, blocks 0..7 = [F, G, M0_perp (x, y, z), N_perp (x, y, z)]: the single
+   definition of its structure shared by the generators of the volume kernel and of the
+   stored-operator header. For every (output block o, input block i) the source S_oi and the
+   w flux Phi_oi are polynomials sum_j w^j c_j(x), and each c_j is one ENTRY [o, i, kind, j]
+   (kind 0 source, 1 w flux) of the stored operator: its projection onto the tensor Legendre
+   modes of degree <= 2 per configuration direction (pkpmP2Basis, 3^cdim modes), exact for every
+   volume and w-face Galerkin integral (plan 17.15). Terms (plan 17.11, H = 4 theta G -
+   2 theta^2 F, O = 6 theta N - 6 theta^2 M0):
+     w flux:  M0, N: alpha_k = -K w - (b.grad xi) w^2 (the F, G parts are the stage-A kernel's);
+              F <- t.M0, G <- t.N, M0 <- G t + R_B1 N, N <- H t + R_B1 O  (t = t0 + w t1)
+     sources: F <- -ell_xi.M0; G <- f_perp.M0 - (ell_xi + 2 g).N;
+              M0 <- f_perp F + (sigma_0 + L_perp) M0 - G (I_perp(ell_xi + g) + b beta) - b C.M0;
+              N <- 2 G f_perp + (sigma_0 + L_perp - R_E1) N - H (I_perp(ell_xi + 3 g) + b beta)
+                   - b C.N
+   The gyration (q/m) (v x B) of M0_perp and N_perp is kept as three entries qbym B_e (p=1, so
+   exactly representable) applied with signs and excluded from the source-rate estimate; the
+   configuration-flux couplings of the streaming of the first harmonic are 11 entries per
+   configuration direction d (w independent): q = 0 F <- M0_d, 1 G <- N_d, 2 + a M0_a <- G,
+   5 + a N_a <- G, 8 + a N_a <- F. */
+
+/* The entries [o, i, kind, j] in their stored order. */
+pkpmHarmEntries() := block([terms, ents, a, c, b, j, t],
+  terms : [],
+  for b : 2 thru 7 do terms : append(terms, [[b, b, 1, 1], [b, b, 1, 2]]),
+  for a : 0 thru 2 do (
+    for j : 0 thru 1 do
+      terms : append(terms, [[0, 2+a, 1, j], [1, 5+a, 1, j], [2+a, 1, 1, j], [5+a, 1, 1, j], [5+a, 0, 1, j]]),
+    for c : 0 thru 2 do
+      terms : append(terms, [[2+a, 5+c, 1, 0], [5+a, 5+c, 1, 0], [5+a, 2+c, 1, 0]]),
+    terms : append(terms, [[0, 2+a, 0, 0], [1, 5+a, 0, 0], [2+a, 1, 0, 0], [5+a, 1, 0, 0], [5+a, 0, 0, 0]]),
+    for j : 1 thru 2 do
+      terms : append(terms, [[1, 2+a, 0, j], [2+a, 0, 0, j], [5+a, 1, 0, j]]),
+    for c : 0 thru 2 do
+      for j : 0 thru 1 do
+        terms : append(terms, [[2+a, 2+c, 0, j], [5+a, 5+c, 0, j]])
+  ),
+  ents : [],
+  for t in terms do if not member(t, ents) then ents : endcons(t, ents),
+  ents
+)$
+
+/* The gyration items [o, i, e, sign]: (q/m)(v x B)_a = (q/m)(v_{a+1} B_{a+2} - v_{a+2} B_{a+1})
+   of the blocks M0 (2..4) and N (5..7); e is the component of the stored entry qbym B_e. */
+pkpmHarmGyration() := block([items, a, c1, c2, blk],
+  items : [],
+  for a : 0 thru 2 do (
+    c1 : mod(a+1, 3), c2 : mod(a+2, 3),
+    for blk in [2, 5] do
+      items : append(items, [[blk+a, blk+c1, c2, 1], [blk+a, blk+c2, c1, -1]])
+  ),
+  items
+)$
+
+/* The configuration-flux coupling q of direction d as [o, i]. */
+pkpmHarmConfCoupling(d, q) :=
+  if q = 0 then [0, 2+d] else if q = 1 then [1, 5+d] else if q < 8 then [q, 1] else [q-3, 0]$

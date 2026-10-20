@@ -1,30 +1,28 @@
 /* pkpm-vel-flux-surf.mac --------------------------------------------------------
-   v_par surface flux of the PKPM kinetic equations (velocity-space pass, stage B).
+   v_par surface flux of the PKPM kinetic equations (velocity-space pass, stage B), on the eight
+   blocks U = [F, G, M0_perp (x, y, z), N_perp (x, y, z)].
 
-   pkpm_vel_flux_vpar_<c>x1v_ser_p1(w, dxv, bvar, grad_b, u, grad_u, xi, grad_xi, theta, alpha_0, c_h, f_l, f_r, flux)
-     On the LOWER w face of the current cell (f_r is the current cell, f_l the
-     cell below), at the 3^cdim configuration Gauss-Legendre nodes, evaluate the
-     single-valued configuration-space coefficients
+   pkpm_vel_flux_vpar_<c>x1v_ser_p1(w, dxv, nv, f_l, f_r, flux)
+     On the LOWER w face of the current cell (f_r is the current cell, f_l the cell below), at the
+     5^cdim configuration Gauss-Legendre nodes of the table header (vst_<tag>_conf_nodes), the HLL
+     flux of the w flux alpha U + T(U) from the node values nv[node][PKPM_HS_NODE_NV]: the stored
+     first-harmonic coefficients (exact projections onto degree <= 2 per configuration direction,
+     gkyl_pkpm_harm_slots.h) evaluated at the node, theta, b and the closures alpha_0, c there
+     (formed once per configuration cell by the updater). With those coefficients the flux is
+     exact on every face where it is upwind (integrand degree <= 4 per direction); the 5 nodes
+     sample the speed switches of the other faces. The node flux is pkpm_harm_node_wflux
+     (gkyl_pkpm_harm_coeffs.h, shared with the closure kernels): alpha = alpha_0 + (c - K) w_face
+     - (b.grad xi) w_face^2, T the coupling by beta, t and R_B1 with the closures
+     H = 4 theta G - 2 theta^2 F, O = 6 theta N - 6 theta^2 M0, the speeds S_L, S_R = alpha + the
+     bounds of the spectrum of T; exact upwinding when S_L >= 0 or S_R <= 0, the HLL average
+     otherwise. With t = B_1 = 0 (b uniform along a line) S_L = S_R = alpha and the flux is the
+     upwind flux alpha U.
 
-       alpha = alpha_0 + (c - K) w_face - (b.grad xi) w_face^2,   K = b_i b_j d_i u_j,
-       beta = xi div b,   theta,
+     The fluxes are projected onto the surface modal basis: flux = [8 blocks][NK]. Returns the
+     stable time-step estimate (2 p_v + 1)/2 dv1 max(|S_L|, |S_R|) with p_v = 2.
 
-     (alpha_0 = a_P/xi and c the closures of stage B) with d_i u_j, d_i b_i and d_i xi the
-     weak (surface-averaged) gradients grad_u, grad_b, grad_xi of pkpm-vars-grad-u.mac,
-
-     and form the split upwind fluxes
-
-       F:  max(alpha,0) F_l + min(alpha,0) F_r + max(beta,0) G_l + min(beta,0) G_r
-       G:  max(alpha,0) G_l + min(alpha,0) G_r + max(beta,0) H_l + min(beta,0) H_r
-
-     with H = 4 theta G - 2 theta^2 F (F_2 = 0) formed from the nodal traces. The
-     fluxes are projected onto the surface modal basis: flux = [F flux (NK), G flux
-     (NK)]. Returns the stable time-step estimate
-     (2 p_v + 1)/2 dv1 max(|alpha| + (2 + sqrt 2)|theta beta|) with p_v = 2, the
-     conservative bound of the split on the coupled mirror system.
-
-   The f arrays hold [F_0, G] (2 NP coefficients). The flux at the domain edges of
-   velocity space is zero: the updater writes zeros there and does not call this. */
+   The flux at the domain edges of velocity space is the closure's (pkpm-vars-closure.mac): the
+   updater does not call this there. */
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 load("core/nodal_operations/nodal_functions.mac")$
@@ -46,7 +44,7 @@ calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
   NC : length(pkbC),
   NP : length(pkbP),
   vv : pkV[1],
-  nodes_conf : gaussOrd(pkpmFluxNumPts, cdim),
+  nodes_conf : gaussOrd(pkpmVelFluxNumPts, cdim),
   NO : length(nodes_conf),
 
   fact : laxFactorizeBasis(pkbP, pkC, [vv]),
@@ -61,95 +59,48 @@ calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
 
   printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
   pkpmFluxTabInclude(fh, cdim),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
 
   /* Stage-1 nodal evaluation of a distribution (both edges) and the projection. */
   laxEmitStage1Fn(fh, funcNm, tabP, NA, NMV, 1),
   laxEmitPrjFn(fh, funcNm, prjPre, NK, length(factP[1]), length(factP[2]), NO, 1, 0),
 
-  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *bvar, const double *grad_b, const double *u, const double *grad_u,
-  const double *xi, const double *grad_xi, const double *theta,
-  const double *alpha_0, const double *c_h, const double *f_l, const double *f_r, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *nv,
+  const double *f_l, const double *f_r, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:   Cell-center coordinates (current cell). ~%"),
   printf(fh, "  // dxv[NDIM]: Cell spacing (current cell). ~%"),
-  printf(fh, "  // bvar:      Magnetic field unit vector [bx, by, bz]. ~%"),
-  printf(fh, "  // grad_b:    Weak gradient of b, [d_i bx, d_i by, d_i bz] per direction i. ~%"),
-  printf(fh, "  // u:         Flow velocity [ux, uy, uz]. ~%"),
-  printf(fh, "  // grad_u:    Weak gradient of u, [d_i ux, d_i uy, d_i uz] per direction i. ~%"),
-  printf(fh, "  // xi:        Thermal speed [xi, xi^2] (the first expansion is used). ~%"),
-  printf(fh, "  // grad_xi:   Weak gradient of [xi, 0, 0] (pkpm_vars_grad_u_* layout). ~%"),
-  printf(fh, "  // theta:     T_perp/T. ~%"),
-  printf(fh, "  // alpha_0:   Pressure force a_P/xi closing the first moment. ~%"),
-  printf(fh, "  // c_h:       Heating rate closing the scalar second moment. ~%"),
-  printf(fh, "  // f_l/f_r:   Distribution functions [F, G] in the cell below/current cell. ~%"),
-  printf(fh, "  // flux:      Output modal surface fluxes [F flux, G flux] on the lower w face. ~%"),
+  printf(fh, "  // nv:        Node values [~a nodes][PKPM_HS_NODE_NV] of the w flux of the configuration cell. ~%", NO),
+  printf(fh, "  // f_l/f_r:   Distributions [F, G, M0_perp, N_perp] in the cell below/current cell. ~%"),
+  printf(fh, "  // flux:      Output modal surface fluxes [8 blocks] on the lower w face. ~%"),
   printf(fh, "  // Returns the stable time-step estimate over the face nodes. ~%"),
-  for d : 1 thru cdim do
-    printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", d-1, d-1),
   printf(fh, "  const double dv1 = 2.0/dxv[~a]; ~%", cdim),
   printf(fh, "  const double v_face = w[~a] - 0.5*dxv[~a]; ~%", cdim, cdim),
-  printf(fh, "  const double *bx = &bvar[~a]; ~%", 0*NC),
-  printf(fh, "  const double *by = &bvar[~a]; ~%", 1*NC),
-  printf(fh, "  const double *bz = &bvar[~a]; ~%", 2*NC),
-  printf(fh, "  const double *ux = &u[~a]; ~%", 0*NC),
-  printf(fh, "  const double *uy = &u[~a]; ~%", 1*NC),
-  printf(fh, "  const double *uz = &u[~a]; ~%", 2*NC),
   printf(fh, " ~%"),
-
-  /* Stage 1 for F and G on both edges. */
-  printf(fh, "  double GF_l[~a], GF_r[~a], GG_l[~a], GG_r[~a]; ~%", NA, NA, NA, NA),
+  /* Stage 1 for every block on both edges. */
+  printf(fh, "  double GU_l[8][~a], GU_r[8][~a]; ~%", NA, NA),
   printf(fh, "  for (int tid = 0; tid < ~a; ++tid) { ~%", NA),
-  printf(fh, "    ~a_g(tid, &f_l[0], &f_r[0], GF_l, GF_r); ~%", funcNm),
-  printf(fh, "    ~a_g(tid, &f_l[~a], &f_r[~a], GG_l, GG_r); ~%", funcNm, NP, NP),
+  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "      ~a_g(tid, &f_l[c*~a], &f_r[c*~a], GU_l[c], GU_r[c]); ~%", funcNm, NP, NP),
+  printf(fh, "    } ~%"),
   printf(fh, "  } ~%"),
   printf(fh, " ~%"),
-
-  printf(fh, "  double Fhat_F[~a], Fhat_G[~a]; ~%", NO, NO),
+  printf(fh, "  double Fhat[8][~a]; ~%", NO),
   printf(fh, "  double cfl_max = 0.0; ~%"),
   printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
-  printf(fh, "    // Configuration-space coefficients at node i. ~%"),
-  printf(fh, "    double b_q[3] = {0.0}, u_q[3] = {0.0}, gradu_q[3][3] = {{0.0}}, gradxi_q[3] = {0.0}, div_b = 0.0, theta_q = 0.0, a0_q = 0.0, ch_q = 0.0, xi_q = 0.0; ~%"),
-  printf(fh, "    for (int a = 0; a < ~a; ++a) { ~%", NC),
-  printf(fh, "      const double ev = vst_~a_conf_ev[i*~a + a]; ~%", tag, NC),
-  printf(fh, "      b_q[0] += ev*bx[a]; b_q[1] += ev*by[a]; b_q[2] += ev*bz[a]; ~%"),
-  printf(fh, "      u_q[0] += ev*ux[a]; u_q[1] += ev*uy[a]; u_q[2] += ev*uz[a]; ~%"),
-  printf(fh, "      theta_q += ev*theta[a]; ~%"),
-  printf(fh, "      a0_q += ev*alpha_0[a]; ~%"),
-  printf(fh, "      ch_q += ev*c_h[a]; ~%"),
-  printf(fh, "      xi_q += ev*xi[a]; ~%"),
-  for d : 1 thru cdim do (
-    printf(fh, "      div_b += ev*grad_b[~a + a]; ~%", ((d-1)*3 + (d-1))*NC),
-    printf(fh, "      gradxi_q[~a] += ev*grad_xi[~a + a]; ~%", d-1, ((d-1)*3 + 0)*NC),
-    for j : 1 thru 3 do
-      printf(fh, "      gradu_q[~a][~a] += ev*grad_u[~a + a]; ~%", d-1, j-1, ((d-1)*3 + (j-1))*NC)
-  ),
+  printf(fh, "    // Nodal traces of the eight blocks on both sides of the face. ~%"),
+  printf(fh, "    double U_l[8] = {0.0}, U_r[8] = {0.0}, Fn[8]; ~%"),
+  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "      for (int a = 0; a < ~a; ++a) { ~%", NA),
+  printf(fh, "        const double cm = ~a_Cm[i*~a + a]; ~%", tabP, NA),
+  printf(fh, "        U_l[c] += cm*GU_l[c][a]; U_r[c] += cm*GU_r[c][a]; ~%"),
+  printf(fh, "      } ~%"),
   printf(fh, "    } ~%"),
-  printf(fh, "    double K = 0.0; ~%"),
-  printf(fh, "    for (int d = 0; d < ~a; ++d) { ~%", cdim),
-  printf(fh, "      for (int j = 0; j < 3; ++j) K += b_q[d]*b_q[j]*gradu_q[d][j]; ~%"),
-  printf(fh, "    } ~%"),
-  printf(fh, "    double bgx = 0.0; ~%"),
-  printf(fh, "    for (int d = 0; d < ~a; ++d) bgx += b_q[d]*gradxi_q[d]; ~%", cdim),
-  printf(fh, "    const double alpha = a0_q + (ch_q - K)*v_face - bgx*v_face*v_face; ~%"),
-  printf(fh, "    const double beta = xi_q*div_b; ~%"),
-  printf(fh, "    // Nodal traces of F and G on both sides of the face. ~%"),
-  printf(fh, "    double F_l = 0.0, F_r = 0.0, G_l = 0.0, G_r = 0.0; ~%"),
-  printf(fh, "    for (int a = 0; a < ~a; ++a) { ~%", NA),
-  printf(fh, "      const double cm = ~a_Cm[i*~a + a]; ~%", tabP, NA),
-  printf(fh, "      F_l += cm*GF_l[a]; F_r += cm*GF_r[a]; G_l += cm*GG_l[a]; G_r += cm*GG_r[a]; ~%"),
-  printf(fh, "    } ~%"),
-  printf(fh, "    const double H_l = 4.0*theta_q*G_l - 2.0*theta_q*theta_q*F_l; ~%"),
-  printf(fh, "    const double H_r = 4.0*theta_q*G_r - 2.0*theta_q*theta_q*F_r; ~%"),
-  printf(fh, "    const double ap = fmax(alpha, 0.0), am = fmin(alpha, 0.0); ~%"),
-  printf(fh, "    const double bp = fmax(beta, 0.0), bm = fmin(beta, 0.0); ~%"),
-  printf(fh, "    Fhat_F[i] = ap*F_l + am*F_r + bp*G_l + bm*G_r; ~%"),
-  printf(fh, "    Fhat_G[i] = ap*G_l + am*G_r + bp*H_l + bm*H_r; ~%"),
-  printf(fh, "    cfl_max = fmax(cfl_max, fabs(alpha) + ~a*fabs(theta_q*beta)); ~%", float(2 + sqrt(2))),
+  printf(fh, "    cfl_max = fmax(cfl_max, pkpm_harm_node_wflux(&nv[i*PKPM_HS_NODE_NV], v_face, U_l, U_r, Fn)); ~%"),
+  printf(fh, "    for (int c = 0; c < 8; ++c) Fhat[c][i] = Fn[c]; ~%"),
   printf(fh, "  } ~%"),
   printf(fh, " ~%"),
   printf(fh, "  for (int tid = 0; tid < ~a; ++tid) { ~%", NO),
-  printf(fh, "    ~a_prj(tid, Fhat_F, &flux[0]); ~%", funcNm),
-  printf(fh, "    ~a_prj(tid, Fhat_G, &flux[~a]); ~%", funcNm, NK),
+  printf(fh, "    for (int c = 0; c < 8; ++c) ~a_prj(tid, Fhat[c], &flux[c*~a]); ~%", funcNm, NK),
   printf(fh, "  } ~%"),
   printf(fh, "  return 2.5*dv1*cfl_max; ~%"),
   printf(fh, "} ~%")

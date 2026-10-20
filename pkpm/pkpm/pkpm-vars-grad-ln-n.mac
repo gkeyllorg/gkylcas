@@ -3,14 +3,14 @@
    configuration-space factor of the source -v_par b.grad(ln n) Fbar. The weak
    (face-averaged) gradient of rho is computed by the pkpm_vars_grad_u_* kernels applied
    to the array [rho, 0, 0] (it occupies the first expansion of every direction block);
-   here each component is divided by the CELL AVERAGE of rho. The nodal quotient would be
-   the exact weak division, but near vacuum (the nodes of a cell with a large relative
-   slope) it makes the explicit source -v_par b.grad(ln n) Fbar arbitrarily stiff, while a
-   p=1 field cannot resolve a density scale length below the cell anyway; the average
-   bounds |grad(ln n)| by about 2/dx once the density is positivity-limited.
+   here each component is divided by rho at the 2^cdim Gauss-Legendre nodes and the
+   quotient interpolated to the p=1 basis with the 2-point rule, as every quotient of the
+   solver (pkpm-vars-prim.mac): for p=1 this is the weak division, int phi rho grad(ln n)
+   = int phi grad(rho) for every p=1 phi. Near vacuum the quotient, and with it the source
+   rate of the time-step estimate, can be large.
 
-   Policy: with a non-positive cell average the quotient is set to zero; the kernel returns
-   1 in that case, 0 otherwise. */
+   Policy: at a node where rho <= 0 the quotient is zero; the kernel returns the number of
+   such nodes. */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
@@ -21,7 +21,7 @@ fpprec : 24$
 cvars : [x, y, z]$
 
 calcPKPMVarsGradLnN(fh, funcNm, cdim, basisFun, polyOrder) := block(
-  [varsC, bC, NC, nodes, weights, NN, nodeSub, rho_e, g_e, n, k, d, g_c],
+  [varsC, bC, NC, nodes, weights, NN, nodeSub, rho_e, g_e, n, k, d, e, g_c],
 
   kill(varsC, bC),
   [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
@@ -33,8 +33,9 @@ calcPKPMVarsGradLnN(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "GKYL_CU_DH int ~a(const double *rho, const double *grad_rho, double* GKYL_RESTRICT grad_ln_n) ~%{ ~%", funcNm),
   printf(fh, "  // rho:       Input mass density. ~%"),
   printf(fh, "  // grad_rho:  Input weak gradient of [rho, 0, 0] (pkpm_vars_grad_u_* layout, cdim x 3 expansions). ~%"),
-  printf(fh, "  // grad_ln_n: Output [d_x ln n, ...] (cdim expansions): grad(rho) divided by the cell average of rho. ~%"),
-  printf(fh, "  // Returns 1 if the cell average of rho is not positive (the quotient is zero then), 0 otherwise. ~%"),
+  printf(fh, "  // grad_ln_n: Output [d_x ln n, ...] (cdim expansions): grad(rho)/rho at the ~a Gauss-Legendre nodes, ~%", NN),
+  printf(fh, "  //            interpolated to the p=1 basis (the weak division at p=1). ~%"),
+  printf(fh, "  // Returns the number of nodes where rho <= 0 (the quotient is zero there). ~%"),
   printf(fh, " ~%"),
   for d : 1 thru cdim do (
     printf(fh, "  const double *grho_~a = &grad_rho[~a]; ~%", cvars[d], (d-1)*3*NC),
@@ -42,15 +43,29 @@ calcPKPMVarsGradLnN(fh, funcNm, cdim, basisFun, polyOrder) := block(
   ),
   printf(fh, " ~%"),
 
-  printf(fh, "  const double rho_avg = ~a*rho[0]; ~%", float(bC[1])),
-  printf(fh, "  const double inv_rho = rho_avg > 0.0 ? 1.0/rho_avg : 0.0; ~%"),
-  printf(fh, " ~%"),
-
-  for d : 1 thru cdim do (
-    for k : 1 thru NC do
-      printf(fh, "  gln_~a[~a] = inv_rho*grho_~a[~a]; ~%", cvars[d], k-1, cvars[d], k-1)
+  rho_e : doExpand1(rho, bC),
+  g_e : makelist(doExpand1(eval_string(sconcat("grho_", cvars[d])), bC), d, 1, cdim),
+  printf(fh, "  double gln_n[~a][~a] = {{0.0}}; ~%", cdim, NN),
+  printf(fh, "  int num_null = 0; ~%"),
+  for n : 1 thru NN do (
+    nodeSub : makelist(varsC[d]=nodes[n][d], d, 1, cdim),
+    printf(fh, "  { ~%"),
+    printf(fh, "    const double rho_q = ~a; ~%", float(expand(subst(nodeSub, rho_e)))),
+    printf(fh, "    if (rho_q > 0.0) { ~%"),
+    printf(fh, "      const double inv_rho = 1.0/rho_q; ~%"),
+    for d : 1 thru cdim do
+      printf(fh, "      gln_n[~a][~a] = (~a)*inv_rho; ~%", d-1, n-1, float(expand(subst(nodeSub, g_e[d])))),
+    printf(fh, "    } else { ~%"),
+    printf(fh, "      num_null += 1; ~%"),
+    printf(fh, "    } ~%"),
+    printf(fh, "  } ~%")
   ),
   printf(fh, " ~%"),
-  printf(fh, "  return rho_avg > 0.0 ? 0 : 1; ~%"),
+  for d : 1 thru cdim do (
+    g_c : makelist(sum(weights[n]*subst(makelist(varsC[e]=nodes[n][e], e, 1, cdim), bC[k])*gln_n[d-1][n-1], n, 1, NN), k, 1, NC),
+    writeCExprs1(eval_string(sconcat("gln_", cvars[d])), g_c)
+  ),
+  printf(fh, " ~%"),
+  printf(fh, "  return num_null; ~%"),
   printf(fh, "} ~%")
 )$

@@ -6,13 +6,15 @@
    basis of gkyl_cart_modal_hybrid for one velocity dimension, which the
    generator asserts).
 
-   The PKPM node counts differ from the Vlasov tables: three Gauss-Legendre
-   points per surface direction everywhere (transverse configuration
-   directions of a configuration face, v_par on a configuration face, and
-   every configuration direction of the v_par face), because the PKPM face
-   integrands reach degree five (v_par b F phi in v_par; bb:grad(u) F phi in
-   configuration space), and the HLL/upwind fluxes are only piecewise
-   polynomial. One header per configuration dimension,
+   The PKPM node counts differ from the Vlasov tables: on a configuration face five
+   Gauss-Legendre points per transverse configuration direction (pkpmConfFluxNumPts; the
+   first-harmonic flux xi H (e_d - b b_d) against the test function reaches degree seven and the
+   fluid energy flux of its moments degree eight there, plan 17.14) and three in v_par
+   (pkpmConfFluxNumWPts; V_n M0 against the test function: degree five); on the v_par face five
+   points per configuration direction (pkpmVelFluxNumPts), because the first-harmonic w flux
+   reaches degree nine there (H t = (4 theta G - 2 theta^2 F) t, with t = I_perp(C - U^T b - w g)
+   of degree five). The HLL/upwind fluxes are piecewise polynomial; the rules are exact where a
+   face is upwind. One header per configuration dimension,
    gkyl_pkpm_flux_surf_tables_<c>x1v_p1.h, with the tag pkpm_<c>x1v_p1:
 
      vst_<tag>_ph_x<d>  / vst_<tag>_prj_x<d>   configuration face d (producer /
@@ -30,7 +32,9 @@ load(stringproc)$
 fpprec : 24$
 
 pkpmFluxTag(cdim) := sconcat("pkpm_", cdim, "x1v_p1")$
-pkpmFluxNumPts : 3$
+pkpmConfFluxNumPts : 5$
+pkpmConfFluxNumWPts : 3$
+pkpmVelFluxNumPts : 5$
 
 /* Include line of the table header of a cdim (shared by the flux generators). */
 pkpmFluxTabInclude(fh, cdim) :=
@@ -56,7 +60,7 @@ loadPKPMPhaseBasis(cdim) := block([lt, pk, lh],
    so every generator keeps private copies (pkC, pkV, ...) of what it needs. */
 writePKPMFluxTabHeader(fh, cdim) := block(
   [tag, pkC, pkV, pkP, pkbP, d, cv, surfCVars, nodes_crem, nodes_vvol,
-   nodes_conf, sz, szp, vv, lb],
+   nodes_conf, sz, szp, vv, lb, i],
   tag : pkpmFluxTag(cdim),
   lb : loadPKPMPhaseBasis(cdim),
   pkC : copylist(lb[1]), pkV : copylist(lb[3]), pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
@@ -64,8 +68,9 @@ writePKPMFluxTabHeader(fh, cdim) := block(
 
   printf(fh, "#pragma once ~%"),
   printf(fh, "// Generated nodal surface-evaluation tables of the PKPM surface-flux kernels ~%"),
-  printf(fh, "// (see gkylcas/pkpm/pkpm/pkpm-flux-tables.mac): three Gauss-Legendre points ~%"),
-  printf(fh, "// per surface direction. Header-static so both host and device ~%"),
+  printf(fh, "// (see gkylcas/pkpm/pkpm/pkpm-flux-tables.mac): five Gauss-Legendre points per ~%"),
+  printf(fh, "// transverse configuration direction and three in v_par on configuration faces, five ~%"),
+  printf(fh, "// per configuration direction on the v_par face. Header-static so both host and device ~%"),
   printf(fh, "// instantiations of GKYL_CU_DH kernels can read them; unused arrays are ~%"),
   printf(fh, "// elided per TU. ~%"),
   printf(fh, "#include <gkyl_util.h> ~%"),
@@ -73,18 +78,18 @@ writePKPMFluxTabHeader(fh, cdim) := block(
   printf(fh, "#include <gkyl_vlasov_surf_nod2mod_meta.h> ~%"),
 
   /* Configuration faces: outer = transverse configuration nodes, inner = v_par nodes. */
-  nodes_vvol : gaussOrd(pkpmFluxNumPts, 1),
+  nodes_vvol : gaussOrd(pkpmConfFluxNumWPts, 1),
   for d : 1 thru cdim do (
     cv : pkC[d],
     surfCVars : delete(cv, pkC),
-    nodes_crem : if cdim > 1 then gaussOrd(pkpmFluxNumPts, cdim-1) else [1],
+    nodes_crem : if cdim > 1 then gaussOrd(pkpmConfFluxNumPts, cdim-1) else [1],
     sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_x", d-1), pkbP,
       surfCVars, cv, pkV, nodes_crem, nodes_vvol, false, false, false),
     printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_x~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
       tag, d-1, length(pkbP), sz[1], sz[2], length(nodes_crem), length(nodes_vvol), 0, 0),
     szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_x", d-1), pkbP,
       basisFromVars("tenhyb", delete(cv, pkP), 1),
-      surfCVars, cv, pkV, pkpmFluxNumPts, pkpmFluxNumPts),
+      surfCVars, cv, pkV, pkpmConfFluxNumPts, pkpmConfFluxNumWPts),
     printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_x~a_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
       tag, d-1, szp[1], length(pkbP), szp[2], szp[3], szp[4], szp[5], 0)
   ),
@@ -92,7 +97,12 @@ writePKPMFluxTabHeader(fh, cdim) := block(
   /* v_par face: outer = all configuration nodes, no inner variables. The
      configuration basis and its derivatives at these nodes, for the force
      producers (b, grad u, div b, theta, a_P at the face nodes). */
-  nodes_conf : gaussOrd(pkpmFluxNumPts, cdim),
+  nodes_conf : gaussOrd(pkpmVelFluxNumPts, cdim),
+  /* the node coordinates (node-major), for the evaluation of the stored coefficients there */
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double vst_~a_conf_nodes[~a] = { ~%", tag, cdim*length(nodes_conf)),
+  for i : 1 thru length(nodes_conf) do
+    for d : 1 thru cdim do printf(fh, "  ~a, ~%", float(nodes_conf[i][d])),
+  printf(fh, "}; ~%"),
   emitTabMatrix(fh, sconcat("vst_", tag, "_conf_ev"), lb[2], pkC, nodes_conf),
   for d : 1 thru cdim do
     emitTabMatrix(fh, sconcat("vst_", tag, "_conf_dx", d-1),
@@ -103,7 +113,7 @@ writePKPMFluxTabHeader(fh, cdim) := block(
     tag, length(pkbP), sz[1], sz[2], length(nodes_conf), 1, 0, 0),
   szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_v0"), pkbP,
     basisFromVars("tenhyb", delete(vv, pkP), 1),
-    pkC, vv, [], pkpmFluxNumPts, pkpmFluxNumPts),
+    pkC, vv, [], pkpmVelFluxNumPts, pkpmVelFluxNumPts),
   printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_prj_meta vst_~a_prj_v0_meta = { .nk = ~a, .np = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .fhat_off = ~a }; ~%",
     tag, szp[1], length(pkbP), szp[2], szp[3], szp[4], szp[5], 0)
 )$

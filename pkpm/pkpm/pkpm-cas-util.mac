@@ -1,6 +1,15 @@
 /* pkpm-cas-util.mac --------------------------------------------------------------
    Shared writers of the refactored PKPM generators. */
 load("util_maxima/out-scripts.mac")$
+load(orthopoly)$
+
+/* Orthonormal Legendre polynomial of degree n on [-1, 1], and the tensor basis of degree <= 2 per
+   direction of the stored first-harmonic coefficients (mode k = k0 + 3 k1 + 9 k2). */
+pkpmLeg(n, v) := sqrt((2*n + 1)/2)*legendre_p(n, v)$
+pkpmP2Basis(vars) := block([cdim, n2, k, d],
+  cdim : length(vars), n2 : 3^cdim,
+  makelist(product(pkpmLeg(mod(floor((k-1)/3^(d-1)), 3), vars[d]), d, 1, cdim), k, 1, n2)
+)$
 
 /* Integer powers print as C's pow(): walk the expression and replace a^n
    (integer n >= 2) by pow(a, n); indexed coefficients and atoms pass through. */

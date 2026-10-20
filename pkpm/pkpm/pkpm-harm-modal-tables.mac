@@ -1,0 +1,96 @@
+/* pkpm-harm-modal-tables.mac ----------------------------------------------------
+   Constant tables of the modal (sum-factorized) volume integrals of the first-harmonic terms of
+   the PKPM kinetic equations (pkpm/zero/gkyl_dg_pkpm_harm_vol_priv.h): every coefficient is an
+   expansion in the tensor product of orthonormal Legendre polynomials Phat_n on [-1, 1],
+   multiplied factor by factor with the 1D recurrence, and integrated exactly against the test
+   function times the distribution with 1D tables. One header, gkyl_pkpm_harm_modal_tables.h:
+
+     pkpm_harm_xp_up[n], pkpm_harm_xp_dn[n]   Phat_1 Phat_n = up[n] Phat_{n+1} + dn[n] Phat_{n-1}
+     pkpm_harm_t1[i][k][j]                    int Phat_i Phat_k Phat_j, i, j <= 1, k <= 2
+     pkpm_harm_mw[r][a][b]                    int Phat_a eta^r Phat_b, r, a, b <= 2
+     pkpm_harm_nw[r][a][b]                    int Phat_a' eta^r Phat_b, r, a, b <= 2
+
+   and, per configuration dimension c (tag <c>x1v_p1), the maps of the gkyl bases onto tensor
+   Legendre degrees, checked symbolically (an error stops the generation if a basis function is
+   not exactly a product of orthonormal 1D Legendre factors):
+
+     pkpm_harm_<c>x1v_p1_conf_deg[NC*3]       1D degrees of each configuration basis function
+     pkpm_harm_<c>x1v_p1_phase_conf[NP]       configuration basis function of each phase one
+     pkpm_harm_<c>x1v_p1_phase_wdeg[NP]       its Legendre degree in w */
+
+load("core/modal-basis.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load(orthopoly)$
+load(stringproc)$
+fpprec : 24$
+
+pkpmLegHat(n, v) := sqrt((2*n + 1)/2)*legendre_p(n, v)$
+
+pkpmEmitArray(fh, name, vals) := block([i],
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const double ~a[~a] = { ~%", name, length(vals)),
+  for i : 1 thru length(vals) do printf(fh, "  ~a, ~%", float(vals[i])),
+  printf(fh, "}; ~%")
+)$
+
+pkpmEmitIntArray(fh, name, vals) := block([i],
+  printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const int ~a[~a] = { ", name, length(vals)),
+  for i : 1 thru length(vals) do printf(fh, "~a~a", vals[i], if i < length(vals) then ", " else ""),
+  printf(fh, " }; ~%")
+)$
+
+writePKPMHarmModal1D(fh) := block([up, dn, t1, mw, nw, n, i, j, k, r, a, b, e],
+  up : makelist(0, n, 0, 5), dn : makelist(0, n, 0, 5),
+  for n : 0 thru 5 do (
+    e : expand(pkpmLegHat(1, x)*pkpmLegHat(n, x)),
+    up[n+1] : integrate(e*pkpmLegHat(n+1, x), x, -1, 1),
+    dn[n+1] : if n > 0 then integrate(e*pkpmLegHat(n-1, x), x, -1, 1) else 0,
+    if radcan(e - up[n+1]*pkpmLegHat(n+1, x) - dn[n+1]*(if n > 0 then pkpmLegHat(n-1, x) else 0)) # 0 then
+      error("writePKPMHarmModal1D: recurrence check failed")
+  ),
+  pkpmEmitArray(fh, "pkpm_harm_xp_up", up),
+  pkpmEmitArray(fh, "pkpm_harm_xp_dn", dn),
+  t1 : [],
+  for i : 0 thru 1 do for k : 0 thru 2 do for j : 0 thru 1 do
+    t1 : endcons(integrate(pkpmLegHat(i, x)*pkpmLegHat(k, x)*pkpmLegHat(j, x), x, -1, 1), t1),
+  pkpmEmitArray(fh, "pkpm_harm_t1", t1),
+  mw : [], nw : [],
+  for r : 0 thru 2 do for a : 0 thru 2 do for b : 0 thru 2 do (
+    mw : endcons(integrate(pkpmLegHat(a, x)*x^r*pkpmLegHat(b, x), x, -1, 1), mw),
+    nw : endcons(integrate(diff(pkpmLegHat(a, x), x)*x^r*pkpmLegHat(b, x), x, -1, 1), nw)
+  ),
+  pkpmEmitArray(fh, "pkpm_harm_mw", mw),
+  pkpmEmitArray(fh, "pkpm_harm_nw", nw)
+)$
+
+writePKPMHarmModalMaps(fh, cdim) := block(
+  [lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, tag, cdeg, pconf, pwdeg, k, q, r, s, found, prodS, d],
+  tag : sconcat("pkpm_harm_", cdim, "x1v_p1"),
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]),
+  pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
+  NC : length(pkbC), NP : length(pkbP),
+  cdeg : [],
+  for k : 1 thru NC do (
+    found : false,
+    for s : 0 thru 2^cdim - 1 do if not found then (
+      prodS : product(pkpmLegHat(mod(floor(s/2^(d-1)), 2), pkC[d]), d, 1, cdim),
+      if radcan(pkbC[k] - prodS) = 0 then (
+        found : true,
+        cdeg : append(cdeg, makelist(if d <= cdim then mod(floor(s/2^(d-1)), 2) else 0, d, 1, 3))
+      )
+    ),
+    if not found then error("writePKPMHarmModalMaps: configuration basis function not a Legendre product", k)
+  ),
+  pconf : [], pwdeg : [],
+  for k : 1 thru NP do (
+    found : false,
+    for q : 1 thru NC do for r : 0 thru 2 do if not found then
+      if radcan(pkbP[k] - pkbC[q]*pkpmLegHat(r, pkV[1])) = 0 then (
+        found : true, pconf : endcons(q-1, pconf), pwdeg : endcons(r, pwdeg)
+      ),
+    if not found then error("writePKPMHarmModalMaps: phase basis function not a product", k)
+  ),
+  pkpmEmitIntArray(fh, sconcat(tag, "_conf_deg"), cdeg),
+  pkpmEmitIntArray(fh, sconcat(tag, "_phase_conf"), pconf),
+  pkpmEmitIntArray(fh, sconcat(tag, "_phase_wdeg"), pwdeg)
+)$

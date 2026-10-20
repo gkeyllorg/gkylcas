@@ -1,11 +1,13 @@
 /* pkpm-kinetic-conf-vol.mac --------------------------------------------------
    Volume kernel of the configuration-space pass (stage A) of the factored, thermal-velocity
-   normalized p=1 PKPM kinetic update. The evolved array is [F, G] = [xi F_0/n, G/(n xi)]
-   on the grid of w = v_par/xi (so that M0(F) = 1, M1(F) = 0, M0(G) = theta = T_perp/T and
-   M2(F) + 2 M0(G) = 3); with the weak form integral(phi dF/dt) = + integral(grad phi . flux)
-   - surface terms, the kernel increments out = [out_F, out_G] by
+   normalized p=1 PKPM kinetic update. The evolved array is the eight blocks [F, G, M0_perp,
+   N_perp] with [F, G] = [xi F_0/n, G/(n xi)] on the grid of w = v_par/xi (so that M0(F) = 1,
+   M1(F) = 0, M0(G) = theta = T_perp/T and M2(F) + 2 M0(G) = 3); with the weak form
+   integral(phi dF/dt) = + integral(grad phi . flux) - surface terms, the kernel increments out by
 
-     streaming      integral( d_x phi . (xi w b + u) [F, G] )               (all conf directions)
+     streaming      integral( d_x phi . (xi w b + u) X )    (all eight blocks X, all conf directions)
+
+   and the F, G blocks by
      w forces       integral( d_w phi  ( -(w K + w^2 b.grad xi) [F, G] + xi beta [G, H] ) )
      F source       integral( phi ( -xi w b.grad(ln n) F ) )
      G source       integral( phi ( (K - div u - xi w beta - 2 w b.grad xi - xi w b.grad(ln n)) G ) )
@@ -34,8 +36,8 @@
                              the in-cell gradient of u feeds a slope sawtooth back into
                              the sources; the weak gradient cancels it, and b is treated
                              the same way for consistency
-     b.grad(ln n), b.grad xi tensor p=2 (grad(ln n) is the weak gradient of rho over the
-                             cell average of rho, pkpm-vars-grad-ln-n.mac; grad xi the weak
+     b.grad(ln n), b.grad xi tensor p=2 (grad(ln n) is the nodal quotient of the weak
+                             gradient of rho by rho, pkpm-vars-grad-ln-n.mac; grad xi the weak
                              gradient of [xi, 0, 0] by pkpm_vars_grad_u_*)
      theta^2                 tensor p=2
      K                       tensor p=3 (three p=1 factors)
@@ -55,6 +57,8 @@ fpprec : 24$
 
 cvars : [x, y, z]$
 dx1s : [dx10, dx11, dx12]$
+/* Names of the first-harmonic blocks 2..7 of the distribution array. */
+hBlk : [M0x, M0y, M0z, Nx, Ny, Nz]$
 
 
 calcPKPMKineticConfVol(fh, funcNm, cdim) := block(
@@ -62,7 +66,8 @@ calcPKPMKineticConfVol(fh, funcNm, cdim) := block(
    vTrans, bx_e, by_e, bz_e, b_e, ux_e, uy_e, uz_e, u_e, theta_e, F_e, G_e,
    div_b_c, theta_sq_c, K_c, div_b_e, theta_sq_e, K_e, H_c, H_e, clst, gln_e, bgn_c, bgn_e,
    xi_e, gxi_e, bgx_c, bgx_e, cflXi, cflBgx,
-   stream_F, stream_G, force_F, force_G, src_F, src_G, d, i, j, cflK, cflDivB, cflBgn, gu_e],
+   stream_F, stream_G, force_F, force_G, src_F, src_G, d, i, j, cflK, cflDivB, cflBgn, gu_e,
+   X_e, stream_X],
 
   lb : loadPKPMPhaseBasis(cdim),
   pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]), pkbV : copylist(lb[4]),
@@ -101,8 +106,8 @@ calcPKPMKineticConfVol(fh, funcNm, cdim) := block(
   printf(fh, "  // grad_xi:      Weak gradient of [xi, 0, 0] (pkpm_vars_grad_u_* layout). ~%"),
   printf(fh, "  // grad_ln_n:    grad(ln n) = grad(rho)/rho, cdim expansions. ~%"),
   printf(fh, "  // theta:        T_perp/T = M0(G). ~%"),
-  printf(fh, "  // f:            Input Jacobian-weighted normalized distribution functions J [F, G]. ~%"),
-  printf(fh, "  // out:          Incremented output for J [F, G]. ~%"),
+  printf(fh, "  // f:            Input Jacobian-weighted normalized distributions J [F, G, M0_perp, N_perp]. ~%"),
+  printf(fh, "  // out:          Incremented output for J [F, G, M0_perp, N_perp]. ~%"),
   printf(fh, "  // Returns the CFL frequency estimate of the source rates. ~%"),
   for d : 1 thru cdim do
     printf(fh, "  const double dx1~a = 2.0/(dxv[~a]*jacob_pos[~a]); ~%", d-1, d-1, 2*(d-1)),
@@ -128,6 +133,10 @@ calcPKPMKineticConfVol(fh, funcNm, cdim) := block(
   printf(fh, "  const double *G_1 = &f[~a]; ~%", 1*NP),
   printf(fh, "  double *out_F_0 = &out[~a]; ~%", 0*NP),
   printf(fh, "  double *out_G_1 = &out[~a]; ~%", 1*NP),
+  for i : 1 thru 6 do (
+    printf(fh, "  const double *~a = &f[~a]; ~%", hBlk[i], (i+1)*NP),
+    printf(fh, "  double *out_~a = &out[~a]; ~%", hBlk[i], (i+1)*NP)
+  ),
   printf(fh, " ~%"),
 
   vTrans : vx*dvpar/2 + wvpar,
@@ -214,6 +223,16 @@ calcPKPMKineticConfVol(fh, funcNm, cdim) := block(
   pkpmWriteIncrExprs(fh, out_F_0, stream_F + force_F + src_F, clst),
   printf(fh, "  // Streaming, w forces and mirror volume terms, and sources of G. ~%"),
   pkpmWriteIncrExprs(fh, out_G_1, stream_G + force_G + src_G, clst),
+  /* The first-harmonic blocks stream with the same operator (their other terms are in the modal
+     updater gkyl_dg_pkpm_harm_vol). */
+  for i : 1 thru 6 do (
+    X_e : doExpand1(hBlk[i], pkbP),
+    stream_X : 0,
+    for d : 1 thru cdim do
+      stream_X : stream_X + dx1s[d]*calcInnerProdList(pkP, 1, diff(pkbP, pkC[d]), (xi_e*vTrans*b_e[d] + u_e[d])*X_e),
+    printf(fh, "  // Streaming of ~a. ~%", hBlk[i]),
+    pkpmWriteIncrExprs(fh, concat(out_, hBlk[i]), stream_X, clst)
+  ),
   printf(fh, " ~%"),
 
   /* CFL estimate of the source rates at the cell center. */

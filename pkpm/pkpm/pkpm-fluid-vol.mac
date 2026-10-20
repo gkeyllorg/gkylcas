@@ -3,13 +3,17 @@
    (p=1) PKPM solver:
 
      integral( d_d phi M_d ),
-     integral( d_d phi ( M_i u_d + P_id ) ),   P_id = p_perp delta_id + (p_par - p_perp) b_i b_d,
-     integral( d_d phi ( u_d E + P_id u_i + q_d ) ),   q_d = b_d (q_par + 2 q_perp)/2,
+     integral( d_d phi ( M_i u_d + P_id ) ),
+       P_id = p_perp delta_id + (p_par - p_perp) b_i b_d + s_i b_d + b_i s_d,
+     integral( d_d phi ( u_d E + P_id u_i + q_d ) ),   q_d = b_d (q_par + 2 q_perp)/2 + r_d,
 
-   integrated exactly from the modal factors (the evolved [rho, M, E], the nodal flow u,
-   the kinetic coupling moments [p_par, p_perp, q_par, q_perp] formed by the caller from
-   the density, the thermal speed and the normalized moments, and the unit vector b, all
-   p=1): no product is projected onto p=1 before the contraction. The coupling moments
+   the pressure tensor and heat flux of the moment map of the kinetic flux of the eight blocks
+   (plan 17.14): s = rho xi^2 int w M0_perp dw is the parallel-perpendicular stress and
+   r = rho xi^3 int (w^2 M0_perp/2 + N_perp) dw the perpendicular heat flux. Integrated exactly
+   from the modal factors (the evolved [rho, M, E], the nodal flow u, the kinetic coupling moments
+   [p_par, p_perp, q_par, q_perp, s (3), r (3)] formed by the caller from the density, the thermal
+   speed and the normalized moments, and the unit vector b, all p=1): no product is projected onto
+   p=1 before the contraction. The coupling moments
    are the same information the original PKPM momentum update received. Returns the center-cell CFL estimate
    sum_d (2p+1)/2 dx1_d |u_d| (the face kernels add the acoustic speed bound). */
 load("core/modal-basis.mac")$
@@ -22,7 +26,8 @@ cvars : [x, y, z]$
 dx1s : [dx10, dx11, dx12]$
 
 calcPKPMFluidVol(fh, funcNm, cdim) := block(
-  [varsC, bC, NC, E_e, ppar_e, pperp_e, qpar_e, qperp_e, b_e, u_e, M_e, P_e, q_e, i, j, d, vol, cflPt, umid],
+  [varsC, bC, NC, E_e, ppar_e, pperp_e, qpar_e, qperp_e, b_e, u_e, M_e, P_e, q_e, s_e, r_e, i, j, d,
+   vol, cflPt, umid],
 
   kill(varsC, bC),
   [varsC, bC] : loadBasis("ser", cdim, 1),
@@ -36,7 +41,9 @@ calcPKPMFluidVol(fh, funcNm, cdim) := block(
   printf(fh, "  // dxv[NDIM]:        Cell spacing (computational). ~%"),
   printf(fh, "  // jacob_pos:        Position-map Jacobian per configuration direction (cdim blocks of 2 equal ~%"),
   printf(fh, "  //                   entries); the divergence in direction d carries 1/J_d. ~%"),
-  printf(fh, "  // vlasov_pkpm_moms: Jacobian-weighted kinetic coupling moments J [p_par, p_perp, q_par, q_perp]. ~%"),
+  printf(fh, "  // vlasov_pkpm_moms: Jacobian-weighted kinetic coupling moments J [p_par, p_perp, q_par, q_perp, ~%"),
+  printf(fh, "  //                   s (x, y, z), r (x, y, z)]: s the parallel-perpendicular stress, r the ~%"),
+  printf(fh, "  //                   perpendicular heat flux. ~%"),
   printf(fh, "  // bvar:             Magnetic field unit vector [bx, by, bz]. ~%"),
   printf(fh, "  // u:                Flow velocity [ux, uy, uz]. ~%"),
   printf(fh, "  // fluid:            Evolved Jacobian-weighted fluid state J [rho, rho ux, rho uy, rho uz, E]. ~%"),
@@ -47,6 +54,10 @@ calcPKPMFluidVol(fh, funcNm, cdim) := block(
   printf(fh, "  const double *pperp = &vlasov_pkpm_moms[~a]; ~%", 1*NC),
   printf(fh, "  const double *qpar = &vlasov_pkpm_moms[~a]; ~%", 2*NC),
   printf(fh, "  const double *qperp = &vlasov_pkpm_moms[~a]; ~%", 3*NC),
+  for i : 1 thru 3 do (
+    printf(fh, "  const double *s~a = &vlasov_pkpm_moms[~a]; ~%", cvars[i], (3+i)*NC),
+    printf(fh, "  const double *r~a = &vlasov_pkpm_moms[~a]; ~%", cvars[i], (6+i)*NC)
+  ),
   printf(fh, "  const double *E = &fluid[~a]; ~%", 4*NC),
   for i : 1 thru 3 do (
     printf(fh, "  const double *b~a = &bvar[~a]; ~%", cvars[i], (i-1)*NC),
@@ -66,8 +77,11 @@ calcPKPMFluidVol(fh, funcNm, cdim) := block(
   b_e : [doExpand1(bx, bC), doExpand1(by, bC), doExpand1(bz, bC)],
   u_e : [doExpand1(ux, bC), doExpand1(uy, bC), doExpand1(uz, bC)],
   M_e : [doExpand1(Mx, bC), doExpand1(My, bC), doExpand1(Mz, bC)],
-  P_e : makelist(makelist((ppar_e - pperp_e)*b_e[i]*b_e[j] + (if i = j then pperp_e else 0), j, 1, 3), i, 1, 3),
-  q_e : makelist(b_e[d]*(qpar_e + 2*qperp_e)/2, d, 1, 3),
+  s_e : [doExpand1(sx, bC), doExpand1(sy, bC), doExpand1(sz, bC)],
+  r_e : [doExpand1(rx, bC), doExpand1(ry, bC), doExpand1(rz, bC)],
+  P_e : makelist(makelist((ppar_e - pperp_e)*b_e[i]*b_e[j] + (if i = j then pperp_e else 0)
+    + s_e[i]*b_e[j] + b_e[i]*s_e[j], j, 1, 3), i, 1, 3),
+  q_e : makelist(b_e[d]*(qpar_e + 2*qperp_e)/2 + r_e[d], d, 1, 3),
 
   vol : 0,
   for d : 1 thru cdim do

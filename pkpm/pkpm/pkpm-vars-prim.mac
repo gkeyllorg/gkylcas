@@ -4,13 +4,15 @@
 
      u = M/rho,   xi^2 = (2 E/rho - |u|^2)/3,   xi = sqrt(xi^2),   p = rho xi^2,
 
-   interpolated to the p=1 basis with the 2-point rule (the nodal quotient, which for a
-   p=1 rho positive at the nodes is the weak division integrated by that rule). The flow
-   u (3 expansions) and [xi, xi^2, p] (3 expansions) are stored: the kinetic equations use
-   u and xi, the fluid kernels the pressures built from p.
+   interpolated to the p=1 basis with the 2-point rule. For p=1 (tensor = serendipity for
+   cdim <= 3) the nodal quotient IS the weak division: rho u phi has degree <= 3 per direction,
+   which the 2-point rule integrates exactly, so int phi rho u = int phi M for every p=1 phi,
+   and that solution is unique when rho > 0 at the nodes. Every quotient of the solver follows
+   this pattern. The flow u (3 expansions) and [xi, xi^2, p] (3 expansions) are stored: the
+   kinetic equations use u and xi, the fluid kernels the pressures built from p.
 
-   Policy: at a node where rho <= 0 or xi^2 <= 0 all outputs are set to zero and the kernel
-   returns the number of such nodes. */
+   Policy: at a node where rho <= 0 all outputs are zero there; where rho > 0 but xi^2 <= 0,
+   u = M/rho and [xi, xi^2, p] are zero there. The kernel returns the number of such nodes. */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
@@ -30,10 +32,10 @@ calcPKPMVarsPrim(fh, funcNm, cdim) := block(
   printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH int ~a(const double *fluid, double* GKYL_RESTRICT u, double* GKYL_RESTRICT xi) ~%{ ~%", funcNm),
   printf(fh, "  // fluid: Input fluid state [rho, rho ux, rho uy, rho uz, E]. ~%"),
-  printf(fh, "  // u:     Output flow velocity [ux, uy, uz] (nodal quotient M/rho). ~%"),
+  printf(fh, "  // u:     Output flow velocity [ux, uy, uz]: the nodal quotient M/rho, the weak division at p=1. ~%"),
   printf(fh, "  // xi:    Output [xi, xi^2, p], xi^2 = (2 E/rho - |u|^2)/3, p = rho xi^2, at the ~a Gauss-Legendre nodes, ~%", NN),
   printf(fh, "  //        interpolated to the p=1 basis. ~%"),
-  printf(fh, "  // Returns the number of nodes where rho <= 0 or xi^2 <= 0 (all outputs are zero there). ~%"),
+  printf(fh, "  // Returns the number of nodes where rho <= 0 (all outputs zero there) or xi^2 <= 0 ([xi, xi^2, p] zero there). ~%"),
   printf(fh, " ~%"),
   printf(fh, "  const double *rho = &fluid[~a]; ~%", 0*NC),
   printf(fh, "  const double *Mx = &fluid[~a]; ~%", 1*NC),
@@ -67,8 +69,8 @@ calcPKPMVarsPrim(fh, funcNm, cdim) := block(
     printf(fh, "    if (rho_q > 0.0) { ~%"),
     printf(fh, "      const double inv_rho = 1.0/rho_q; ~%"),
     printf(fh, "      const double xisq = (2.0*E_q - (M0_q*M0_q + M1_q*M1_q + M2_q*M2_q)*inv_rho)*inv_rho/3.0; ~%"),
+    printf(fh, "      u_n[0][~a] = M0_q*inv_rho; u_n[1][~a] = M1_q*inv_rho; u_n[2][~a] = M2_q*inv_rho; ~%", n-1, n-1, n-1),
     printf(fh, "      if (xisq > 0.0) { ~%"),
-    printf(fh, "        u_n[0][~a] = M0_q*inv_rho; u_n[1][~a] = M1_q*inv_rho; u_n[2][~a] = M2_q*inv_rho; ~%", n-1, n-1, n-1),
     printf(fh, "        xisq_n[~a] = xisq; xi_n[~a] = sqrt(xisq); p_n[~a] = rho_q*xisq; ~%", n-1, n-1, n-1),
     printf(fh, "      } else { num_null += 1; } ~%"),
     printf(fh, "    } else { ~%"),

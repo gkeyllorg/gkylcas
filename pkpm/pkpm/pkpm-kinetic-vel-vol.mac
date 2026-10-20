@@ -1,16 +1,23 @@
 /* pkpm-kinetic-vel-vol.mac ---------------------------------------------------
    Volume kernel of the velocity-space pass (stage B) of the factored, thermal-velocity
-   normalized p=1 PKPM kinetic update: the closure terms
+   normalized p=1 PKPM kinetic update, on the eight blocks [F, G, M0_perp (x, y, z),
+   N_perp (x, y, z)]: the closure terms
 
-     integral( d_w phi (alpha_0 + c w) [F, G] )     pressure force alpha_0 = a_P/xi and heating rate c
-     integral( phi c_0 [F, G] )                     density renormalization of F and G
-     integral( phi 2 c G )                          perpendicular contraction of G
+     integral( d_w phi (alpha_0 + c w) U )          pressure force alpha_0 = a_P/xi and heating rate c,
+                                                    every block U
+     integral( phi c_0 U )                          density renormalization, every block
+     integral( phi k c U )                          dilation of the weight W^k: k = 2 for G,
+                                                    1 for M0_perp, 3 for N_perp
+     integral( phi a_perp . M0_perp )               perpendicular force: G source
+     integral( phi a_perp F ), integral( phi 2 G a_perp )   M0_perp and N_perp sources
 
-   integrated exactly (c_0, alpha_0 and c are p=1 in configuration space; the test
-   function and the distributions are p=1 in configuration space and p=2 in w). Everything
-   else of the velocity-space pass is the surface scatter of the stored w fluxes. The
-   returned CFL estimate is the rate |c_0| + 2|c| at the cell center: the force speeds are
-   accumulated by the w flux updater. */
+   integrated exactly (c_0, alpha_0, c and a_perp are p=1 in configuration space; the test
+   function and the distributions are p=1 in configuration space and p=2 in w), so that every
+   closure term contributes the bilinear product (closure x moment) that the nodal closure solve
+   charged. Everything else of the velocity-space pass is the surface scatter of the stored w
+   fluxes. The returned CFL estimate is the rate |c_0| + 3|c| at the cell center (a bound of the
+   source eigenvalues c_0 + k c, k = 0 .. 3; the a_perp couplings are nilpotent): the force speeds
+   are accumulated by the w flux updater. */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
@@ -19,7 +26,8 @@ load(stringproc)$
 fpprec : 24$
 
 calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
-  [lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, a0_e, c0_e, ch_e, F_e, G_e, vTrans, force_F, force_G, src_F, src_G, expr, i, cflC0, cflCh, clst],
+  [lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, a0_e, c0_e, ch_e, F_e, G_e, vTrans, force_F, force_G, src_F, src_G, expr, i, cflC0, cflCh, clst,
+   ap_e, M_e, N_e, c, k, force_X, src_X],
 
   lb : loadPKPMPhaseBasis(cdim),
   pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]),
@@ -29,14 +37,16 @@ calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
 
   printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *c_0, const double *alpha_0, const double *c_h, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  const double *c_0, const double *alpha_0, const double *c_h, const double *a_perp,
+  const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:   Cell-center coordinates. ~%"),
   printf(fh, "  // dxv[NDIM]: Cell spacing. ~%"),
   printf(fh, "  // c_0:       Normalization closure (c_0 [F, G] source). ~%"),
   printf(fh, "  // alpha_0:   Pressure force a_P/xi closing the first moment. ~%"),
-  printf(fh, "  // c_h:       Heating rate closing the scalar second moment (force c w, source 2 c G). ~%"),
-  printf(fh, "  // f:         Input normalized distribution functions [F, G]. ~%"),
-  printf(fh, "  // out:       Incremented output [F, G]. ~%"),
+  printf(fh, "  // c_h:       Heating rate closing the scalar second moment (force c w, source k c per block). ~%"),
+  printf(fh, "  // a_perp:    Perpendicular force closing int M0_perp dw [x, y, z]. ~%"),
+  printf(fh, "  // f:         Input normalized distribution functions [F, G, M0_perp, N_perp]. ~%"),
+  printf(fh, "  // out:       Incremented output [F, G, M0_perp, N_perp]. ~%"),
   printf(fh, "  // Returns the CFL frequency estimate of the closure rates. ~%"),
   printf(fh, "  const double dv1 = 2.0/dxv[~a]; ~%", cdim),
   printf(fh, "  const double dvpar = dxv[~a], wvpar = w[~a]; ~%", cdim, cdim),
@@ -44,6 +54,9 @@ calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
   printf(fh, "  const double *G_1 = &f[~a]; ~%", 1*NP),
   printf(fh, "  double *out_F_0 = &out[~a]; ~%", 0*NP),
   printf(fh, "  double *out_G_1 = &out[~a]; ~%", 1*NP),
+  printf(fh, "  const double *M0x = &f[~a], *M0y = &f[~a], *M0z = &f[~a]; ~%", 2*NP, 3*NP, 4*NP),
+  printf(fh, "  const double *Nx = &f[~a], *Ny = &f[~a], *Nz = &f[~a]; ~%", 5*NP, 6*NP, 7*NP),
+  printf(fh, "  const double *apx = &a_perp[~a], *apy = &a_perp[~a], *apz = &a_perp[~a]; ~%", 0, NC, 2*NC),
   printf(fh, " ~%"),
 
   vTrans : vx*dvpar/2 + wvpar,
@@ -66,8 +79,34 @@ calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
   for i : 1 thru NP do
     if expr[i] # 0.0 then printf(fh, "  out_G_1[~a] += ~a; ~%", i-1, apply(collectterms, cons(expr[i], clst))),
   printf(fh, " ~%"),
+  /* First-harmonic closure terms: a_perp . M0_perp in G (separate increments), and the
+     M0_perp (k = 1) and N_perp (k = 3) blocks. */
+  ap_e : [doExpand1(apx, pkbC), doExpand1(apy, pkbC), doExpand1(apz, pkbC)],
+  M_e : [doExpand1(M0x, pkbP), doExpand1(M0y, pkbP), doExpand1(M0z, pkbP)],
+  N_e : [doExpand1(Nx, pkbP), doExpand1(Ny, pkbP), doExpand1(Nz, pkbP)],
+  expr : float(expand(calcInnerProdList(pkP, 1, pkbP, sum(ap_e[c]*M_e[c], c, 1, 3)))),
+  printf(fh, "  // Perpendicular force on G: a_perp . M0_perp. ~%"),
+  for i : 1 thru NP do
+    if expr[i] # 0.0 then printf(fh, "  out_G_1[~a] += ~a; ~%", i-1, apply(collectterms, cons(expr[i], clst))),
+  for c : 1 thru 3 do (
+    force_X : dv1*calcInnerProdList(pkP, 1, diff(pkbP, pkV[1]), (a0_e + ch_e*vTrans)*M_e[c]),
+    src_X : calcInnerProdList(pkP, 1, pkbP, (c0_e + ch_e)*M_e[c] + ap_e[c]*F_e),
+    expr : float(expand(force_X + src_X)),
+    printf(fh, "  // M0_perp component ~a: force, (c_0 + c) M0, a_perp F. ~%", c-1),
+    for i : 1 thru NP do
+      if expr[i] # 0.0 then printf(fh, "  out[~a] += ~a; ~%", (2+c-1)*NP+i-1, apply(collectterms, cons(expr[i], clst)))
+  ),
+  for c : 1 thru 3 do (
+    force_X : dv1*calcInnerProdList(pkP, 1, diff(pkbP, pkV[1]), (a0_e + ch_e*vTrans)*N_e[c]),
+    src_X : calcInnerProdList(pkP, 1, pkbP, (c0_e + 3*ch_e)*N_e[c] + 2*ap_e[c]*G_e),
+    expr : float(expand(force_X + src_X)),
+    printf(fh, "  // N_perp component ~a: force, (c_0 + 3 c) N, 2 G a_perp. ~%", c-1),
+    for i : 1 thru NP do
+      if expr[i] # 0.0 then printf(fh, "  out[~a] += ~a; ~%", (5+c-1)*NP+i-1, apply(collectterms, cons(expr[i], clst)))
+  ),
+  printf(fh, " ~%"),
   cflC0 : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), c0_e))),
   cflCh : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), ch_e))),
-  printf(fh, "  return fabs(~a) + 2.0*fabs(~a); ~%", cflC0, cflCh),
+  printf(fh, "  return fabs(~a) + 3.0*fabs(~a); ~%", cflC0, cflCh),
   printf(fh, "} ~%")
 )$

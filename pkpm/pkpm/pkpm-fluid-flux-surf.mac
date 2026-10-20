@@ -14,20 +14,21 @@ load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 load("core/nodal_operations/quadrature_functions.mac")$
 load("pkpm/pkpm/pkpm-cas-util.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
 load(stringproc)$
 fpprec : 24$
 
 cvars : [x, y, z]$
-pkpmFluidNumPts : 3$
 
-/* Surface basis and nodes of a configuration face: [bSurf, nodes, weights]. For
-   cdim = 1 the face is a point: one basis function 1 with unit weight. */
+/* Surface basis and nodes of a configuration face: [bSurf, nodes, weights], the transverse nodes
+   of the kinetic face flux (pkpmConfFluxNumPts per direction, the gaussOrd values the flux tables
+   use). For cdim = 1 the face is a point: one basis function 1 with unit weight. */
 pkpmFluidSurf(cdim, surfVars) := block([bSurf, ow],
   if cdim = 1 then [[1], [[0]], [1]]
   else (
     bSurf : basisFromVars("ser", surfVars, 1),
-    ow : gaussOrdWeight(pkpmFluidNumPts, cdim-1),
-    [bSurf, ow[1], ow[2]]
+    ow : gaussOrdWeight(pkpmConfFluxNumPts, cdim-1),
+    [bSurf, gaussOrd(pkpmConfFluxNumPts, cdim-1), ow[2]]
   )
 )$
 

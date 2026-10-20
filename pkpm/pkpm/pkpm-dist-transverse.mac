@@ -1,0 +1,87 @@
+/* pkpm-dist-transverse.mac -----------------------------------------------------
+   Transversality projection of the first-harmonic blocks of the normalized p=1 PKPM
+   distributions [F, G, M0_perp (x, y, z), N_perp (x, y, z)]: at the 2^cdim interior Gauss-Legendre
+   nodes of configuration space (the nodes where b = B/|B| is formed, so b is a unit vector there),
+   for every Legendre mode in w,
+
+     M0_perp <- M0_perp - b (b . M0_perp),   N_perp <- N_perp - b (b . N_perp),
+
+   and the projected nodal values are interpolated back to the modal basis (exact: the phase basis
+   is the p=1 configuration basis times the p=2 Legendre basis in w, and the 2-point rule
+   integrates the p=1 products exactly). F and G are not touched. Applied to the state of every
+   stage (plan section 17.11).
+
+   pkpm_dist_transverse_<c>x1v_ser_p1(bvar, f): bvar the field direction of the cell, f the eight
+   blocks of the cell, projected in place. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcPKPMDistTransverse(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, pkV, pkbV, pkP, pkbP, NC, NP, NV, nodes, weights, NN, nodeSub, n, j, k, c, a,
+   blk, V_e, ex, coef],
+
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]), pkbV : copylist(lb[4]),
+  pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
+  NC : length(pkbC),
+  NP : length(pkbP),
+  NV : length(pkbV),
+  [nodes, weights] : gaussOrdWeight(2, cdim),
+  NN : length(nodes),
+
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *bvar, double* GKYL_RESTRICT f) ~%{ ~%", funcNm),
+  printf(fh, "  // bvar: Magnetic field unit vector [bx, by, bz] of the cell. ~%"),
+  printf(fh, "  // f:    Distributions [F, G, M0_perp, N_perp] of the cell; M0_perp and N_perp are projected ~%"),
+  printf(fh, "  //       onto the plane perpendicular to b at the Gauss-Legendre nodes, in place. ~%"),
+  for c : 1 thru 3 do printf(fh, "  const double *b~a = &bvar[~a]; ~%", c-1, (c-1)*NC),
+  for blk : 2 thru 7 do printf(fh, "  double *V~a = &f[~a]; ~%", blk, blk*NP),
+  printf(fh, " ~%"),
+  printf(fh, "  // projected nodal values: [node][vector (M0_perp, N_perp)][Legendre mode in w][component] ~%"),
+  printf(fh, "  double pm[~a][2][~a][3]; ~%", NN, NV),
+  for n : 1 thru NN do (
+    nodeSub : makelist(pkC[d] = nodes[n][d], d, 1, cdim),
+    printf(fh, "  { ~%"),
+    printf(fh, "    const double b_q[3] = {~a, ~a, ~a}; ~%",
+      float(expand(subst(nodeSub, doExpand1(b0, pkbC)))), float(expand(subst(nodeSub, doExpand1(b1, pkbC)))),
+      float(expand(subst(nodeSub, doExpand1(b2, pkbC))))),
+    for a : 0 thru 1 do
+      for j : 1 thru NV do (
+        ex : makelist(float(expand(integrate(pkbV[j]*subst(nodeSub, doExpand1(concat(V, 2 + 3*a + c - 1), pkbP)), pkV[1], -1, 1))), c, 1, 3),
+        printf(fh, "    const double m~a~a[3] = {~a, ~a, ~a}; ~%", a, j-1, ex[1], ex[2], ex[3]),
+        printf(fh, "    pkpm_harm_perp(b_q, m~a~a, pm[~a][~a][~a]); ~%", a, j-1, n-1, a, j-1)
+      ),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, " ~%"),
+  /* Modal coefficients of the projected function: f_k = sum_n w_n sum_j int(psi_k(x_n, w) P_j(w) dw) pm_j(n). */
+  for a : 0 thru 1 do
+    for c : 1 thru 3 do (
+      blk : 2 + 3*a + c - 1,
+      for k : 1 thru NP do (
+        coef : [],
+        for n : 1 thru NN do (
+          nodeSub : makelist(pkC[d] = nodes[n][d], d, 1, cdim),
+          for j : 1 thru NV do (
+            ex : integrate(subst(nodeSub, pkbP[k])*pkbV[j], pkV[1], -1, 1),
+            if float(ex) # 0.0 then
+              coef : endcons(sconcat("(", float(weights[n]*ex), ")*pm[", n-1, "][", a, "][", j-1, "][", c-1, "]"), coef)
+          )
+        ),
+        printf(fh, "  V~a[~a] = ", blk, k-1),
+        if length(coef) = 0 then printf(fh, "0.0")
+        else (
+          printf(fh, "~a", coef[1]),
+          for n : 2 thru length(coef) do printf(fh, " + ~a", coef[n])
+        ),
+        printf(fh, "; ~%")
+      )
+    ),
+  printf(fh, "} ~%")
+)$
