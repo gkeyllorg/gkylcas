@@ -16,73 +16,89 @@
 
    and the fluxes through the two velocity-domain edges w_lo, w_up: the HLL flux of the full w flux
    alpha U + T(U) (alpha = alpha_0 + (c - K) w - (b.grad xi) w^2, T the coupling by beta, t, R_B1)
-   against an empty exterior, from the raw values of the w-flux coefficients at the closure nodes
-   (written by the build of the stored operator, pkpm-harm-build.mac, in the node layout of
-   gkyl_pkpm_harm_slots.h) and the node functions of gkyl_pkpm_harm_coeffs.h (the same as the
-   w-face kernels'), with the speeds S_L, S_R = alpha + the bounds of T's spectrum taken from
-   the closures of the PREVIOUS stage, so that the edge flux
+   against an empty exterior, with the speeds S_L, S_R = alpha + the bounds of T's spectrum taken
+   from the closures of the PREVIOUS stage. The edge flux of every block is then linear in the
+   closures:
 
-     Phi_e = wf_e (alpha_e U_e + T_e(U_e)) + wu_e U_e
+     Phi_e = K_e + (alpha_0 + c w_e) g_e,   K_e = wf_e (k_e U_e + T_e(U_e)) + wu_e U_e,   g_e = wf_e U_e,
 
-   is linear in the unknowns (upper edge: wf = 1, wu = 0 when S_L > 0 (outflow); wf = wu = 0 when
-   S_R <= 0; otherwise wf = S_R/(S_R - S_L), wu = -S_L S_R/(S_R - S_L); the lower edge mirrored).
-   The interior velocity faces telescope, so with N = [M0, M2, M0G, M1, ..., mu] of the state,
-   R = [r0, r2, r0G, r1, ..., rho_M] of rhs_A (mu = int M0_perp dw, rho_M its rate), the edge
-   traces, sgn_e = +1 (lower) / -1 (upper), and k_e = -K w_e - (b.grad xi) w_e^2 the known part of
-   alpha at the edge, the four constraint rows are a linear system per node for
-   (c_0, alpha_0, c, a_perp):
+   (k_e = -K w_e - (b.grad xi) w_e^2 the known part of alpha; upper edge: wf = 1, wu = 0 when
+   S_L > 0 (outflow); wf = wu = 0 when S_R <= 0; otherwise wf = S_R/(S_R - S_L),
+   wu = -S_L S_R/(S_R - S_L); the lower edge mirrored). K_e and g_e are constructed as on the interior
+   w faces (pkpm-vel-flux-surf.mac): at the pkpmVelFluxNumPts^cdim w-face nodes, from the raw w-flux
+   values of the build (gkyl_pkpm_harm_slots.h) and the node functions of gkyl_pkpm_harm_coeffs.h,
+   and projected onto p=1 (5 points per direction: exact where the edge is pure outflow, where
+   g_e = U_e). The closures are then solved at the 2^cdim Gauss-Legendre nodes, where these p=1
+   projections are evaluated. The interior velocity faces telescope, so with N = [M0, M2, M0G, M1,
+   ..., mu] of the state, R = [r0, r2, r0G, r1, ..., rho_M] of rhs_A (mu = int M0_perp dw, rho_M its
+   rate) and sgn_e = +1 (lower) / -1 (upper), the four constraint rows are a linear system per node
+   for (c_0, alpha_0, c, a_perp):
 
-     M0:  c_0 M0 + alpha_0 eF0 + c eF1 = -r0 - kF0 - xF0
-     M1:  c_0 M1 + alpha_0 (M0 + eF1) + c (M1 + eF2) = -r1 - kF1 - xF1
+     M0:  c_0 M0 + alpha_0 eF0 + c eF1 = -r0 - KF0
+     M1:  c_0 M1 + alpha_0 (M0 + eF1) + c (M1 + eF2) = -r1 - KF1
      E :  c_0 s2 + alpha_0 (2 M1 + eF2 + 2 eG0) + c (2 s2 + eF3 + 2 eG1) + 2 mu . a_perp
-          = -(r2 + 2 r0G) - kF2 - 2 kG0 - xF2 - 2 xG0,   s2 = M2 + 2 M0G
+          = -(r2 + 2 r0G) - KF2 - 2 KG0,   s2 = M2 + 2 M0G
      perp: M0 a_perp + (c_0 + c) Q + alpha_0 A_a + c A_c = -P
 
-   with eX_k = sum_e sgn_e wf_e w_e^k X_e, kX_k = sum_e sgn_e wf_e w_e^k k_e X_e,
-   xX_k = sum_e sgn_e w_e^k (wf_e T_X,e + wu_e X_e), Q = I_perp mu, A_a = I_perp sum_e sgn_e wf_e M0_e,
-   A_c = I_perp sum_e sgn_e wf_e w_e M0_e and P = I_perp (rho_M + sum_e sgn_e (wf_e (k_e M0_e + T_M0,e)
-   + wu_e M0_e)) (b is a unit vector at the closure nodes). The perpendicular rows are eliminated
-   into the energy row (Schur complement: the energy row gains -(2/M0) Q.(P + (c_0 + c) Q + alpha_0
-   A_a + c A_c)), the 3x3 is solved by Cramer's rule at the 2^cdim Gauss-Legendre nodes, a_perp
-   follows, and everything is interpolated to p=1; the edge fluxes of all eight blocks are then
-   formed from the SAME closures and written in the stored face format of the velocity-flux kernels
-   (shape coefficients: orthonormal surface coefficients divided by sqrt(1/2)^cdim
-   (2 sqrt 3/5)^(linear factors of the mode)), so that what the velocity pass applies at the edges
-   is exactly what the closure charged. On the constraint manifold (mu = 0) the system is block
+   with eX_k = sum_e sgn_e w_e^k g_X,e, KX_k = sum_e sgn_e w_e^k K_X,e, Q = I_perp mu,
+   A_a = I_perp sum_e sgn_e g_M0,e, A_c = I_perp sum_e sgn_e w_e g_M0,e and
+   P = I_perp (rho_M + sum_e sgn_e K_M0,e) (b is a unit vector at the closure nodes). The
+   perpendicular rows are eliminated into the energy row (Schur complement: the energy row gains
+   -(2/M0) Q.(P + (c_0 + c) Q + alpha_0 A_a + c A_c)), the 3x3 is solved by Cramer's rule at the
+   2^cdim Gauss-Legendre nodes, a_perp follows, and everything is interpolated to p=1. The edge
+   fluxes of all eight blocks are formed at the same nodes from the SAME closures and written in the
+   stored face format of the velocity-flux kernels (shape coefficients: orthonormal surface
+   coefficients divided by sqrt(1/2)^cdim (2 sqrt 3/5)^(linear factors of the mode)): the stored edge
+   flux is P1(K_e) + P1((alpha_0 + c w_e) P1(g_e)) (the 2-point rule is exact for the product of two
+   p=1 fields against a p=1 test function), so that what the velocity pass applies at the edges is
+   exactly what the closure charged. On the constraint manifold (mu = 0) the system is block
    diagonal; where the distribution does not reach the edges all edge terms vanish.
 
    Policy: if M0(F) <= 0 or the determinant is not positive at any node, all closures and the edge
    fluxes are zero in the cell and the kernel returns the number of such nodes. cfl[0], cfl[1]
    receive the time-step rates of the edge fluxes for the lowest and uppermost velocity cells,
-   (2 p_v + 1)/2 dv1 max_n(|S_L|, |S_R|) with the current closures. */
+   (2 p_v + 1)/2 dv1 max(|S_L|, |S_R|) over the w-face nodes with the new closures. */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 load("core/nodal_operations/quadrature_functions.mac")$
 load("pkpm/pkpm/pkpm-flux-tables.mac")$
 load("pkpm/pkpm/pkpm-cas-util.mac")$
+load("pkpm/pkpm/pkpm-nodal.mac")$
 load(stringproc)$
 fpprec : 24$
 
 cvarsClo : [x, y, z]$
 
 calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
-  [lb, pkC, pkbC, pkP, pkbP, NC, NP, nodes, weights, NN, nodeSub, n, k, d, i, j, c, nlin,
-   n0_e, n1_e, n2_e, nG_e, r0_e, r1_e, r2_e, rG_e, mu_e, rM_e, a0p_e, cp_e, th_e, b_e,
-   Ulo_e, Uup_e, c0_c, a0_c, c_c, ap_c, fl_c, fu_c, sc, lst],
+  [lb, pkC, pkbC, vv, pkbV, pkP, pkbP, NC, NP, nodes, weights, NN, nodeSub, n, k, d, i, c, nlin,
+   n0_e, n1_e, n2_e, nG_e, r0_e, r1_e, r2_e, rG_e, mu_e, rM_e, b_e, h_e, pidx, sOf, xw, x1, w1, NQ, NF,
+   p1fn, c0_c, a0_c, c_c, sc, lst],
 
   lb : loadPKPMPhaseBasis(cdim),
-  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), vv : lb[3][1], pkbV : copylist(lb[4]),
+  pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
   NC : length(pkbC),
   NP : length(pkbP),
+  /* the closure nodes */
   [nodes, weights] : gaussOrdWeight(2, cdim),
   NN : length(nodes),
   nlin : makelist(length(listofvars(pkbC[k])), k, 1, NC),
+  /* the w-face nodes, direction 0 fastest (those of the build and of the interior w faces) */
+  pidx : pkpmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP),
+  sOf : pkpmP1PatternIndex(pkC, pkbC),
+  xw : gaussOrdWeight1D(pkpmVelFluxNumPts), x1 : float(xw[1]), w1 : float(xw[2]),
+  NQ : length(x1), NF : NQ^cdim,
+  p1fn : sconcat(funcNm, "_p1"),
 
   printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
-  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%~%"),
+  pkpmEmitP1Nodes(fh, p1fn, cdim, sOf, x1),
+  printf(fh, "// Projection of node values onto the p=1 basis (orthonormal coefficients, gkyl order). ~%"),
+  pkpmEmitNodeProj(fh, sconcat(funcNm, "_prj"), cdim, NQ,
+    [makelist(w1[i]/sqrt(2), i, 1, NQ), makelist(w1[i]*sqrt(3/2)*x1[i], i, 1, NQ)], sOf),
   printf(fh, "GKYL_CU_DH int ~a(double w_lo, double w_up, double dv, const double *norm_moms, const double *rhs_moms,
-  const double *bvar, const double *wc, const double *theta, const double *alpha_0_prev, const double *c_h_prev,
+  const double *bvar, const double *wn, const double *theta, const double *alpha_0_prev, const double *c_h_prev,
   const double *f_lo, const double *f_up,
   double* GKYL_RESTRICT c_0, double* GKYL_RESTRICT alpha_0, double* GKYL_RESTRICT c_h, double* GKYL_RESTRICT a_perp,
   double* GKYL_RESTRICT flux_lo, double* GKYL_RESTRICT flux_up, double* GKYL_RESTRICT cfl,
@@ -91,7 +107,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  // norm_moms:    Input [M0, M2, M0_G, M1, M3, M1_G, mu (x, y, z)] moments of the normalized distributions (stage state). ~%"),
   printf(fh, "  // rhs_moms:     Input moments of the stage-A right-hand sides, same layout. ~%"),
   printf(fh, "  // bvar:         Magnetic field unit vector [bx, by, bz]. ~%"),
-  printf(fh, "  // wc:           Raw w-flux values at the ~a closure nodes [node][PKPM_HS_W_END] (the build of the stored operator). ~%", NN),
+  printf(fh, "  // wn:           Raw w-flux values at the ~a w-face nodes [node][PKPM_HS_W_END] (the build of the stored operator). ~%", NF),
   printf(fh, "  // theta:        T_perp/T. ~%"),
   printf(fh, "  // alpha_0_prev, c_h_prev: closures of the previous stage (may alias the outputs), for the edge speeds. ~%"),
   printf(fh, "  // f_lo, f_up:   [F, G, M0_perp, N_perp] of the lowest and uppermost velocity cells of this configuration cell. ~%"),
@@ -115,22 +131,77 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   for i : 1 thru 3 do printf(fh, "  const double *mu~a = &norm_moms[~a]; ~%", i-1, (5+i)*NC),
   for i : 1 thru 3 do printf(fh, "  const double *rM~a = &rhs_moms[~a]; ~%", i-1, (5+i)*NC),
   for i : 1 thru 3 do printf(fh, "  const double *b~a = &bvar[~a]; ~%", i-1, (i-1)*NC),
-  for c : 1 thru 8 do printf(fh, "  const double *lo~a = &f_lo[~a], *up~a = &f_up[~a]; ~%", c-1, (c-1)*NP, c-1, (c-1)*NP),
   printf(fh, " ~%"),
 
+  /* 1. the edge fluxes at the w-face nodes, as on the interior w faces, split into the known part
+     K and the part g multiplying alpha_0 + c w_e; both projected onto p=1 */
+  printf(fh, "  // The edge fluxes at the ~a w-face nodes, constructed as on the interior w faces (traces, raw ~%", NF),
+  printf(fh, "  // node values, HLL against the empty exterior with the previous closures): ~%"),
+  printf(fh, "  // Phi_e = K_e + (alpha_0 + c w_e) g_e, K_e = wf (k_e U + T(U)) + wu U, g_e = wf U, e = lower, upper. ~%"),
+  printf(fh, "  double tr[~a], ulo[8][~a], uup[8][~a]; ~%", NC, NF, NF),
+  for c : 0 thru 7 do (
+    pkpmEmitTrace(fh, "tr", f_lo, c, -1, NP, pidx, pkbV, vv),
+    printf(fh, "  ~a(tr, ulo[~a]); ~%", p1fn, c),
+    pkpmEmitTrace(fh, "tr", f_up, c, 1, NP, pidx, pkbV, vv),
+    printf(fh, "  ~a(tr, uup[~a]); ~%", p1fn, c)
+  ),
+  pkpmEmitWNodeFields(fh, p1fn, NF, NC, "alpha_0_prev", "c_h_prev"),
+  printf(fh, "  double Kn[2][8][~a], gn[2][8][~a], kn[2][~a], lon[2][~a], hin[2][~a]; ~%", NF, NF, NF, NF, NF),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NF),
+  printf(fh, "    double nv[PKPM_HS_NODE_NV]; ~%"),
+  pkpmEmitWNodeFill(fh, "    ", "nv"),
+  printf(fh, "    for (int e = 0; e < 2; ++e) { ~%"),
+  printf(fh, "      const double w = e == 0 ? w_lo : w_up; ~%"),
+  printf(fh, "      double U[8], T[8], lo, hi; ~%"),
+  printf(fh, "      for (int c = 0; c < 8; ++c) U[c] = e == 0 ? ulo[c][n] : uup[c][n]; ~%"),
+  printf(fh, "      pkpm_harm_node_coupling(nv, w, U, T); ~%"),
+  printf(fh, "      pkpm_harm_node_bounds(nv, w, &lo, &hi); ~%"),
+  printf(fh, "      const double k = pkpm_harm_node_alpha_k(nv, w); ~%"),
+  printf(fh, "      const double ap = nv[PKPM_HS_NODE_A0] + nv[PKPM_HS_NODE_CH]*w + k; ~%"),
+  printf(fh, "      const double sl = ap + lo, sr = ap + hi; ~%"),
+  printf(fh, "      // the HLL flux against the empty exterior (below the lower edge, above the upper one): ~%"),
+  printf(fh, "      // wf (alpha U + T(U)) + wu U ~%"),
+  printf(fh, "      double wf = 0.0, wu = 0.0; ~%"),
+  printf(fh, "      if (e == 0) { ~%"),
+  printf(fh, "        if (sr < 0.0) { ~%"),
+  printf(fh, "          wf = 1.0; ~%"),
+  printf(fh, "        } else if (sl < 0.0) { ~%"),
+  printf(fh, "          wf = -sl/(sr - sl); wu = sl*sr/(sr - sl); ~%"),
+  printf(fh, "        } ~%"),
+  printf(fh, "      } else { ~%"),
+  printf(fh, "        if (sl > 0.0) { ~%"),
+  printf(fh, "          wf = 1.0; ~%"),
+  printf(fh, "        } else if (sr > 0.0) { ~%"),
+  printf(fh, "          wf = sr/(sr - sl); wu = -sl*sr/(sr - sl); ~%"),
+  printf(fh, "        } ~%"),
+  printf(fh, "      } ~%"),
+  printf(fh, "      for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "        Kn[e][c][n] = wf*(k*U[c] + T[c]) + wu*U[c]; ~%"),
+  printf(fh, "        gn[e][c][n] = wf*U[c]; ~%"),
+  printf(fh, "      } ~%"),
+  printf(fh, "      kn[e][n] = k; lon[e][n] = lo; hin[e][n] = hi; ~%"),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  double Kh[2][~a], gh[2][~a]; ~%", 8*NC, 8*NC),
+  printf(fh, "  for (int e = 0; e < 2; ++e) { ~%"),
+  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "      ~a_prj(Kn[e][c], &Kh[e][c*~a]); ~%", funcNm, NC),
+  printf(fh, "      ~a_prj(gn[e][c], &gh[e][c*~a]); ~%", funcNm, NC),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+
+  /* 2. the closures at the 2^cdim Gauss-Legendre nodes */
   n0_e : doExpand1(n0, pkbC), n1_e : doExpand1(n1, pkbC), n2_e : doExpand1(n2, pkbC), nG_e : doExpand1(nG, pkbC),
   r0_e : doExpand1(r0, pkbC), r1_e : doExpand1(r1, pkbC), r2_e : doExpand1(r2, pkbC), rG_e : doExpand1(rG, pkbC),
   mu_e : makelist(doExpand1(concat(mu, i-1), pkbC), i, 1, 3),
   rM_e : makelist(doExpand1(concat(rM, i-1), pkbC), i, 1, 3),
-  a0p_e : doExpand1(alpha_0_prev, pkbC), cp_e : doExpand1(c_h_prev, pkbC),
-  th_e : doExpand1(theta, pkbC),
   b_e : makelist(doExpand1(concat(b, i-1), pkbC), i, 1, 3),
-  Ulo_e : makelist(subst(vx = -1, doExpand1(concat(lo, c-1), pkbP)), c, 1, 8),
-  Uup_e : makelist(subst(vx = 1, doExpand1(concat(up, c-1), pkbP)), c, 1, 8),
+  h_e : doExpand1(h, pkbC),
 
-  printf(fh, "  double c0_n[~a] = {0.0}, a0_n[~a] = {0.0}, c_n[~a] = {0.0}; ~%", NN, NN, NN),
-  printf(fh, "  double ap_n[3][~a] = {{0.0}}, flo_n[8][~a] = {{0.0}}, fup_n[8][~a] = {{0.0}}; ~%", NN, NN, NN),
-  printf(fh, "  double cfl_lo = 0.0, cfl_up = 0.0; ~%"),
+  printf(fh, "  // The closures at the ~a Gauss-Legendre nodes, with the edge fluxes' p=1 projections there. ~%", NN),
+  printf(fh, "  double c0_s[~a] = {0.0}, a0_s[~a] = {0.0}, c_s[~a] = {0.0}; ~%", NN, NN, NN),
+  printf(fh, "  double ap_s[3][~a] = {{0.0}}, flo_s[8][~a] = {{0.0}}, fup_s[8][~a] = {{0.0}}; ~%", NN, NN, NN),
   printf(fh, "  int num_null = 0; ~%"),
   printf(fh, "  double cond_min = 1.0; ~%"),
   printf(fh, " ~%"),
@@ -146,86 +217,39 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
     printf(fh, "    const double r2_q = ~a + 2.0*(~a); ~%", float(expand(subst(nodeSub, r2_e))), float(expand(subst(nodeSub, rG_e)))),
     printf(fh, "    const double mu_q[3] = {~a, ~a, ~a}; ~%", float(expand(subst(nodeSub, mu_e[1]))), float(expand(subst(nodeSub, mu_e[2]))), float(expand(subst(nodeSub, mu_e[3])))),
     printf(fh, "    const double rM_q[3] = {~a, ~a, ~a}; ~%", float(expand(subst(nodeSub, rM_e[1]))), float(expand(subst(nodeSub, rM_e[2]))), float(expand(subst(nodeSub, rM_e[3])))),
-    printf(fh, "    const double a0p_q = ~a; ~%", float(expand(subst(nodeSub, a0p_e)))),
-    printf(fh, "    const double cp_q = ~a; ~%", float(expand(subst(nodeSub, cp_e)))),
-    printf(fh, "    const double th_q = ~a; ~%", float(expand(subst(nodeSub, th_e)))),
-    for i : 1 thru 3 do
-      printf(fh, "    const double b~a_q = ~a; ~%", i-1, float(expand(subst(nodeSub, b_e[i])))),
-    printf(fh, "    const double Ulo_q[8] = {~a", float(expand(subst(nodeSub, Ulo_e[1])))),
-    for c : 2 thru 8 do printf(fh, ", ~a", float(expand(subst(nodeSub, Ulo_e[c])))),
-    printf(fh, "}; ~%"),
-    printf(fh, "    const double Uup_q[8] = {~a", float(expand(subst(nodeSub, Uup_e[1])))),
-    for c : 2 thru 8 do printf(fh, ", ~a", float(expand(subst(nodeSub, Uup_e[c])))),
-    printf(fh, "}; ~%"),
-    printf(fh, "    const double Flo_q = Ulo_q[0], Glo_q = Ulo_q[1], Fup_q = Uup_q[0], Gup_q = Uup_q[1]; ~%"),
-    printf(fh, "    const double b_q[3] = {b0_q, b1_q, b2_q}; ~%"),
-    printf(fh, "    // node values of the w flux (the raw coefficients at the node, theta, b and the previous ~%"),
-    printf(fh, "    // closures): coupling flux T, its speed bounds and the known part of alpha at the edges ~%"),
-    printf(fh, "    double nv[PKPM_HS_NODE_NV]; ~%"),
-    /* wc is ordered j0 + 2 j1 + 4 j2 (the build's closure nodes, direction 0 fastest) */
-    printf(fh, "    for (int s = 0; s < PKPM_HS_W_END; ++s) nv[s] = wc[~a + s]; ~%",
-      62*sum((if nodes[n][d] > 0 then 1 else 0)*2^(d-1), d, 1, cdim)),
-    printf(fh, "    nv[PKPM_HS_NODE_THETA] = th_q; ~%"),
-    printf(fh, "    nv[PKPM_HS_NODE_B] = b0_q; nv[PKPM_HS_NODE_B + 1] = b1_q; nv[PKPM_HS_NODE_B + 2] = b2_q; ~%"),
-    printf(fh, "    nv[PKPM_HS_NODE_A0] = a0p_q; nv[PKPM_HS_NODE_CH] = cp_q; ~%"),
-    printf(fh, "    pkpm_harm_node_spec(nv); ~%"),
-    printf(fh, "    double Tlo[8], Tup[8], llo_lo, lhi_lo, llo_up, lhi_up; ~%"),
-    printf(fh, "    pkpm_harm_node_coupling(nv, w_lo, Ulo_q, Tlo); ~%"),
-    printf(fh, "    pkpm_harm_node_coupling(nv, w_up, Uup_q, Tup); ~%"),
-    printf(fh, "    pkpm_harm_node_bounds(nv, w_lo, &llo_lo, &lhi_lo); ~%"),
-    printf(fh, "    pkpm_harm_node_bounds(nv, w_up, &llo_up, &lhi_up); ~%"),
-    printf(fh, "    // known part of alpha at the edges, and the HLL weights against the empty exterior from the ~%"),
-    printf(fh, "    // previous closures: edge flux = wf (alpha U + T(U)) + wu U ~%"),
-    printf(fh, "    const double k_lo = pkpm_harm_node_alpha_k(nv, w_lo), k_up = pkpm_harm_node_alpha_k(nv, w_up); ~%"),
-    printf(fh, "    const double ap_lo = a0p_q + cp_q*w_lo + k_lo, ap_up = a0p_q + cp_q*w_up + k_up; ~%"),
-    printf(fh, "    double wf_lo = 0.0, wu_lo = 0.0, wf_up = 0.0, wu_up = 0.0; ~%"),
-    printf(fh, "    { ~%"),
-    printf(fh, "      const double sl = ap_lo + llo_lo, sr = ap_lo + lhi_lo; ~%"),
-    printf(fh, "      if (sr < 0.0) { ~%"),
-    printf(fh, "        wf_lo = 1.0; ~%"),
-    printf(fh, "      } else if (sl < 0.0) { ~%"),
-    printf(fh, "        wf_lo = -sl/(sr - sl); wu_lo = sl*sr/(sr - sl); ~%"),
-    printf(fh, "      } ~%"),
-    printf(fh, "    } ~%"),
-    printf(fh, "    { ~%"),
-    printf(fh, "      const double sl = ap_up + llo_up, sr = ap_up + lhi_up; ~%"),
-    printf(fh, "      if (sl > 0.0) { ~%"),
-    printf(fh, "        wf_up = 1.0; ~%"),
-    printf(fh, "      } else if (sr > 0.0) { ~%"),
-    printf(fh, "        wf_up = sr/(sr - sl); wu_up = -sl*sr/(sr - sl); ~%"),
-    printf(fh, "      } ~%"),
+    printf(fh, "    const double b_q[3] = {~a, ~a, ~a}; ~%", float(expand(subst(nodeSub, b_e[1]))), float(expand(subst(nodeSub, b_e[2]))), float(expand(subst(nodeSub, b_e[3])))),
+    printf(fh, "    // the p=1 projections of the edge fluxes' parts at the node ~%"),
+    printf(fh, "    double Klo[8], Kup[8], glo[8], gup[8]; ~%"),
+    printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
+    printf(fh, "      const double *h = &Kh[0][c*~a]; ~%", NC),
+    printf(fh, "      Klo[c] = ~a; ~%", float(expand(subst(nodeSub, h_e)))),
+    printf(fh, "      h = &Kh[1][c*~a]; ~%", NC),
+    printf(fh, "      Kup[c] = ~a; ~%", float(expand(subst(nodeSub, h_e)))),
+    printf(fh, "      h = &gh[0][c*~a]; ~%", NC),
+    printf(fh, "      glo[c] = ~a; ~%", float(expand(subst(nodeSub, h_e)))),
+    printf(fh, "      h = &gh[1][c*~a]; ~%", NC),
+    printf(fh, "      gup[c] = ~a; ~%", float(expand(subst(nodeSub, h_e)))),
     printf(fh, "    } ~%"),
     printf(fh, "    // edge contributions to the moment rates: the k-th moment gains sgn_e w_e^k Phi_e per edge, ~%"),
-    printf(fh, "    // sgn_e = +1 lo, -1 up: closure part (alpha_0 + c w_e) wf_e U_e, known part kU (k_e wf_e U_e) and ~%"),
-    printf(fh, "    // x (coupling and HLL terms wf_e T_e + wu_e U_e) ~%"),
-    printf(fh, "    const double eF0 = wf_lo*Flo_q - wf_up*Fup_q; ~%"),
-    printf(fh, "    const double eF1 = wf_lo*w_lo*Flo_q - wf_up*w_up*Fup_q; ~%"),
-    printf(fh, "    const double eF2 = wf_lo*w_lo*w_lo*Flo_q - wf_up*w_up*w_up*Fup_q; ~%"),
-    printf(fh, "    const double eF3 = wf_lo*w_lo*w_lo*w_lo*Flo_q - wf_up*w_up*w_up*w_up*Fup_q; ~%"),
-    printf(fh, "    const double eG0 = wf_lo*Glo_q - wf_up*Gup_q; ~%"),
-    printf(fh, "    const double eG1 = wf_lo*w_lo*Glo_q - wf_up*w_up*Gup_q; ~%"),
-    printf(fh, "    const double kF0 = wf_lo*k_lo*Flo_q - wf_up*k_up*Fup_q; ~%"),
-    printf(fh, "    const double kF1 = wf_lo*w_lo*k_lo*Flo_q - wf_up*w_up*k_up*Fup_q; ~%"),
-    printf(fh, "    const double kF2 = wf_lo*w_lo*w_lo*k_lo*Flo_q - wf_up*w_up*w_up*k_up*Fup_q; ~%"),
-    printf(fh, "    const double kG0 = wf_lo*k_lo*Glo_q - wf_up*k_up*Gup_q; ~%"),
-    printf(fh, "    double xlo[8], xup[8]; ~%"),
-    printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
-    printf(fh, "      xlo[c] = wf_lo*Tlo[c] + wu_lo*Ulo_q[c]; ~%"),
-    printf(fh, "      xup[c] = wf_up*Tup[c] + wu_up*Uup_q[c]; ~%"),
-    printf(fh, "    } ~%"),
-    printf(fh, "    const double xF0 = xlo[0] - xup[0]; ~%"),
-    printf(fh, "    const double xF1 = w_lo*xlo[0] - w_up*xup[0]; ~%"),
-    printf(fh, "    const double xF2 = w_lo*w_lo*xlo[0] - w_up*w_up*xup[0]; ~%"),
-    printf(fh, "    const double xG0 = xlo[1] - xup[1]; ~%"),
+    printf(fh, "    // sgn_e = +1 lo, -1 up: closure part (alpha_0 + c w_e) g_e and known part K_e ~%"),
+    printf(fh, "    const double eF0 = glo[0] - gup[0]; ~%"),
+    printf(fh, "    const double eF1 = w_lo*glo[0] - w_up*gup[0]; ~%"),
+    printf(fh, "    const double eF2 = w_lo*w_lo*glo[0] - w_up*w_up*gup[0]; ~%"),
+    printf(fh, "    const double eF3 = w_lo*w_lo*w_lo*glo[0] - w_up*w_up*w_up*gup[0]; ~%"),
+    printf(fh, "    const double eG0 = glo[1] - gup[1]; ~%"),
+    printf(fh, "    const double eG1 = w_lo*glo[1] - w_up*gup[1]; ~%"),
+    printf(fh, "    const double KF0 = Klo[0] - Kup[0]; ~%"),
+    printf(fh, "    const double KF1 = w_lo*Klo[0] - w_up*Kup[0]; ~%"),
+    printf(fh, "    const double KF2 = w_lo*w_lo*Klo[0] - w_up*w_up*Kup[0]; ~%"),
+    printf(fh, "    const double KG0 = Klo[1] - Kup[1]; ~%"),
     printf(fh, "    // perpendicular rows M0 a_perp + (c_0 + c) Q + alpha_0 A_a + c A_c = -P (b is a unit vector here) ~%"),
     printf(fh, "    double P[3], Q[3], Aa[3], Ac[3], v[3]; ~%"),
-    printf(fh, "    for (int a = 0; a < 3; ++a) ~%"),
-    printf(fh, "      v[a] = rM_q[a] + (wf_lo*k_lo*Ulo_q[2 + a] + xlo[2 + a]) - (wf_up*k_up*Uup_q[2 + a] + xup[2 + a]); ~%"),
+    printf(fh, "    for (int a = 0; a < 3; ++a) v[a] = rM_q[a] + Klo[2 + a] - Kup[2 + a]; ~%"),
     printf(fh, "    pkpm_harm_perp(b_q, v, P); ~%"),
     printf(fh, "    pkpm_harm_perp(b_q, mu_q, Q); ~%"),
-    printf(fh, "    for (int a = 0; a < 3; ++a) v[a] = wf_lo*Ulo_q[2 + a] - wf_up*Uup_q[2 + a]; ~%"),
+    printf(fh, "    for (int a = 0; a < 3; ++a) v[a] = glo[2 + a] - gup[2 + a]; ~%"),
     printf(fh, "    pkpm_harm_perp(b_q, v, Aa); ~%"),
-    printf(fh, "    for (int a = 0; a < 3; ++a) v[a] = wf_lo*w_lo*Ulo_q[2 + a] - wf_up*w_up*Uup_q[2 + a]; ~%"),
+    printf(fh, "    for (int a = 0; a < 3; ++a) v[a] = w_lo*glo[2 + a] - w_up*gup[2 + a]; ~%"),
     printf(fh, "    pkpm_harm_perp(b_q, v, Ac); ~%"),
     printf(fh, "    // eliminated into the energy row, which carries 2 mu . a_perp (Schur complement) ~%"),
     printf(fh, "    const double fac = n0_q > 0.0 ? 2.0/n0_q : 0.0; ~%"),
@@ -234,7 +258,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
     printf(fh, "    const double A00 = n0_q, A01 = eF0, A02 = eF1; ~%"),
     printf(fh, "    const double A10 = n1_q, A11 = n0_q + eF1, A12 = n1_q + eF2; ~%"),
     printf(fh, "    const double A20 = n2_q + 2.0*nG_q - fac*sQQ, A21 = 2.0*n1_q + eF2 + 2.0*eG0 - fac*sQA, A22 = 2.0*(n2_q + 2.0*nG_q) + eF3 + 2.0*eG1 - fac*(sQQ + sQC); ~%"),
-    printf(fh, "    const double b0 = -r0_q - kF0 - xF0, b1 = -r1_q - kF1 - xF1, b2 = -r2_q - kF2 - 2.0*kG0 - xF2 - 2.0*xG0 + fac*sQP; ~%"),
+    printf(fh, "    const double b0 = -r0_q - KF0, b1 = -r1_q - KF1, b2 = -r2_q - KF2 - 2.0*KG0 + fac*sQP; ~%"),
     printf(fh, "    const double det = A00*(A11*A22 - A12*A21) - A01*(A10*A22 - A12*A20) + A02*(A10*A21 - A11*A20); ~%"),
     printf(fh, "    // conditioning proxy: the determinant relative to its edge-free value ~%"),
     printf(fh, "    // n0 (2 n0 (M2 + 2 M0G) - 2 M1^2) (positive for admissible moments); a small or negative ~%"),
@@ -242,26 +266,21 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
     printf(fh, "    const double det0 = n0_q*(2.0*n0_q*(n2_q + 2.0*nG_q) - 2.0*n1_q*n1_q); ~%"),
     printf(fh, "    if (det0 > 0.0) cond_min = fmin(cond_min, det/det0); ~%"),
     printf(fh, "    if (n0_q > 0.0 && det > 0.0) { ~%"),
-    printf(fh, "      c0_n[~a] = (b0*(A11*A22 - A12*A21) - A01*(b1*A22 - A12*b2) + A02*(b1*A21 - A11*b2))/det; ~%", n-1),
-    printf(fh, "      a0_n[~a] = (A00*(b1*A22 - A12*b2) - b0*(A10*A22 - A12*A20) + A02*(A10*b2 - b1*A20))/det; ~%", n-1),
-    printf(fh, "      c_n[~a] = (A00*(A11*b2 - b1*A21) - A01*(A10*b2 - b1*A20) + b0*(A10*A21 - A11*A20))/det; ~%", n-1),
+    printf(fh, "      c0_s[~a] = (b0*(A11*A22 - A12*A21) - A01*(b1*A22 - A12*b2) + A02*(b1*A21 - A11*b2))/det; ~%", n-1),
+    printf(fh, "      a0_s[~a] = (A00*(b1*A22 - A12*b2) - b0*(A10*A22 - A12*A20) + A02*(A10*b2 - b1*A20))/det; ~%", n-1),
+    printf(fh, "      c_s[~a] = (A00*(A11*b2 - b1*A21) - A01*(A10*b2 - b1*A20) + b0*(A10*A21 - A11*A20))/det; ~%", n-1),
     printf(fh, "      for (int a = 0; a < 3; ++a) ~%"),
-    printf(fh, "        ap_n[a][~a] = -(P[a] + (c0_n[~a] + c_n[~a])*Q[a] + Aa[a]*a0_n[~a] + Ac[a]*c_n[~a])/n0_q; ~%", n-1, n-1, n-1, n-1, n-1),
-    printf(fh, "      const double al_lo = a0_n[~a] + c_n[~a]*w_lo + k_lo, al_up = a0_n[~a] + c_n[~a]*w_up + k_up; ~%", n-1, n-1, n-1, n-1),
+    printf(fh, "        ap_s[a][~a] = -(P[a] + (c0_s[~a] + c_s[~a])*Q[a] + Aa[a]*a0_s[~a] + Ac[a]*c_s[~a])/n0_q; ~%", n-1, n-1, n-1, n-1, n-1),
     printf(fh, "      for (int c = 0; c < 8; ++c) { ~%"),
-    printf(fh, "        flo_n[c][~a] = wf_lo*al_lo*Ulo_q[c] + xlo[c]; ~%", n-1),
-    printf(fh, "        fup_n[c][~a] = wf_up*al_up*Uup_q[c] + xup[c]; ~%", n-1),
+    printf(fh, "        flo_s[c][~a] = (a0_s[~a] + c_s[~a]*w_lo)*glo[c] + Klo[c]; ~%", n-1, n-1, n-1),
+    printf(fh, "        fup_s[c][~a] = (a0_s[~a] + c_s[~a]*w_up)*gup[c] + Kup[c]; ~%", n-1, n-1, n-1),
     printf(fh, "      } ~%"),
-    printf(fh, "      cfl_lo = fmax(cfl_lo, fmax(fabs(al_lo + llo_lo), fabs(al_lo + lhi_lo))); ~%"),
-    printf(fh, "      cfl_up = fmax(cfl_up, fmax(fabs(al_up + llo_up), fabs(al_up + lhi_up))); ~%"),
     printf(fh, "    } else { ~%"),
     printf(fh, "      num_null += 1; ~%"),
     printf(fh, "    } ~%"),
     printf(fh, "  } ~%")
   ),
   printf(fh, " ~%"),
-  printf(fh, "  cfl[0] = 2.5*dv1*cfl_lo; ~%"),
-  printf(fh, "  cfl[1] = 2.5*dv1*cfl_up; ~%"),
   printf(fh, "  cond[0] = cond_min; ~%"),
   printf(fh, "  if (num_null > 0) { ~%"),
   printf(fh, "    // a node with M0 <= 0 or a non-positive determinant zeroes everything in the cell, its ~%"),
@@ -282,9 +301,9 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
 
   /* nodal -> modal (2-point rule, exact for p=1) for the closures; the edge fluxes in the
      stored face format (orthonormal coefficient / shape factor). */
-  c0_c : makelist(sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*c0_n[n-1], n, 1, NN), k, 1, NC),
-  a0_c : makelist(sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*a0_n[n-1], n, 1, NN), k, 1, NC),
-  c_c : makelist(sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*c_n[n-1], n, 1, NN), k, 1, NC),
+  c0_c : makelist(sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*c0_s[n-1], n, 1, NN), k, 1, NC),
+  a0_c : makelist(sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*a0_s[n-1], n, 1, NN), k, 1, NC),
+  c_c : makelist(sum(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])*c_s[n-1], n, 1, NN), k, 1, NC),
   writeCExprs1(c_0, c0_c),
   writeCExprs1(alpha_0, a0_c),
   writeCExprs1(c_h, c_c),
@@ -294,7 +313,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   for k : 1 thru NC do (
     printf(fh, "    a_perp[a*~a + ~a] = ", NC, k-1),
     lst : makelist(float(weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])), n, 1, NN),
-    for n : 1 thru NN do printf(fh, "~a(~a)*ap_n[a][~a]", if n > 1 then " + " else "", lst[n], n-1),
+    for n : 1 thru NN do printf(fh, "~a(~a)*ap_s[a][~a]", if n > 1 then " + " else "", lst[n], n-1),
     printf(fh, "; ~%")
   ),
   printf(fh, "  } ~%"),
@@ -303,13 +322,27 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   for k : 1 thru NC do (
     lst : makelist(float(sc[k]*weights[n]*subst(makelist(pkC[d]=nodes[n][d], d, 1, cdim), pkbC[k])), n, 1, NN),
     printf(fh, "    flux_lo[c*~a + ~a] = ", NC, k-1),
-    for n : 1 thru NN do printf(fh, "~a(~a)*flo_n[c][~a]", if n > 1 then " + " else "", lst[n], n-1),
+    for n : 1 thru NN do printf(fh, "~a(~a)*flo_s[c][~a]", if n > 1 then " + " else "", lst[n], n-1),
     printf(fh, "; ~%"),
     printf(fh, "    flux_up[c*~a + ~a] = ", NC, k-1),
-    for n : 1 thru NN do printf(fh, "~a(~a)*fup_n[c][~a]", if n > 1 then " + " else "", lst[n], n-1),
+    for n : 1 thru NN do printf(fh, "~a(~a)*fup_s[c][~a]", if n > 1 then " + " else "", lst[n], n-1),
     printf(fh, "; ~%")
   ),
   printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+  /* 3. the time-step rates of the edge fluxes with the new closures, at the w-face nodes */
+  printf(fh, "  // the time-step rates of the edge fluxes with the new closures, at the w-face nodes ~%"),
+  printf(fh, "  double a0f[~a], cf[~a]; ~%", NF, NF),
+  printf(fh, "  ~a(alpha_0, a0f); ~%", p1fn),
+  printf(fh, "  ~a(c_h, cf); ~%", p1fn),
+  printf(fh, "  double cfl_lo = 0.0, cfl_up = 0.0; ~%"),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NF),
+  printf(fh, "    const double al_lo = a0f[n] + cf[n]*w_lo + kn[0][n], al_up = a0f[n] + cf[n]*w_up + kn[1][n]; ~%"),
+  printf(fh, "    cfl_lo = fmax(cfl_lo, fmax(fabs(al_lo + lon[0][n]), fabs(al_lo + hin[0][n]))); ~%"),
+  printf(fh, "    cfl_up = fmax(cfl_up, fmax(fabs(al_up + lon[1][n]), fabs(al_up + hin[1][n]))); ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  cfl[0] = 2.5*dv1*cfl_lo; ~%"),
+  printf(fh, "  cfl[1] = 2.5*dv1*cfl_up; ~%"),
   printf(fh, " ~%"),
   printf(fh, "  return 0; ~%"),
   printf(fh, "} ~%")

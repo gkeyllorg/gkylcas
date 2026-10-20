@@ -106,3 +106,34 @@ pkpmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP) := block([pts, tab, lc, lw, m, hit, ev
   tab
 )$
 
+
+/* The trace of block c of a phase-space distribution src at w = eta (the cell's reference velocity
+   coordinate, +-1) as a p=1 configuration field: dst[lc] = sum_lw Phat_lw(eta) src[c NP + pidx[lc][lw]]. */
+pkpmEmitTrace(fh, dst, src, c, eta, NP, pidx, pkbV, vv) := block([lc, lw, expr],
+  for lc : 1 thru length(pidx) do (
+    expr : sum(float(subst(vv = eta, pkbV[lw]))*arraymake(src, [c*NP + pidx[lc][lw]]), lw, 1, length(pkbV)),
+    printf(fh, "  ~a[~a] = ~a; ~%", dst, lc - 1, expr)
+  )
+)$
+
+/* The p=1 fields of the w-flux node values at the NN nodes (th_n, b0_n, b1_n, b2_n, a0_n, ch_n), by
+   the node helper p1fn; a0src, chsrc are the closures alpha_0 and c to use. */
+pkpmEmitWNodeFields(fh, p1fn, NN, NC, a0src, chsrc) := block([fl, e],
+  fl : [["th_n", "theta"], ["b0_n", sconcat("&bvar[", 0, "]")], ["b1_n", sconcat("&bvar[", NC, "]")],
+    ["b2_n", sconcat("&bvar[", 2*NC, "]")], ["a0_n", a0src], ["ch_n", chsrc]],
+  for e in fl do (
+    printf(fh, "  double ~a[~a]; ~%", e[1], NN),
+    printf(fh, "  ~a(~a, ~a); ~%", p1fn, e[2], e[1])
+  )
+)$
+
+/* The node values v[PKPM_HS_NODE_NV] of the w flux at node n (gkyl_pkpm_harm_slots.h): the raw
+   w-flux values wn of the build, then theta, b, alpha_0 and c (pkpmEmitWNodeFields), then the
+   w-independent part of the spectrum bounds. */
+pkpmEmitWNodeFill(fh, pre, v) := (
+  printf(fh, "~afor (int s = 0; s < PKPM_HS_W_END; ++s) ~a[s] = wn[n*PKPM_HS_W_END + s]; ~%", pre, v),
+  printf(fh, "~a~a[PKPM_HS_NODE_THETA] = th_n[n]; ~%", pre, v),
+  printf(fh, "~a~a[PKPM_HS_NODE_B] = b0_n[n]; ~a[PKPM_HS_NODE_B + 1] = b1_n[n]; ~a[PKPM_HS_NODE_B + 2] = b2_n[n]; ~%", pre, v, v, v),
+  printf(fh, "~a~a[PKPM_HS_NODE_A0] = a0_n[n]; ~a[PKPM_HS_NODE_CH] = ch_n[n]; ~%", pre, v, v),
+  printf(fh, "~apkpm_harm_node_spec(~a); ~%", pre, v)
+)$

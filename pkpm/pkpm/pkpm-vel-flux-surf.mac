@@ -34,7 +34,7 @@ load(stringproc)$
 fpprec : 24$
 
 calcPKPMVelFluxNodes(fh, funcNm, cdim) := block(
-  [lb, pkC, pkbC, NC, sOf, xw, x1, NQ, NN, fl, e],
+  [lb, pkC, pkbC, NC, sOf, xw, x1, NQ, NN],
   lb : loadPKPMPhaseBasis(cdim),
   pkC : copylist(lb[1]), pkbC : copylist(lb[2]),
   NC : length(pkbC),
@@ -53,30 +53,21 @@ calcPKPMVelFluxNodes(fh, funcNm, cdim) := block(
   printf(fh, "  // alpha_0: Pressure force a_P/xi. ~%"),
   printf(fh, "  // c_h:     Heating rate. ~%"),
   printf(fh, "  // nv:      Output node values [~a nodes][PKPM_HS_NODE_NV]. ~%", NN),
-  fl : [["th_n", "theta"], ["b0_n", sconcat("&bvar[", 0, "]")], ["b1_n", sconcat("&bvar[", NC, "]")],
-    ["b2_n", sconcat("&bvar[", 2*NC, "]")], ["a0_n", "alpha_0"], ["ch_n", "c_h"]],
-  for e in fl do (
-    printf(fh, "  double ~a[~a]; ~%", e[1], NN),
-    printf(fh, "  ~a_p1(~a, ~a); ~%", funcNm, e[2], e[1])
-  ),
+  pkpmEmitWNodeFields(fh, sconcat(funcNm, "_p1"), NN, NC, "alpha_0", "c_h"),
   printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
   printf(fh, "    double *v = &nv[n*PKPM_HS_NODE_NV]; ~%"),
-  printf(fh, "    for (int s = 0; s < PKPM_HS_W_END; ++s) v[s] = wn[n*PKPM_HS_W_END + s]; ~%"),
-  printf(fh, "    v[PKPM_HS_NODE_THETA] = th_n[n]; ~%"),
-  printf(fh, "    v[PKPM_HS_NODE_B] = b0_n[n]; v[PKPM_HS_NODE_B + 1] = b1_n[n]; v[PKPM_HS_NODE_B + 2] = b2_n[n]; ~%"),
-  printf(fh, "    v[PKPM_HS_NODE_A0] = a0_n[n]; v[PKPM_HS_NODE_CH] = ch_n[n]; ~%"),
-  printf(fh, "    pkpm_harm_node_spec(v); ~%"),
+  pkpmEmitWNodeFill(fh, "    ", "v"),
   printf(fh, "  } ~%"),
   printf(fh, "} ~%")
 )$
 
 calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
-  [lb, pkC, pkbC, pkV, pkbV, pkbP, NC, NP, NV, vv, pidx, sOf, xw, x1, w1, NQ, NN, c, lc, lw, side, expr, P0],
+  [lb, pkC, pkbC, pkbV, pkbP, NC, NP, vv, pidx, sOf, xw, x1, w1, NQ, NN, c],
 
   lb : loadPKPMPhaseBasis(cdim),
   pkC : copylist(lb[1]), pkbC : copylist(lb[2]), vv : lb[3][1], pkbV : copylist(lb[4]),
   pkbP : copylist(lb[6]),
-  NC : length(pkbC), NP : length(pkbP), NV : length(pkbV),
+  NC : length(pkbC), NP : length(pkbP),
   pidx : pkpmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP),
   sOf : pkpmP1PatternIndex(pkC, pkbC),
   xw : gaussOrdWeight1D(pkpmVelFluxNumPts), x1 : float(xw[1]), w1 : float(xw[2]),
@@ -104,13 +95,8 @@ calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
   /* traces: f_l at its upper edge (eta = 1), f_r at its lower edge (eta = -1) */
   printf(fh, "  double tl[~a], tr[~a], ul[8][~a], ur[8][~a]; ~%", NC, NC, NN, NN),
   for c : 0 thru 7 do (
-    for side : 1 thru 2 do (
-      for lc : 1 thru NC do (
-        expr : sum(float(subst(vv = (if side = 1 then 1 else -1), pkbV[lw]))*
-          arraymake(if side = 1 then f_l else f_r, [c*NP + pidx[lc][lw]]), lw, 1, NV),
-        printf(fh, "  ~a[~a] = ~a; ~%", if side = 1 then "tl" else "tr", lc - 1, expr)
-      )
-    ),
+    pkpmEmitTrace(fh, "tl", f_l, c, 1, NP, pidx, pkbV, vv),
+    pkpmEmitTrace(fh, "tr", f_r, c, -1, NP, pidx, pkbV, vv),
     printf(fh, "  ~a_p1(tl, ul[~a]); ~a_p1(tr, ur[~a]); ~%", funcNm, c, funcNm, c)
   ),
   printf(fh, "  double Fhat[8][~a]; ~%", NN),
