@@ -1,0 +1,11 @@
+load("pkpm/pkpm/pkpm-dtb-over-magb.mac")$
+load(stringproc)$
+/* This script generates the kernels pkpm_dtB_over_magB_<c>x_ser_p1 computing d_t B/|B| at the
+   Gauss-Legendre nodes of b (see pkpm-dtb-over-magb.mac). */
+for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_dtB_over_magB_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMDtBOverMagB(fh, funcName, c),
+  close(fh)
+)$

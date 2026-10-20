@@ -1,0 +1,63 @@
+/* pkpm-dtb-over-magb.mac ----------------------------------------------------------
+   The magnetic-field rate of the first-harmonic PKPM forces (normalized_first_harmonic.tex,
+   section "Which coefficients the constraints determine"):
+
+   pkpm_dtB_over_magB_<c>x_ser_p1(em, dt_em, out)
+     d_t B/|B| at the 2^cdim Gauss-Legendre nodes, where b = B/|B| is defined (em_bvar_nodal),
+     interpolated to the p=1 basis with the same 2-point rule; from the PHYSICAL fields em and
+     their time derivative dt_em (the Maxwell right-hand side of the stage), [E, B, phi, psi]
+     layout of both. The division by |B| is the one operation done at these nodes, as for b; the
+     force kernels form d_t b = (I - b b) . (d_t B/|B|) as a product with the p=1 b at their own
+     points, which at the Gauss-Legendre nodes is the time derivative of the nodal b. Returns the
+     number of nodes with |B| = 0 (the output is zero there). */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* A modal p=1 expansion with coefficients coeff evaluated at a node. */
+pkpmNodeValue(coeff, bC, varsC, node, cdim) :=
+  float(expand(subst(makelist(varsC[d] = node[d], d, 1, cdim), doExpand1(coeff, bC))))$
+
+calcPKPMDtBOverMagB(fh, funcNm, cdim) := block(
+  [varsC, bC, NC, nodes, weights, NN, n, i, proj],
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis("ser", cdim, 1),
+  NC : length(bC),
+  [nodes, weights] : gaussOrdWeight(2, cdim),
+  NN : length(nodes),
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH int ~a(const double *em, const double *dt_em, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // em:    Input physical electromagnetic fields [Ex, Ey, Ez, Bx, By, Bz, phi, psi]. ~%"),
+  printf(fh, "  // dt_em: Input time derivative of the physical fields (the Maxwell right-hand side), same layout. ~%"),
+  printf(fh, "  // out:   Output d_t B/|B| [x, y, z] at the ~a Gauss-Legendre nodes (where b = B/|B| is defined), ~%", NN),
+  printf(fh, "  //        interpolated to the p=1 basis. ~%"),
+  printf(fh, "  // Returns the number of nodes where |B| = 0 (the output is zero there). ~%"),
+  for i : 1 thru 3 do (
+    printf(fh, "  const double *B~a = &em[~a]; ~%", i-1, (2+i)*NC),
+    printf(fh, "  const double *dB~a = &dt_em[~a]; ~%", i-1, (2+i)*NC),
+    printf(fh, "  double *o~a = &out[~a]; ~%", i-1, (i-1)*NC)
+  ),
+  printf(fh, "  double q[3][~a] = {{0.0}}; ~%", NN),
+  printf(fh, "  int num_null = 0; ~%"),
+  for n : 1 thru NN do (
+    printf(fh, "  { ~%"),
+    printf(fh, "    const double B[3] = {~a, ~a, ~a}; ~%", pkpmNodeValue(B0, bC, varsC, nodes[n], cdim), pkpmNodeValue(B1, bC, varsC, nodes[n], cdim), pkpmNodeValue(B2, bC, varsC, nodes[n], cdim)),
+    printf(fh, "    const double dB[3] = {~a, ~a, ~a}; ~%", pkpmNodeValue(dB0, bC, varsC, nodes[n], cdim), pkpmNodeValue(dB1, bC, varsC, nodes[n], cdim), pkpmNodeValue(dB2, bC, varsC, nodes[n], cdim)),
+    printf(fh, "    const double magB = sqrt(B[0]*B[0] + B[1]*B[1] + B[2]*B[2]); ~%"),
+    printf(fh, "    if (magB > 0.0) { ~%"),
+    printf(fh, "      for (int i = 0; i < 3; ++i) q[i][~a] = dB[i]/magB; ~%", n-1),
+    printf(fh, "    } else { ~%"),
+    printf(fh, "      num_null += 1; ~%"),
+    printf(fh, "    } ~%"),
+    printf(fh, "  } ~%")
+  ),
+  for i : 1 thru 3 do (
+    proj : makelist(sum(weights[n]*subst(makelist(varsC[d] = nodes[n][d], d, 1, cdim), bC[k])*q[i-1][n-1], n, 1, NN), k, 1, NC),
+    writeCExprs1(concat(o, i-1), proj)
+  ),
+  printf(fh, "  return num_null; ~%"),
+  printf(fh, "} ~%")
+)$
