@@ -1,107 +1,127 @@
 /* pkpm-vel-flux-surf.mac --------------------------------------------------------
    v_par surface flux of the PKPM kinetic equations (velocity-space pass, stage B), on the eight
-   blocks U = [F, G, M0_perp (x, y, z), N_perp (x, y, z)].
+   blocks U = [F, G, M0_perp (x, y, z), N_perp (x, y, z)], at the tensor Gauss-Legendre nodes with
+   pkpmVelFluxNumPts points per configuration direction (node i0 + N i1 + N^2 i2, direction 0
+   fastest; the nodes of the build of the stored operator, pkpm-harm-build.mac).
+
+   pkpm_vel_flux_nodes_<c>x_ser_p1(wn, theta, bvar, alpha_0, c_h, nv)
+     Once per configuration cell: the node values nv[node][PKPM_HS_NODE_NV] of the w flux: the RAW
+     values of the 62 w-flux coefficients written by the build (wn), then theta, b, alpha_0 and c
+     (p=1 fields) at the nodes, and the w-independent part of the spectrum bounds
+     (pkpm_harm_node_spec).
 
    pkpm_vel_flux_vpar_<c>x1v_ser_p1(w, dxv, nv, f_l, f_r, flux)
-     On the LOWER w face of the current cell (f_r is the current cell, f_l the cell below), at the
-     5^cdim configuration Gauss-Legendre nodes of the table header (vst_<tag>_conf_nodes), the HLL
-     flux of the w flux alpha U + T(U) from the node values nv[node][PKPM_HS_NODE_NV]: the stored
-     first-harmonic coefficients (exact projections onto degree <= 2 per configuration direction,
-     gkyl_pkpm_harm_slots.h) evaluated at the node, theta, b and the closures alpha_0, c there
-     (formed once per configuration cell by the updater). With those coefficients the flux is
-     exact on every face where it is upwind (integrand degree <= 4 per direction); the 5 nodes
-     sample the speed switches of the other faces. The node flux is pkpm_harm_node_wflux
-     (gkyl_pkpm_harm_coeffs.h, shared with the closure kernels): alpha = alpha_0 + (c - K) w_face
-     - (b.grad xi) w_face^2, T the coupling by beta, t and R_B1 with the closures
-     H = 4 theta G - 2 theta^2 F, O = 6 theta N - 6 theta^2 M0, the speeds S_L, S_R = alpha + the
-     bounds of the spectrum of T; exact upwinding when S_L >= 0 or S_R <= 0, the HLL average
-     otherwise. With t = B_1 = 0 (b uniform along a line) S_L = S_R = alpha and the flux is the
-     upwind flux alpha U.
-
-     The fluxes are projected onto the surface modal basis: flux = [8 blocks][NK]. Returns the
-     stable time-step estimate (2 p_v + 1)/2 dv1 max(|S_L|, |S_R|) with p_v = 2.
+     On the LOWER w face of the current cell (f_r the current cell, f_l the cell below): the traces
+     of the eight blocks on both sides at the nodes, the HLL flux of the w flux alpha U + T(U) at
+     every node (pkpm_harm_node_wflux, gkyl_pkpm_harm_coeffs.h: alpha = alpha_0 + (c - K) w_face -
+     (b.grad xi) w_face^2, T the coupling by beta, t and R_B1 with the closures H and O, the speeds
+     alpha + the bounds of the spectrum of T; exact upwinding when S_L >= 0 or S_R <= 0, the HLL
+     average otherwise), projected onto the stored face format (the orthonormal surface
+     coefficients divided by (1/sqrt 2)^cdim (2 sqrt 3/5)^(linear factors of the mode)). With
+     the raw coefficients the node rule integrates the flux exactly wherever it is upwind
+     (degree 1 + 7 + 1 per direction); elsewhere the speeds and the branch are those of the actual
+     local operator at the nodes. Traces, node values and projections direction by direction.
+     Returns the stable time-step estimate (2 p_v + 1)/2 dv1 max(|S_L|, |S_R|), p_v = 2.
 
    The flux at the domain edges of velocity space is the closure's (pkpm-vars-closure.mac): the
-   updater does not call this there. */
+   updater does not call the face kernel there. */
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
-load("core/nodal_operations/nodal_functions.mac")$
-load("vlasov/vlasov/vlasov-basis.mac")$
-load("vlasov/vlasov/nodal-lax-emit.mac")$
-load("vlasov/vlasov/surf-eval-tables.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
 load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load("pkpm/pkpm/pkpm-nodal.mac")$
 load(stringproc)$
 fpprec : 24$
 
-calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
-  [tag, lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, vv, nodes_conf, NO, fact, sizesNA, NA, NMV,
-   tabP, bSurfP, NK, factP, prjPre, d],
-
-  tag : pkpmFluxTag(cdim),
+calcPKPMVelFluxNodes(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, NC, sOf, xw, x1, NQ, NN, fl, e],
   lb : loadPKPMPhaseBasis(cdim),
-  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]),
-  pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]),
   NC : length(pkbC),
-  NP : length(pkbP),
-  vv : pkV[1],
-  nodes_conf : gaussOrd(pkpmVelFluxNumPts, cdim),
-  NO : length(nodes_conf),
-
-  fact : laxFactorizeBasis(pkbP, pkC, [vv]),
-  sizesNA : laxFactorSizes(fact, vv),
-  NA : sizesNA[1],
-  NMV : sizesNA[2],
-  tabP : sconcat("vst_", tag, "_ph_v0"),
-  bSurfP : basisFromVars("tenhyb", delete(vv, pkP), 1),
-  NK : length(bSurfP),
-  factP : laxFactorizeBasis(bSurfP, pkC, [prjdummy]),
-  prjPre : sconcat("vst_", tag, "_prj_v0"),
+  sOf : pkpmP1PatternIndex(pkC, pkbC),
+  xw : gaussOrdWeight1D(pkpmVelFluxNumPts), x1 : float(xw[1]),
+  NQ : length(x1), NN : NQ^cdim,
 
   printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
-  pkpmFluxTabInclude(fh, cdim),
-  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%~%"),
+  pkpmEmitP1Nodes(fh, sconcat(funcNm, "_p1"), cdim, sOf, x1),
+  printf(fh, "GKYL_CU_DH void ~a(const double *wn, const double *theta, const double *bvar, const double *alpha_0,
+  const double *c_h, double* GKYL_RESTRICT nv) ~%{ ~%", funcNm),
+  printf(fh, "  // wn:      Raw w-flux values at the ~a nodes [node][PKPM_HS_W_END] (the build of the stored operator). ~%", NN),
+  printf(fh, "  // theta:   T_perp/T. ~%"),
+  printf(fh, "  // bvar:    Magnetic field unit vector [bx, by, bz]. ~%"),
+  printf(fh, "  // alpha_0: Pressure force a_P/xi. ~%"),
+  printf(fh, "  // c_h:     Heating rate. ~%"),
+  printf(fh, "  // nv:      Output node values [~a nodes][PKPM_HS_NODE_NV]. ~%", NN),
+  fl : [["th_n", "theta"], ["b0_n", sconcat("&bvar[", 0, "]")], ["b1_n", sconcat("&bvar[", NC, "]")],
+    ["b2_n", sconcat("&bvar[", 2*NC, "]")], ["a0_n", "alpha_0"], ["ch_n", "c_h"]],
+  for e in fl do (
+    printf(fh, "  double ~a[~a]; ~%", e[1], NN),
+    printf(fh, "  ~a_p1(~a, ~a); ~%", funcNm, e[2], e[1])
+  ),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
+  printf(fh, "    double *v = &nv[n*PKPM_HS_NODE_NV]; ~%"),
+  printf(fh, "    for (int s = 0; s < PKPM_HS_W_END; ++s) v[s] = wn[n*PKPM_HS_W_END + s]; ~%"),
+  printf(fh, "    v[PKPM_HS_NODE_THETA] = th_n[n]; ~%"),
+  printf(fh, "    v[PKPM_HS_NODE_B] = b0_n[n]; v[PKPM_HS_NODE_B + 1] = b1_n[n]; v[PKPM_HS_NODE_B + 2] = b2_n[n]; ~%"),
+  printf(fh, "    v[PKPM_HS_NODE_A0] = a0_n[n]; v[PKPM_HS_NODE_CH] = ch_n[n]; ~%"),
+  printf(fh, "    pkpm_harm_node_spec(v); ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
 
-  /* Stage-1 nodal evaluation of a distribution (both edges) and the projection. */
-  laxEmitStage1Fn(fh, funcNm, tabP, NA, NMV, 1),
-  laxEmitPrjFn(fh, funcNm, prjPre, NK, length(factP[1]), length(factP[2]), NO, 1, 0),
+calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, pkV, pkbV, pkbP, NC, NP, NV, vv, pidx, sOf, xw, x1, w1, NQ, NN, c, lc, lw, side, expr, P0],
+
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), vv : lb[3][1], pkbV : copylist(lb[4]),
+  pkbP : copylist(lb[6]),
+  NC : length(pkbC), NP : length(pkbP), NV : length(pkbV),
+  pidx : pkpmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP),
+  sOf : pkpmP1PatternIndex(pkC, pkbC),
+  xw : gaussOrdWeight1D(pkpmVelFluxNumPts), x1 : float(xw[1]), w1 : float(xw[2]),
+  NQ : length(x1), NN : NQ^cdim,
+
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%~%"),
+  pkpmEmitP1Nodes(fh, sconcat(funcNm, "_p1"), cdim, sOf, x1),
+  /* the stored face format: per direction 1 for Phat_0, x/0.4 for Phat_1 (the orthonormal
+     coefficient divided by (1/sqrt 2) (2 sqrt 3/5) per linear factor) */
+  printf(fh, "// Projection of node values onto the stored face format of the p=1 surface basis (gkyl order). ~%"),
+  pkpmEmitNodeProj(fh, sconcat(funcNm, "_prj"), cdim, NQ,
+    [makelist(w1[i], i, 1, NQ), makelist(w1[i]*x1[i]/0.4, i, 1, NQ)], sOf),
 
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *nv,
   const double *f_l, const double *f_r, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:   Cell-center coordinates (current cell). ~%"),
   printf(fh, "  // dxv[NDIM]: Cell spacing (current cell). ~%"),
-  printf(fh, "  // nv:        Node values [~a nodes][PKPM_HS_NODE_NV] of the w flux of the configuration cell. ~%", NO),
+  printf(fh, "  // nv:        Node values [~a nodes][PKPM_HS_NODE_NV] of the w flux of the configuration cell. ~%", NN),
   printf(fh, "  // f_l/f_r:   Distributions [F, G, M0_perp, N_perp] in the cell below/current cell. ~%"),
-  printf(fh, "  // flux:      Output modal surface fluxes [8 blocks] on the lower w face. ~%"),
+  printf(fh, "  // flux:      Output surface fluxes [8 blocks] on the lower w face (stored face format). ~%"),
   printf(fh, "  // Returns the stable time-step estimate over the face nodes. ~%"),
   printf(fh, "  const double dv1 = 2.0/dxv[~a]; ~%", cdim),
   printf(fh, "  const double v_face = w[~a] - 0.5*dxv[~a]; ~%", cdim, cdim),
-  printf(fh, " ~%"),
-  /* Stage 1 for every block on both edges. */
-  printf(fh, "  double GU_l[8][~a], GU_r[8][~a]; ~%", NA, NA),
-  printf(fh, "  for (int tid = 0; tid < ~a; ++tid) { ~%", NA),
-  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
-  printf(fh, "      ~a_g(tid, &f_l[c*~a], &f_r[c*~a], GU_l[c], GU_r[c]); ~%", funcNm, NP, NP),
-  printf(fh, "    } ~%"),
-  printf(fh, "  } ~%"),
-  printf(fh, " ~%"),
-  printf(fh, "  double Fhat[8][~a]; ~%", NO),
+  /* traces: f_l at its upper edge (eta = 1), f_r at its lower edge (eta = -1) */
+  printf(fh, "  double tl[~a], tr[~a], ul[8][~a], ur[8][~a]; ~%", NC, NC, NN, NN),
+  for c : 0 thru 7 do (
+    for side : 1 thru 2 do (
+      for lc : 1 thru NC do (
+        expr : sum(float(subst(vv = (if side = 1 then 1 else -1), pkbV[lw]))*
+          arraymake(if side = 1 then f_l else f_r, [c*NP + pidx[lc][lw]]), lw, 1, NV),
+        printf(fh, "  ~a[~a] = ~a; ~%", if side = 1 then "tl" else "tr", lc - 1, expr)
+      )
+    ),
+    printf(fh, "  ~a_p1(tl, ul[~a]); ~a_p1(tr, ur[~a]); ~%", funcNm, c, funcNm, c)
+  ),
+  printf(fh, "  double Fhat[8][~a]; ~%", NN),
   printf(fh, "  double cfl_max = 0.0; ~%"),
-  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
-  printf(fh, "    // Nodal traces of the eight blocks on both sides of the face. ~%"),
-  printf(fh, "    double U_l[8] = {0.0}, U_r[8] = {0.0}, Fn[8]; ~%"),
-  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
-  printf(fh, "      for (int a = 0; a < ~a; ++a) { ~%", NA),
-  printf(fh, "        const double cm = ~a_Cm[i*~a + a]; ~%", tabP, NA),
-  printf(fh, "        U_l[c] += cm*GU_l[c][a]; U_r[c] += cm*GU_r[c][a]; ~%"),
-  printf(fh, "      } ~%"),
-  printf(fh, "    } ~%"),
-  printf(fh, "    cfl_max = fmax(cfl_max, pkpm_harm_node_wflux(&nv[i*PKPM_HS_NODE_NV], v_face, U_l, U_r, Fn)); ~%"),
-  printf(fh, "    for (int c = 0; c < 8; ++c) Fhat[c][i] = Fn[c]; ~%"),
+  printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
+  printf(fh, "    double U_l[8], U_r[8], Fn[8]; ~%"),
+  printf(fh, "    for (int c = 0; c < 8; ++c) { U_l[c] = ul[c][n]; U_r[c] = ur[c][n]; } ~%"),
+  printf(fh, "    cfl_max = fmax(cfl_max, pkpm_harm_node_wflux(&nv[n*PKPM_HS_NODE_NV], v_face, U_l, U_r, Fn)); ~%"),
+  printf(fh, "    for (int c = 0; c < 8; ++c) Fhat[c][n] = Fn[c]; ~%"),
   printf(fh, "  } ~%"),
-  printf(fh, " ~%"),
-  printf(fh, "  for (int tid = 0; tid < ~a; ++tid) { ~%", NO),
-  printf(fh, "    for (int c = 0; c < 8; ++c) ~a_prj(tid, Fhat[c], &flux[c*~a]); ~%", funcNm, NK),
-  printf(fh, "  } ~%"),
+  printf(fh, "  for (int c = 0; c < 8; ++c) ~a_prj(Fhat[c], &flux[c*~a]); ~%", funcNm, NC),
   printf(fh, "  return 2.5*dv1*cfl_max; ~%"),
   printf(fh, "} ~%")
 )$

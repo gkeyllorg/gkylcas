@@ -1,0 +1,108 @@
+/* pkpm-nodal.mac -------------------------------------------------------------------
+   Shared emitters of the nodal steps of the PKPM kernels, on tensor Gauss-Legendre nodes with N
+   points per configuration direction, node i0 + N i1 + N^2 i2 (direction 0 fastest):
+   - pkpmEmitP1Nodes: a p=1 configuration field (gkyl basis coefficients) at the nodes;
+   - pkpmEmitNodeProj: node values to modes by 1D weight tables, mode k0 + M k1 + M^2 k2;
+   both direction by direction (sum factorization), as static inline helpers. */
+
+load("core/modal-basis.mac")$
+load(stringproc)$
+
+/* Digits (direction 0 first) of a flat index in the mixed radix rad, and back. */
+pkpmNodalDigits(idx, rad) := block([r, dig, m],
+  r : idx, dig : [],
+  for m : 1 thru length(rad) do (dig : endcons(mod(r, rad[m]), dig), r : floor(r/rad[m])),
+  dig
+)$
+pkpmNodalFlat(dig, rad) := block([r, m],
+  r : 0,
+  for m : length(rad) thru 1 step -1 do r : r*rad[m] + dig[m],
+  r
+)$
+
+/* The gkyl p=1 coefficient index of each degree pattern s0 + 2 s1 + 4 s2. */
+pkpmP1PatternIndex(pkC, pkbC) := block([cdim, sOf, q, pat, d],
+  cdim : length(pkC),
+  sOf : makelist(0, i, 1, 2^cdim),
+  for q : 1 thru length(pkbC) do (
+    pat : sum(hipow(expand(pkbC[q]), pkC[d])*2^(d-1), d, 1, cdim),
+    sOf[pat + 1] : q - 1
+  ),
+  sOf
+)$
+
+/* fname(f, fn): fn[node] = sum_s f[sOf(s)] prod_d Phat_{s_d}(x1[i_d]) (the orthonormal gkyl p=1 basis
+   is the tensor product of Phat_0 = 1/sqrt 2 and Phat_1 = sqrt(3/2) x). */
+pkpmEmitP1Nodes(fh, fname, cdim, sOf, x1) := block([NQ, NN, P1, d, radS, radD, dst, cnt, idx, dig, expr, sd, sdig, fsrc],
+  NQ : length(x1), NN : NQ^cdim,
+  P1 : lambda([s, x], if s = 0 then 1/sqrt(2) else sqrt(3/2)*x),
+  printf(fh, "// The p=1 field f (gkyl basis) at the ~a Gauss-Legendre nodes (~a per direction, direction 0 ~%", NN, NQ),
+  printf(fh, "// fastest), direction by direction. ~%"),
+  printf(fh, "GKYL_CU_DH static inline void ~a(const double *f, double* GKYL_RESTRICT fn) ~%{ ~%", fname),
+  for d : 0 thru cdim - 1 do (
+    radS : makelist(if m < d then NQ else 2, m, 0, cdim-1),
+    radD : makelist(if m <= d then NQ else 2, m, 0, cdim-1),
+    dst : if d = cdim - 1 then "fn" else sconcat("ev", d+1),
+    cnt : product(radD[m], m, 1, cdim),
+    if d < cdim - 1 then printf(fh, "  double ~a[~a]; ~%", dst, cnt),
+    for idx : 0 thru cnt - 1 do (
+      dig : pkpmNodalDigits(idx, radD),
+      expr : 0,
+      for sd : 0 thru 1 do (
+        sdig : copylist(dig), sdig[d+1] : sd,
+        fsrc : if d = 0 then f[sOf[1 + sum(sdig[m]*2^(m-1), m, 1, cdim)]]
+               else arraymake(eval_string(sconcat("ev", d)), [pkpmNodalFlat(sdig, radS)]),
+        expr : expr + float(P1(sd, x1[dig[d+1] + 1]))*fsrc
+      ),
+      printf(fh, "  ~a[~a] = ~a; ~%", dst, idx, expr)
+    )
+  ),
+  printf(fh, "} ~%~%")
+)$
+
+/* fname(v, out): out[omap(k)] = sum_nodes prod_d W[k_d][i_d] v[node] for the modes k = k0 + M k1 +
+   M^2 k2 (M = length(W)); omap the output index of each flat mode (identity when omitted). */
+pkpmEmitNodeProj(fh, fname, cdim, NQ, W, omap) := block([M, d, radS, radD, src, dst, cnt, idx, dig, expr, sd, sdig, outIdx],
+  M : length(W),
+  printf(fh, "GKYL_CU_DH static inline void ~a(const double *v, double* GKYL_RESTRICT out) ~%{ ~%", fname),
+  for d : 0 thru cdim - 1 do (
+    radS : makelist(if m < d then M else NQ, m, 0, cdim-1),
+    radD : makelist(if m <= d then M else NQ, m, 0, cdim-1),
+    src : if d = 0 then "v" else sconcat("pr", d),
+    dst : if d = cdim - 1 then "out" else sconcat("pr", d+1),
+    cnt : product(radD[m], m, 1, cdim),
+    if d < cdim - 1 then printf(fh, "  double ~a[~a]; ~%", dst, cnt),
+    for idx : 0 thru cnt - 1 do (
+      dig : pkpmNodalDigits(idx, radD),
+      expr : 0,
+      for sd : 0 thru NQ - 1 do (
+        sdig : copylist(dig), sdig[d+1] : sd,
+        expr : expr + float(W[dig[d+1] + 1][sd + 1])*arraymake(eval_string(src), [pkpmNodalFlat(sdig, radS)])
+      ),
+      outIdx : if d = cdim - 1 and omap # [] then omap[idx + 1] else idx,
+      printf(fh, "  ~a[~a] = ~a; ~%", dst, outIdx, expr)
+    )
+  ),
+  printf(fh, "} ~%~%")
+)$
+
+/* pidx[lc][lw] (0-based): the phase basis function pkbC[lc] pkbV[lw], matched numerically (the
+   radicals of the two normalizations do not always simplify symbolically). */
+pkpmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP) := block([pts, tab, lc, lw, m, hit, evp, row],
+  pts : [[0.31, -0.57, 0.83, 0.47], [-0.73, 0.21, -0.39, -0.61], [0.67, 0.89, -0.13, 0.29]],
+  evp : lambda([e, p], float(subst(append(makelist(pkC[d] = p[d], d, 1, length(pkC)), [vv = p[4]]), e))),
+  tab : [],
+  for lc : 1 thru length(pkbC) do (
+    row : [],
+    for lw : 1 thru length(pkbV) do (
+      hit : -1,
+      for m : 1 thru length(pkbP) do
+        if every(lambda([p], abs(evp(pkbP[m], p) - evp(pkbC[lc]*pkbV[lw], p)) < 1.0e-12), pts) then hit : m - 1,
+      if hit < 0 then error("pkpmPhaseIndex: no phase basis function for", lc, lw),
+      row : endcons(hit, row)
+    ),
+    tab : endcons(row, tab)
+  ),
+  tab
+)$
+

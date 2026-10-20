@@ -24,30 +24,11 @@ load("util_maxima/out-scripts.mac")$
 load("pkpm/pkpm/pkpm-flux-tables.mac")$
 load("pkpm/pkpm/pkpm-cas-util.mac")$
 load("pkpm/pkpm/pkpm-harm-ops.mac")$
+load("pkpm/pkpm/pkpm-nodal.mac")$
 load(stringproc)$
 fpprec : 24$
 
 cvarsHv : [x, y, z]$
-
-/* pidx[lc][lw] (0-based): the phase basis function pkbC[lc] pkbV[lw], matched numerically (the
-   radicals of the two normalizations do not always simplify symbolically). */
-pkpmHarmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP) := block([pts, tab, lc, lw, m, hit, evp, row],
-  pts : [[0.31, -0.57, 0.83, 0.47], [-0.73, 0.21, -0.39, -0.61], [0.67, 0.89, -0.13, 0.29]],
-  evp : lambda([e, p], float(subst(append(makelist(pkC[d] = p[d], d, 1, length(pkC)), [vv = p[4]]), e))),
-  tab : [],
-  for lc : 1 thru length(pkbC) do (
-    row : [],
-    for lw : 1 thru length(pkbV) do (
-      hit : -1,
-      for m : 1 thru length(pkbP) do
-        if every(lambda([p], abs(evp(pkbP[m], p) - evp(pkbC[lc]*pkbV[lw], p)) < 1.0e-12), pts) then hit : m - 1,
-      if hit < 0 then error("pkpmHarmPhaseIndex: no phase basis function for", lc, lw),
-      row : endcons(hit, row)
-    ),
-    tab : endcons(row, tab)
-  ),
-  tab
-)$
 
 /* The configuration triples [mc, k, lc, value] (1-based mc, k, lc) of int a_mc Q_k phi_lc, where a
    is the test list (pkbC or its derivatives) and Q the degree <= 2 basis. */
@@ -120,7 +101,7 @@ calcPKPMHarmVol(fh, funcNm, cdim) := block(
   pkC : copylist(lb[1]), pkbC : copylist(lb[2]), vv : lb[3][1], pkbV : copylist(lb[4]),
   pkbP : copylist(lb[6]),
   NC : length(pkbC), NP : length(pkbP), NV : length(pkbV),
-  pidx : pkpmHarmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP),
+  pidx : pkpmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP),
   ents : pkpmHarmEntries(), nent : length(ents),
   gyr : pkpmHarmGyration(),
   offCf : nent + 3,

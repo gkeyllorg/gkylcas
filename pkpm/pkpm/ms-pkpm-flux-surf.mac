@@ -9,7 +9,8 @@ load(stringproc)$
       pkpm_stream_surf{x,y,z}_<c>x1v_ser_p1 (configuration directions) and
       pkpm_accel_surfvpar_<c>x1v_ser_p1 (v_par direction; the domain edges are regular
       faces whose stored fluxes the closure fills),
-   4. the v_par flux kernels pkpm_vel_flux_vpar_<c>x1v_ser_p1,
+   4. the node values of the v_par flux pkpm_vel_flux_nodes_<c>x_ser_p1 and the v_par flux
+      kernels pkpm_vel_flux_vpar_<c>x1v_ser_p1,
    5. the velocity-space pass volume kernels pkpm_kinetic_vel_vol_<c>x1v_ser_p1. */
 
 cvars : ["x", "y", "z"]$
@@ -39,6 +40,12 @@ for c : 1 thru 3 do (
   disp(printf(false, "Creating ~a", funcName)),
   fh : openw(sconcat("~/max-out/", funcName, ".c")),
   calcPKPMAccelSurf(fh, funcName, c),
+  close(fh),
+
+  funcName : sconcat("pkpm_vel_flux_nodes_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMVelFluxNodes(fh, funcName, c),
   close(fh),
 
   funcName : sconcat("pkpm_vel_flux_vpar_", c, "x1v_ser_p1"),

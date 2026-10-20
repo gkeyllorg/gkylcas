@@ -24,7 +24,7 @@ printPKPMVarsPrototype(deco, ci, bStr, pi) := block([si, d],
   for d : 1 thru ci do
     printf(fh, "~avoid pkpm_vars_grad_u_~a_~ax_~a_p~a(const double *dxv, const double *jacob_pos, const double *u_l, const double *u_c, const double *u_r, double* GKYL_RESTRICT grad_u); ~%", deco, cvars[d], ci, bStr, pi),
   printf(fh, "~aint pkpm_vars_closure_~ax_~a_p~a(double w_lo, double w_up, double dv, const double *norm_moms, const double *rhs_moms,
-  const double *bvar, const double *coef, const double *theta, const double *alpha_0_prev, const double *c_h_prev,
+  const double *bvar, const double *wc, const double *theta, const double *alpha_0_prev, const double *c_h_prev,
   const double *f_lo, const double *f_up,
   double* GKYL_RESTRICT c_0, double* GKYL_RESTRICT alpha_0, double* GKYL_RESTRICT c_h, double* GKYL_RESTRICT a_perp,
   double* GKYL_RESTRICT flux_lo, double* GKYL_RESTRICT flux_up, double* GKYL_RESTRICT cfl, double* GKYL_RESTRICT cond); ~%", deco, ci, bStr, pi),
