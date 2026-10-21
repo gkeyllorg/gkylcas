@@ -16,7 +16,15 @@
    - pkpm_harm_vol_<c>x1v_ser_p1, per phase cell: with w = w_c + (dv/2) eta each input block is
      contracted once with the w tables int P_m (w_c + dv eta/2)^j P_l and (2/dv) int P_m' (...)^j P_l
      into configuration expansions V (the source table of power 0 is the identity, V = U, and the
-     couplings are w independent), and every entry adds its matrix times V: plain multiply-adds.
+     couplings are w independent), and every entry adds its matrix times V as one dense block
+     out[o][mw][mc] += sg sum_lc mat[e][mc][lc] V[mw][lc] over the w modes where V is not zero
+     (d_w P_0 = 0) and the rows where the matrices can be nonzero (the couplings' d_d phi_mc).
+     One helper per block shape (unrolled in groups of <= 4 rows: every matrix element is loaded
+     once for all its w modes, every operand once per group, the accumulators stay in registers),
+     the kernel a list of helper calls on accumulators in [mw][mc] order scattered to the phase
+     basis at the end. The helpers are not inlined in 2x and 3x so that the kernel fits the
+     instruction cache (fully unrolled the 3x kernel is ~320 KB of machine code), inlined in 1x
+     (2 x 2 blocks).
    The source-rate estimate is formed by the updater from the stored operator. */
 
 load("core/modal-basis.mac")$
@@ -94,8 +102,8 @@ calcPKPMHarmMat(fh, funcNm, cdim) := block(
 /* Per phase cell: the w tables, V of every input block, then out += mat V for every entry. */
 calcPKPMHarmVol(fh, funcNm, cdim) := block(
   [lb, pkC, pkbC, vv, pkbV, pkbP, NC, NP, NV, ents, nent, gyr, offCf, pidx, hv, TS, TF, tval, tnm,
-   rowzero, vnm, vsym, need, key, e, it, i, kind, j, mw, lw, lc, mc, t, vval, o, d, q, oi, acc, sgn, mnm,
-   b2, nzV, nzD],
+   rowzero, vnm, vsym, need, key, e, it, i, kind, j, mw, lw, lc, mc, t, vval, o, d, q, oi, sgn,
+   b2, nzV, nzD, rowsOf, shapes, blocks, addBlock, fcs, blk, k],
 
   lb : loadPKPMPhaseBasis(cdim),
   pkC : copylist(lb[1]), pkbC : copylist(lb[2]), vv : lb[3][1], pkbV : copylist(lb[4]),
@@ -109,17 +117,6 @@ calcPKPMHarmVol(fh, funcNm, cdim) := block(
   nzV : pkpmHarmPattern(pkpmHarmTriples(pkC, pkbC, b2, pkbC), NC),
   nzD : makelist(pkpmHarmPattern(pkpmHarmTriples(pkC, diff(pkbC, pkC[d]), b2, pkbC), NC), d, 1, cdim),
 
-  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
-  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *mat, const double *f,
-  double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
-  printf(fh, "  // w[NDIM]:   Cell-center coordinates (computational). ~%"),
-  printf(fh, "  // dxv[NDIM]: Cell spacing (computational). ~%"),
-  printf(fh, "  // mat:       Matrices of the stored operator of the configuration cell (pkpm_harm_mat_~ax_ser_p1). ~%", cdim),
-  printf(fh, "  // f:         Input Jacobian-weighted distributions J [F, G, M0_perp, N_perp]. ~%"),
-  printf(fh, "  // out:       Incremented output. ~%"),
-  printf(fh, "  const double wvpar = w[~a], dvpar = dxv[~a]; ~%", cdim, cdim),
-  printf(fh, " ~%"),
-
   /* w tables: TS[j][mw][lw] = int P_mw (w_c + dv eta/2)^j P_lw, TF with (2/dv) P_mw' */
   hv : wvpar + dvpar/2*vv,
   TS : makelist(makelist(makelist(expand(integrate(pkbV[mw]*hv^j*pkbV[lw], vv, -1, 1)), lw, 1, NV), mw, 1, NV), j, 0, 2),
@@ -131,6 +128,47 @@ calcPKPMHarmVol(fh, funcNm, cdim) := block(
     else eval_string(sconcat(if kind = 0 then "tS" else "tF", j, mw-1, lw-1))),
   /* rows of a table that vanish identically (d_w of the constant mode) give V = 0 */
   rowzero : lambda([kind, j, mw], every(lambda([lw], ratsimp(tval(kind, j, mw, lw)) = 0), makelist(lw, lw, 1, NV))),
+
+  /* The apply, block by block: every entry (and gyration and coupling term) adds to its output block
+       out[o][mw][mc] += sg sum_lc mat[e][mc][lc] V[mw][lc]
+     over the w modes mw where V is not identically zero and the rows mc where the matrices can be
+     nonzero (dense in lc there): one call of a dense-block helper per block, one helper per block
+     shape, on accumulators in [mw][mc] order scattered to the phase basis at the end. */
+  rowsOf : lambda([nz], block([mcs],
+    mcs : sublist(makelist(mc, mc, 1, NC), lambda([mc], member(true, nz[mc]))),
+    for mc in mcs do if member(false, nz[mc]) then error("calcPKPMHarmVol: a row of the matrices is not dense", mc),
+    mcs)),
+  shapes : [], blocks : [],
+  addBlock : lambda([o, e, key, sg, nz], block([mws, mcs, shp, k],
+    mws : sublist(makelist(mw, mw, 1, NV), lambda([mw], not rowzero(key[2], key[3], mw))),
+    mcs : rowsOf(nz),
+    shp : [mws, mcs],
+    k : sublist_indices(shapes, lambda([z], z = shp)),
+    if length(k) = 0 then (shapes : endcons(shp, shapes), k : length(shapes)) else k : k[1],
+    blocks : endcons([o, e, key, sg, k - 1], blocks))),
+  for o : 0 thru 7 do (
+    for e : 1 thru nent do
+      if ents[e][1] = o then addBlock(o, e - 1, [ents[e][2], ents[e][3], ents[e][4]], 1, nzV),
+    for it in gyr do
+      if it[1] = o then addBlock(o, nent + it[3], [it[2], 0, 0], it[4], nzV),
+    for d : 1 thru cdim do
+      for q : 0 thru 10 do (
+        oi : pkpmHarmConfCoupling(d-1, q),
+        if oi[1] = o then addBlock(o, offCf + 11*(d-1) + q, [oi[2], 0, 0], 1, nzD[d])
+      )
+  ),
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%~%"),
+  writePKPMHarmVolBlocks(fh, funcNm, cdim, shapes),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *mat, const double *f,
+  double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[NDIM]:   Cell-center coordinates (computational). ~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing (computational). ~%"),
+  printf(fh, "  // mat:       Matrices of the stored operator of the configuration cell (pkpm_harm_mat_~ax_ser_p1). ~%", cdim),
+  printf(fh, "  // f:         Input Jacobian-weighted distributions J [F, G, M0_perp, N_perp]. ~%"),
+  printf(fh, "  // out:       Incremented output. ~%"),
+  printf(fh, "  const double wvpar = w[~a], dvpar = dxv[~a]; ~%", cdim, cdim),
+  printf(fh, " ~%"),
+
 
   /* the (input block, kind, power) contractions the entries and the gyration need */
   need : [],
@@ -175,40 +213,67 @@ calcPKPMHarmVol(fh, funcNm, cdim) := block(
   ),
   printf(fh, " ~%"),
 
-  /* out[o][mc, mw] += sum over the entries of o of mat[e][mc][lc] V[mw][lc] */
-  /* matrix entry of stored entry e (0-based), zero where the pattern of its triples is zero */
-  mnm : lambda([e, mc, lc],
-    if (if e >= offCf then nzD[floor((e - offCf)/11) + 1][mc][lc] else nzV[mc][lc])
-    then mat[(e*NC + mc - 1)*NC + lc - 1] else 0),
-  for o : 0 thru 7 do (
-    printf(fh, "  // output block ~a ~%", o),
+  /* the input blocks used directly (kind 0, power 0) in [mw][lc] order */
+  printf(fh, "  // input blocks used as they are, in [w mode][configuration mode] order ~%"),
+  fcs : [],
+  for blk in blocks do if blk[3][2] = 0 and blk[3][3] = 0 and not member(blk[3][1], fcs) then fcs : endcons(blk[3][1], fcs),
+  for i in sort(fcs) do (
+    printf(fh, "  const double fc~a[~a] = {", i, NP),
     for mw : 1 thru NV do
-      for mc : 1 thru NC do (
-        acc : 0,
-        for e : 1 thru nent do
-          if ents[e][1] = o then (
-            [i, kind, j] : [ents[e][2], ents[e][3], ents[e][4]],
-            if not (kind = 1 and rowzero(kind, j, mw)) then
-              for lc : 1 thru NC do acc : acc + mnm(e-1, mc, lc)*vsym(i, kind, j, mw, lc)
-          ),
-        for it in gyr do
-          if it[1] = o then (
-            [i, e, sgn] : [it[2], it[3], it[4]],
-            for lc : 1 thru NC do acc : acc + sgn*mnm(nent + e, mc, lc)*vsym(i, 0, 0, mw, lc)
-          ),
-        for d : 1 thru cdim do
-          for q : 0 thru 10 do (
-            oi : pkpmHarmConfCoupling(d-1, q),
-            if oi[1] = o then
-              for lc : 1 thru NC do acc : acc + mnm(offCf + 11*(d-1) + q, mc, lc)*vsym(oi[2], 0, 0, mw, lc)
-          ),
-        if acc # 0 then printf(fh, "  out[~a] += ~a; ~%", o*NP + pidx[mc][mw], acc)
-      )
+      for lc : 1 thru NC do
+        printf(fh, "~af[~a]", if mw = 1 and lc = 1 then "" else ", ", i*NP + pidx[lc][mw]),
+    printf(fh, "}; ~%")
   ),
-  printf(fh, "} ~%")
+  printf(fh, " ~%"),
+  printf(fh, "  // the blocks of the eight output blocks, then the scatter to the phase basis ~%"),
+  printf(fh, "  double acc[~a] = {0.0}; ~%", 8*NP),
+  for blk in blocks do (
+    [o, e, key, sgn, k] : blk,
+    [i, kind, j] : key,
+    printf(fh, "  ~a_blk~a(&acc[~a], &mat[~a], ~a, ~a); ~%", funcNm, k, o*NP, e*NC*NC,
+      if kind = 0 and j = 0 then sconcat("fc", i) else sconcat("v", if kind = 0 then "S" else "F", i, "_", j),
+      float(sgn))
+  ),
+  for o : 0 thru 7 do
+    for mw : 1 thru NV do
+      for mc : 1 thru NC do
+        printf(fh, "  out[~a] += acc[~a]; ~%", o*NP + pidx[mc][mw], o*NP + (mw-1)*NC + mc - 1),
+  printf(fh, "} ~%"),
+  [shapes, length(blocks)]
 )$
 
-/* Header of the stored-operator layout (shared by the updater and, later, the build). */
+/* The dense-block helpers of the shapes [w modes, rows] of calcPKPMHarmVol, in groups of <= 4 rows
+   (accumulators in registers; every matrix element is loaded once and used for every w mode, every
+   operand once per group). Inline in 1x (2 x 2 blocks), not inlined above (the kernel stays a list of
+   calls: small enough for the instruction cache). */
+writePKPMHarmVolBlocks(fh, funcNm, cdim, shapes) := block([NC, k, mws, mcs, g, grp, lc, mc, mw, sep],
+  NC : 2^cdim,
+  for k : 1 thru length(shapes) do (
+    [mws, mcs] : shapes[k],
+    printf(fh, "// a[mw][mc] += sg sum_lc m[mc][lc] v[mw][lc], w modes ~a, rows ~a ~%", map(lambda([x], x - 1), mws),
+      map(lambda([x], x - 1), mcs)),
+    printf(fh, "GKYL_CU_DH ~a void ~a_blk~a(double* GKYL_RESTRICT a, const double* GKYL_RESTRICT m,
+  const double* GKYL_RESTRICT v, double sg) ~%{ ~%", if cdim = 1 then "static inline" else "GKYL_NOINLINE static",
+      funcNm, k - 1),
+    for g : 1 thru length(mcs) step 4 do (
+      grp : makelist(mcs[q], q, g, min(g + 3, length(mcs))),
+      printf(fh, "  { ~%"),
+      printf(fh, "    double "),
+      sep : "",
+      for mw in mws do for mc in grp do (printf(fh, "~at~a_~a = 0.0", sep, mw - 1, mc - 1), sep : ", "),
+      printf(fh, "; ~%"),
+      for lc : 1 thru NC do
+        for mc in grp do
+          for mw in mws do
+            printf(fh, "    t~a_~a += m[~a]*v[~a]; ~%", mw - 1, mc - 1, (mc - 1)*NC + lc - 1, (mw - 1)*NC + lc - 1),
+      for mw in mws do for mc in grp do
+        printf(fh, "    a[~a] += sg*t~a_~a; ~%", (mw - 1)*NC + mc - 1, mw - 1, mc - 1),
+      printf(fh, "  } ~%")
+    ),
+    printf(fh, "} ~%~%")
+  )
+)$
+
 writePKPMHarmOpsHeader(fh) := block([ents, nent, e],
   ents : pkpmHarmEntries(), nent : length(ents),
   printf(fh, "#pragma once ~%"),
