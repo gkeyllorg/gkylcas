@@ -1,0 +1,119 @@
+/* pkpm-mom-diffusion.mac -----------------------------------------------------------------
+   Momentum diffusion of order n = 2 or 4 of the p=1 PKPM fluid on the position map,
+
+     d_t(J M) = J sum_d (-1)^(n/2+1) D d^n M / dx_d^n,
+
+   with J = prod_d J_d the per-cell constant Jacobian of the (per-direction, piecewise-linear)
+   position map and M = (J M)/J the physical momentum. Recovery DG in PHYSICAL coordinates: at every
+   face the cubic whose L2 projections onto the p=1 spaces of the two adjacent cells (physical
+   widths J_d,l dxi_d and J_d,r dxi_d) are the cells' data, and for p=1 two integrations by parts
+   (the second derivative of the test functions vanishes),
+
+     int_cell phi d^n M dx = [phi d^(n-1) q]_faces - [d_x phi d^(n-2) q]_faces,
+
+   with the face values of the recovered polynomial q. Every face value is shared by the two cells
+   (the cell averages change by the difference of face fluxes: the momentum is conserved), and
+   on a uniform map (J_d = 1) the kernels are those of dg_diffusion_fluid (the same recovery).
+   The transverse Jacobian J/J_d is the same in the cells of a face and cancels: the kernel of
+   direction d needs J_d of the left, current and right cells only, applied to (J M)/J_d.
+
+   pkpm_mom_diffusion_order<n>_<dir>_<c>x_ser_p1(dxv, D, jac_l, jac_c, jac_r, fl, fc, fr, out)
+     increments the momentum blocks [M_x, M_y, M_z] of out ([rho, M, E] layout) and returns the
+     time-step rate C_n D (2/(dxi_d J_d,c))^n, C_2 = 4, C_4 = 16 (those of dg_diffusion_fluid). */
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("pkpm/pkpm/pkpm-cas-util.mac")$
+load("pkpm/pkpm/pkpm-nodal.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* The cubic q(X) with the p=1 L2 projections (al0, al1) on the left cell X in [-2 hl, 0] and
+   (ar0, ar1) on the right cell X in [0, 2 hr] (orthonormal Legendre basis of each cell); returns
+   [q, q', q'', q'''] at the face X = 0. */
+pkpmFaceRecovery(hl, hr, al0, al1, ar0, ar1) := block([a, q, p0, p1, eqs, sol],
+  a : makelist(concat(rc, i), i, 0, 3),
+  q : sum(a[i+1]*X^i, i, 0, 3),
+  p0 : 1/sqrt(2),
+  p1 : lambda([e], sqrt(3/2)*e),
+  eqs : [integrate(q*p0, X, -2*hl, 0)/hl - al0,
+    integrate(q*p1((X + hl)/hl), X, -2*hl, 0)/hl - al1,
+    integrate(q*p0, X, 0, 2*hr)/hr - ar0,
+    integrate(q*p1((X - hr)/hr), X, 0, 2*hr)/hr - ar1],
+  sol : solve(eqs, a),
+  makelist(ratsimp(subst(X = 0, diff(subst(sol[1], q), X, m))), m, 0, 3)
+)$
+
+/* The face helper of order n (emitted once per kernel file): the derivatives of orders n - 2 and
+   n - 1 of the recovered cubic at the face, from the data of the cells on its two sides. */
+pkpmEmitFaceRecovery(fh, fname, n) := block([d, e],
+  d : pkpmFaceRecovery(hl, hr, al0, al1, ar0, ar1),
+  printf(fh, "// The derivatives of orders ~a and ~a (in units of dxi/2) at a face of the cubic whose p=1 projections ~%", n - 2, n - 1),
+  printf(fh, "// on the cells of half-widths hl (left) and hr (right) are (al0, al1) and (ar0, ar1). ~%"),
+  printf(fh, "GKYL_CU_DH static inline void ~a(double hl, double hr, double al0, double al1, double ar0, double ar1,
+  double* GKYL_RESTRICT dq) ~%{ ~%", fname),
+  printf(fh, "  const double s = hl + hr, rd = 1.0/(hl*hr*s*s*s); ~%"),
+  for m : n - 2 thru n - 1 do (
+    e : ratsimp(d[m+1]*hl*hr*(hl + hr)^3),
+    printf(fh, "  dq[~a] = (~a)*rd; ~%", m - (n - 2), pkpmPowToC(float(expand(e))))
+  ),
+  printf(fh, "} ~%~%")
+)$
+
+/* The 1D helper of order n: the increments of a mode pair of the current cell (half-width jc) from
+   its data and its neighbours' (half-widths jl, jr), without the factor (-1)^(n/2+1) D (2/dxi)^n:
+     o0 = phi_0 (q_R^(n-1) - q_L^(n-1)),
+     o1 = phi_1(1) q_R^(n-1) - phi_1(-1) q_L^(n-1) - (d_eta phi_1/jc) (q_R^(n-2) - q_L^(n-2)). */
+pkpmEmitMomDiff1D(fh, fname, frec, n) := (
+  printf(fh, "// Recovery-DG diffusion of order ~a of one p=1 mode pair along the direction: increments of the ~%", n),
+  printf(fh, "// current cell from the data m = (J M)/J_d of the left, current, right cells of half-widths jl, jc, jr ~%"),
+  printf(fh, "// (in units of dxi/2), without the factor (-1)^(n/2+1) D (2/dxi)^n. ~%"),
+  printf(fh, "GKYL_CU_DH static inline void ~a(double jl, double jc, double jr, double ml0, double ml1, double mc0,
+  double mc1, double mr0, double mr1, double* GKYL_RESTRICT o) ~%{ ~%", fname),
+  printf(fh, "  double dR[2], dL[2]; ~%"),
+  printf(fh, "  ~a(jc, jr, mc0, mc1, mr0, mr1, dR); ~%", frec),
+  printf(fh, "  ~a(jl, jc, ml0, ml1, mc0, mc1, dL); ~%", frec),
+  printf(fh, "  o[0] = 0.7071067811865475*(dR[1] - dL[1]); ~%"),
+  printf(fh, "  o[1] = 1.224744871391589*(dR[1] + dL[1]) - (1.224744871391589/jc)*(dR[0] - dL[0]); ~%"),
+  printf(fh, "} ~%~%")
+)$
+
+calcPKPMMomDiffusion(fh, funcNm, cdim, dir, n) := block([varsC, bC, NC, sOf, pats, t, s0, s1, k0, k1, c, sg, Cn, hlp],
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis("ser", cdim, 1),
+  NC : length(bC),
+  sOf : pkpmP1PatternIndex(varsC, bC),
+  sg : (-1)^(n/2 + 1),
+  Cn : if n = 2 then 4 else 16,
+  hlp : sconcat(funcNm, "_1d"),
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%~%"),
+  pkpmEmitFaceRecovery(fh, sconcat(funcNm, "_face"), n),
+  pkpmEmitMomDiff1D(fh, hlp, sconcat(funcNm, "_face"), n),
+  printf(fh, "GKYL_CU_DH double ~a(const double *dxv, double D, const double *jac_l, const double *jac_c,
+  const double *jac_r, const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // dxv[NDIM]:  Cell spacing (computational). ~%"),
+  printf(fh, "  // D:          Diffusion coefficient of direction ~a. ~%", varsC[dir]),
+  printf(fh, "  // jac_l/c/r:  Position-map Jacobian per direction of the left/current/right cells (cdim blocks of 2 equal entries). ~%"),
+  printf(fh, "  // fl/fc/fr:   J-weighted fluid state [rho, M_x, M_y, M_z, E] of the left/current/right cells. ~%"),
+  printf(fh, "  // out:        Incremented right-hand side (momentum blocks). ~%"),
+  printf(fh, "  // Returns the time-step rate. ~%"),
+  printf(fh, "  const double jl = jac_l[~a], jc = jac_c[~a], jr = jac_r[~a]; ~%", 2*(dir-1), 2*(dir-1), 2*(dir-1)),
+  printf(fh, "  const double rjl = 1.0/jl, rjc = 1.0/jc, rjr = 1.0/jr; ~%"),
+  printf(fh, "  const double fac = ~a*D*pow(2.0/dxv[~a], ~a); ~%", float(sg), dir-1, n),
+  printf(fh, "  double o[2]; ~%"),
+  /* the transverse patterns: the p=1 modes come in pairs (P0, P1) along dir */
+  pats : makelist(t, t, 0, 2^cdim - 1),
+  printf(fh, "  for (int c = 1; c < 4; ++c) { ~%"),
+  printf(fh, "    const double *ql = &fl[c*~a], *qc = &fc[c*~a], *qr = &fr[c*~a]; ~%", NC, NC, NC),
+  printf(fh, "    double *oc = &out[c*~a]; ~%", NC),
+  for t in pats do
+    if mod(floor(t/2^(dir-1)), 2) = 0 then (
+      s0 : t, s1 : t + 2^(dir-1),
+      k0 : sOf[s0 + 1], k1 : sOf[s1 + 1],
+      printf(fh, "    ~a(jl, jc, jr, ql[~a]*rjl, ql[~a]*rjl, qc[~a]*rjc, qc[~a]*rjc, qr[~a]*rjr, qr[~a]*rjr, o); ~%",
+        hlp, k0, k1, k0, k1, k0, k1),
+      printf(fh, "    oc[~a] += fac*o[0]; oc[~a] += fac*o[1]; ~%", k0, k1)
+    ),
+  printf(fh, "  } ~%"),
+  printf(fh, "  return ~a*D*pow(2.0/(dxv[~a]*jc), ~a); ~%", Cn, dir-1, n),
+  printf(fh, "} ~%")
+)$

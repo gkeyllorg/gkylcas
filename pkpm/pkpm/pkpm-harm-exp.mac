@@ -1,0 +1,124 @@
+/* pkpm-harm-exp.mac ------------------------------------------------------------
+   Nodal transforms of the exponential Runge-Kutta update of the first-harmonic blocks of the
+   normalized p=1 PKPM distributions [F, G, M0_perp (x, y, z), N_perp (x, y, z)] (plan 17.6, 17.7):
+   the linear part L = (q/m) (.) x B_n - nu I_perp, frozen at the start of the step, is applied
+   node by node at the tensor Gauss-Legendre nodes of the phase cell, 2 per configuration direction
+   (where b and the p=1 products are exact) times 3 in w. The phase basis is the p=1 configuration
+   basis times the p=2 Legendre basis in w, so these nodal values determine the modal coefficients
+   and the transforms are exact inverses of each other.
+
+   pkpm_harm_exp_to_nodes_<c>x1v_ser_p1(f, fn): the six first-harmonic blocks of the cell f at the
+     nodes, fn[node*6 + comp] with node = (configuration node)*3 + (w node) and comp 0-2 the
+     Cartesian components of M0_perp, 3-5 those of N_perp. Sum-factorized: the phase basis is the
+     tensor product of the two, so the configuration and w directions are transformed in turn.
+   pkpm_harm_exp_to_modal_<c>x1v_ser_p1(fn, f): the inverse, writing blocks 2-7 of f (F and G are
+     not touched).
+   pkpm_harm_exp_conf_nodes_<c>x_ser_p1(em, Bn): the magnetic field of the configuration cell em
+     [Ex, Ey, Ez, Bx, By, Bz, ...] at the configuration nodes, Bn[node*3 + comp]. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* Index k of the phase basis function equal to (configuration function c) x (Legendre j in w):
+   the phase basis is that tensor product (with unit normalization), so the transforms factor. */
+pkpmHarmExpFactorIndex(cdim) := block([lb, pkC, pkbC, pkV, pkbV, pkbP, idx, k, c, j, r, vars],
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]), pkbV : copylist(lb[4]),
+  pkbP : copylist(lb[6]),
+  vars : append(pkC, pkV),
+  idx : makelist(makelist(0, j, 1, length(pkbV)), c, 1, length(pkbC)),
+  for k : 1 thru length(pkbP) do
+    for c : 1 thru length(pkbC) do
+      for j : 1 thru length(pkbV) do (
+        r : ratsimp(pkbP[k]/(pkbC[c]*pkbV[j])),
+        if every(lambda([v], freeof(v, r)), vars) then (
+          if abs(float(radcan(r)) - 1.0) > 1.0e-14 then error("pkpmHarmExpFactorIndex: non-unit normalization"),
+          idx[c][j] : k
+        )
+      ),
+  idx
+)$
+
+/* Sum-factorized transform to the phase nodes: t[n][j] = sum_c phi_c(x_n) f_(c,j), then
+   fn[n][q] = sum_j P_j(w_q) t[n][j]. */
+calcPKPMHarmExpToNodes(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, pkV, pkbV, NC, NV, NP, cn, cw, wn, ww, NNc, idx, comp, blk, n, j, q, ex],
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]), pkbV : copylist(lb[4]),
+  NC : length(pkbC), NV : length(pkbV), NP : length(lb[6]),
+  [cn, cw] : gaussOrdWeight(2, cdim),
+  [wn, ww] : gaussOrdWeight(3, 1),
+  NNc : length(cn),
+  idx : pkpmHarmExpFactorIndex(cdim),
+  printf(fh, "GKYL_CU_DH void ~a(const double *f, double* GKYL_RESTRICT fn) ~%{ ~%", funcNm),
+  printf(fh, "  // f:  Distributions [F, G, M0_perp, N_perp] of the cell (blocks 2-7 are read). ~%"),
+  printf(fh, "  // fn: First-harmonic blocks at the ~a phase nodes, fn[(configuration node*3 + w node)*6 + comp]. ~%", NNc*3),
+  printf(fh, "  double t[~a]; ~%", NNc*NV),
+  for comp : 1 thru 6 do (
+    blk : 1 + comp,
+    for n : 1 thru NNc do
+      for j : 1 thru NV do (
+        ex : sum(subst(makelist(pkC[d] = cn[n][d], d, 1, cdim), pkbC[c])*f[blk*NP + idx[c][j] - 1], c, 1, NC),
+        printf(fh, "  t[~a] = ~a; ~%", (n-1)*NV + j - 1, float(expand(ex)))
+      ),
+    for n : 1 thru NNc do
+      for q : 1 thru length(wn) do (
+        ex : sum(subst(pkV[1] = wn[q][1], pkbV[j])*t[(n-1)*NV + j - 1], j, 1, NV),
+        printf(fh, "  fn[~a] = ~a; ~%", ((n-1)*3 + q - 1)*6 + comp - 1, float(expand(ex)))
+      )
+  ),
+  printf(fh, "} ~%")
+)$
+
+/* The inverse: t[n][j] = sum_q W_q P_j(w_q) fn[n][q], then f_(c,j) = sum_n W_n phi_c(x_n) t[n][j]. */
+calcPKPMHarmExpToModal(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, pkV, pkbV, NC, NV, NP, cn, cw, wn, ww, NNc, idx, comp, blk, n, j, q, c, ex],
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]), pkbV : copylist(lb[4]),
+  NC : length(pkbC), NV : length(pkbV), NP : length(lb[6]),
+  [cn, cw] : gaussOrdWeight(2, cdim),
+  [wn, ww] : gaussOrdWeight(3, 1),
+  NNc : length(cn),
+  idx : pkpmHarmExpFactorIndex(cdim),
+  printf(fh, "GKYL_CU_DH void ~a(const double *fn, double* GKYL_RESTRICT f) ~%{ ~%", funcNm),
+  printf(fh, "  // fn: First-harmonic blocks at the ~a phase nodes, fn[(configuration node*3 + w node)*6 + comp]. ~%", NNc*3),
+  printf(fh, "  // f:  Distributions [F, G, M0_perp, N_perp] of the cell; blocks 2-7 are written. ~%"),
+  printf(fh, "  double t[~a]; ~%", NNc*NV),
+  for comp : 1 thru 6 do (
+    blk : 1 + comp,
+    for n : 1 thru NNc do
+      for j : 1 thru NV do (
+        ex : sum(ww[q]*subst(pkV[1] = wn[q][1], pkbV[j])*fn[((n-1)*3 + q - 1)*6 + comp - 1], q, 1, length(wn)),
+        printf(fh, "  t[~a] = ~a; ~%", (n-1)*NV + j - 1, float(expand(ex)))
+      ),
+    for c : 1 thru NC do
+      for j : 1 thru NV do (
+        ex : sum(cw[n]*subst(makelist(pkC[d] = cn[n][d], d, 1, cdim), pkbC[c])*t[(n-1)*NV + j - 1], n, 1, NNc),
+        printf(fh, "  f[~a] = ~a; ~%", blk*NP + idx[c][j] - 1, float(expand(ex)))
+      )
+  ),
+  printf(fh, "} ~%")
+)$
+
+calcPKPMHarmExpConfNodes(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, NC, cn, cw, n, k, a, sub, ex],
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]),
+  NC : length(pkbC),
+  [cn, cw] : gaussOrdWeight(2, cdim),
+  printf(fh, "GKYL_CU_DH void ~a(const double *em, double* GKYL_RESTRICT Bn) ~%{ ~%", funcNm),
+  printf(fh, "  // em: Electromagnetic field of the cell [Ex, Ey, Ez, Bx, By, Bz, ...]. ~%"),
+  printf(fh, "  // Bn: Magnetic field at the ~a configuration nodes, Bn[node*3 + comp]. ~%", length(cn)),
+  for n : 1 thru length(cn) do (
+    sub : makelist(pkC[d] = cn[n][d], d, 1, cdim),
+    for a : 1 thru 3 do (
+      ex : sum(subst(sub, pkbC[k])*em[(2 + a)*NC + k - 1], k, 1, NC),
+      printf(fh, "  Bn[~a] = ~a; ~%", (n-1)*3 + a - 1, float(expand(ex)))
+    )
+  ),
+  printf(fh, "} ~%")
+)$

@@ -1,0 +1,16 @@
+load("pkpm/pkpm/pkpm-harm-exp.mac")$
+load(stringproc)$
+/* This script generates the nodal transforms of the exponential update of the first-harmonic
+   blocks (see pkpm-harm-exp.mac), one file per configuration dimension. */
+for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_harm_exp_", c, "x1v_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
+  calcPKPMHarmExpToNodes(fh, sconcat("pkpm_harm_exp_to_nodes_", c, "x1v_ser_p1"), c),
+  printf(fh, "~%"),
+  calcPKPMHarmExpToModal(fh, sconcat("pkpm_harm_exp_to_modal_", c, "x1v_ser_p1"), c),
+  printf(fh, "~%"),
+  calcPKPMHarmExpConfNodes(fh, sconcat("pkpm_harm_exp_conf_nodes_", c, "x_ser_p1"), c),
+  close(fh)
+)$

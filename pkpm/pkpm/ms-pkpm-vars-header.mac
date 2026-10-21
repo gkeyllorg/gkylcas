@@ -23,6 +23,10 @@ maxCdim      : [maxCdim_Ser]$
 printPKPMVarsPrototype(deco, ci, bStr, pi) := block([si, d],
   for d : 1 thru ci do
     printf(fh, "~avoid pkpm_vars_grad_u_~a_~ax_~a_p~a(const double *dxv, const double *jacob_pos, const double *u_l, const double *u_c, const double *u_r, double* GKYL_RESTRICT grad_u); ~%", deco, cvars[d], ci, bStr, pi),
+  for n in [2, 4] do
+    for d : 1 thru ci do
+      printf(fh, "~adouble pkpm_mom_diffusion_order~a_~a_~ax_~a_p~a(const double *dxv, double D, const double *jac_l, const double *jac_c,
+  const double *jac_r, const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out); ~%", deco, n, cvars[d], ci, bStr, pi),
   printf(fh, "~aint pkpm_vars_closure_~ax_~a_p~a(double w_lo, double w_up, double dv, const double *norm_moms, const double *rhs_moms,
   const double *bvar, const double *wn, const double *theta, const double *alpha_0_prev, const double *c_h_prev,
   const double *f_lo, const double *f_up,

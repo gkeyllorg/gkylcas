@@ -1,8 +1,9 @@
 /* Generate the header file for the phase-space kernels of the refactored (p=1)
    PKPM solver: configuration-space HLL flux producers, the v_par flux producer, the
    hyper_dg surface kernels scattering stored modal fluxes, the volume kernels of
-   the configuration-space (stage A) and velocity-space (stage B) passes, and the normalization
-   and transversality projection of the distributions. */
+   the configuration-space (stage A) and velocity-space (stage B) passes, the normalization
+   and transversality projection of the distributions, and the nodal transforms of the
+   exponential update of the first-harmonic blocks. */
 
 cvars : ["x", "y", "z"]$
 
@@ -20,6 +21,9 @@ for c : 1 thru 3 do (
   const double *bvar, const double *u, const double *xi, const double *f, double* GKYL_RESTRICT out); ~%", deco, c),
   printf(fh, "~aint pkpm_dist_normalize_~ax1v_ser_p1(const double *nmoms, const double *f, double* GKYL_RESTRICT fbar); ~%", deco, c),
   printf(fh, "~avoid pkpm_dist_transverse_~ax1v_ser_p1(const double *bvar, double* GKYL_RESTRICT f); ~%", deco, c),
+  printf(fh, "~avoid pkpm_harm_exp_to_nodes_~ax1v_ser_p1(const double *f, double* GKYL_RESTRICT fn); ~%", deco, c),
+  printf(fh, "~avoid pkpm_harm_exp_to_modal_~ax1v_ser_p1(const double *fn, double* GKYL_RESTRICT f); ~%", deco, c),
+  printf(fh, "~avoid pkpm_harm_exp_conf_nodes_~ax_ser_p1(const double *em, double* GKYL_RESTRICT Bn); ~%", deco, c),
   for d : 1 thru c do (
     printf(fh, "~adouble pkpm_conf_flux_~a_~ax1v_ser_p1(const double *w, const double *dxv,
   const double *jacob_pos_l, const double *jacob_pos_r, const double *b_l, const double *b_r,

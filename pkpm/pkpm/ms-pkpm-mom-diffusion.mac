@@ -1,0 +1,13 @@
+load("pkpm/pkpm/pkpm-mom-diffusion.mac")$
+/* This script generates the momentum-diffusion kernels pkpm_mom_diffusion_order<n>_<dir>_<c>x_ser_p1
+   of the p=1 PKPM fluid on the position map (see pkpm-mom-diffusion.mac). */
+cvars : ["x", "y", "z"]$
+for n in [2, 4] do
+  for c : 1 thru 3 do
+    for d : 1 thru c do (
+      funcName : sconcat("pkpm_mom_diffusion_order", n, "_", cvars[d], "_", c, "x_ser_p1"),
+      disp(printf(false, "Creating ~a", funcName)),
+      fh : openw(sconcat("~/max-out/", funcName, ".c")),
+      calcPKPMMomDiffusion(fh, funcName, c, d, n),
+      close(fh)
+    )$
