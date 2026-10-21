@@ -21,7 +21,7 @@
      the raw coefficients the node rule integrates the flux exactly wherever it is upwind
      (degree 1 + 7 + 1 per direction); elsewhere the speeds and the branch are those of the actual
      local operator at the nodes. Traces, node values and projections direction by direction.
-     Returns the stable time-step estimate (2 p_v + 1)/2 dv1 max(|S_L|, |S_R|), p_v = 2.
+     No time-step rate: that of the w fluxes is the column rate of the closure kernel (plan 17.27).
 
    The flux at the domain edges of velocity space is the closure's (pkpm-vars-closure.mac): the
    updater does not call the face kernel there. */
@@ -82,15 +82,14 @@ calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
   pkpmEmitNodeProj(fh, sconcat(funcNm, "_prj"), cdim, NQ,
     [makelist(w1[i], i, 1, NQ), makelist(w1[i]*x1[i]/0.4, i, 1, NQ)], sOf),
 
-  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *nv,
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *nv,
   const double *f_l, const double *f_r, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:   Cell-center coordinates (current cell). ~%"),
   printf(fh, "  // dxv[NDIM]: Cell spacing (current cell). ~%"),
   printf(fh, "  // nv:        Node values [~a nodes][PKPM_HS_NODE_NV] of the w flux of the configuration cell. ~%", NN),
   printf(fh, "  // f_l/f_r:   Distributions [F, G, M0_perp, N_perp] in the cell below/current cell. ~%"),
   printf(fh, "  // flux:      Output surface fluxes [8 blocks] on the lower w face (stored face format). ~%"),
-  printf(fh, "  // Returns the stable time-step estimate over the face nodes. ~%"),
-  printf(fh, "  const double dv1 = 2.0/dxv[~a]; ~%", cdim),
+  printf(fh, "  // (The time-step rate of the w fluxes is the column rate of the closure kernel, plan 17.27.) ~%"),
   printf(fh, "  const double v_face = w[~a] - 0.5*dxv[~a]; ~%", cdim, cdim),
   /* traces: f_l at its upper edge (eta = 1), f_r at its lower edge (eta = -1) */
   printf(fh, "  double tl[~a], tr[~a], ul[8][~a], ur[8][~a]; ~%", NC, NC, NN, NN),
@@ -100,14 +99,12 @@ calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
     printf(fh, "  ~a_p1(tl, ul[~a]); ~a_p1(tr, ur[~a]); ~%", funcNm, c, funcNm, c)
   ),
   printf(fh, "  double Fhat[8][~a]; ~%", NN),
-  printf(fh, "  double cfl_max = 0.0; ~%"),
   printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NN),
   printf(fh, "    double U_l[8], U_r[8], Fn[8]; ~%"),
   printf(fh, "    for (int c = 0; c < 8; ++c) { U_l[c] = ul[c][n]; U_r[c] = ur[c][n]; } ~%"),
-  printf(fh, "    cfl_max = fmax(cfl_max, pkpm_harm_node_wflux(&nv[n*PKPM_HS_NODE_NV], v_face, U_l, U_r, Fn)); ~%"),
+  printf(fh, "    pkpm_harm_node_wflux(&nv[n*PKPM_HS_NODE_NV], v_face, U_l, U_r, Fn); ~%"),
   printf(fh, "    for (int c = 0; c < 8; ++c) Fhat[c][n] = Fn[c]; ~%"),
   printf(fh, "  } ~%"),
   printf(fh, "  for (int c = 0; c < 8; ++c) ~a_prj(Fhat[c], &flux[c*~a]); ~%", funcNm, NC),
-  printf(fh, "  return 2.5*dv1*cfl_max; ~%"),
   printf(fh, "} ~%")
 )$

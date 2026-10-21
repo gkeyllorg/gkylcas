@@ -122,3 +122,57 @@ calcPKPMHarmExpConfNodes(fh, funcNm, cdim) := block(
   ),
   printf(fh, "} ~%")
 )$
+
+/* F and G of the cell at the phase nodes, fgn[node*2 + (0: F, 1: G)] (sum-factorized like
+   calcPKPMHarmExpToNodes); read by the realizability ratio and the momentum restoration. */
+calcPKPMHarmExpFGToNodes(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, pkV, pkbV, NC, NV, NP, cn, cw, wn, ww, NNc, idx, blk, n, j, q, ex],
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]), pkV : copylist(lb[3]), pkbV : copylist(lb[4]),
+  NC : length(pkbC), NV : length(pkbV), NP : length(lb[6]),
+  [cn, cw] : gaussOrdWeight(2, cdim),
+  [wn, ww] : gaussOrdWeight(3, 1),
+  NNc : length(cn),
+  idx : pkpmHarmExpFactorIndex(cdim),
+  printf(fh, "GKYL_CU_DH void ~a(const double *f, double* GKYL_RESTRICT fgn) ~%{ ~%", funcNm),
+  printf(fh, "  // f:   Distributions [F, G, M0_perp, N_perp] of the cell (blocks 0-1 are read). ~%"),
+  printf(fh, "  // fgn: F and G at the ~a phase nodes, fgn[(configuration node*3 + w node)*2 + (0: F, 1: G)]. ~%", NNc*3),
+  printf(fh, "  double t[~a]; ~%", NNc*NV),
+  for blk : 0 thru 1 do (
+    for n : 1 thru NNc do
+      for j : 1 thru NV do (
+        ex : sum(subst(makelist(pkC[d] = cn[n][d], d, 1, cdim), pkbC[c])*f[blk*NP + idx[c][j] - 1], c, 1, NC),
+        printf(fh, "  t[~a] = ~a; ~%", (n-1)*NV + j - 1, float(expand(ex)))
+      ),
+    for n : 1 thru NNc do
+      for q : 1 thru length(wn) do (
+        ex : sum(subst(pkV[1] = wn[q][1], pkbV[j])*t[(n-1)*NV + j - 1], j, 1, NV),
+        printf(fh, "  fgn[~a] = ~a; ~%", ((n-1)*3 + q - 1)*2 + blk, float(expand(ex)))
+      )
+  ),
+  printf(fh, "} ~%")
+)$
+
+/* The integral over the reference w cell [-1, 1] of F and M0_perp (x, y, z) at the configuration
+   nodes, wi[node*4 + (0: F, 1-3: M0_perp)]: only the w-constant Legendre mode contributes, with
+   int P_0 = sqrt(2). Multiplied by dw/2 and summed over the w cells of a column it is the
+   configuration-node value of int dw. */
+calcPKPMHarmExpWInt(fh, funcNm, cdim) := block(
+  [lb, pkC, pkbC, NC, cn, cw, NNc, idx, n, a, blk, ex],
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkbC : copylist(lb[2]),
+  NC : length(pkbC),
+  [cn, cw] : gaussOrdWeight(2, cdim),
+  NNc : length(cn),
+  idx : pkpmHarmExpFactorIndex(cdim),
+  printf(fh, "GKYL_CU_DH void ~a(const double *f, double* GKYL_RESTRICT wi) ~%{ ~%", funcNm),
+  printf(fh, "  // f:  Distributions [F, G, M0_perp, N_perp] of the cell. ~%"),
+  printf(fh, "  // wi: int_(-1)^1 dw of F and M0_perp at the ~a configuration nodes, wi[node*4 + (0: F, 1-3: M0_perp)]. ~%", NNc),
+  for n : 1 thru NNc do
+    for a : 0 thru 3 do (
+      blk : if a = 0 then 0 else 1 + a,
+      ex : sqrt(2)*sum(subst(makelist(pkC[d] = cn[n][d], d, 1, cdim), pkbC[c])*f[blk*length(lb[6]) + idx[c][1] - 1], c, 1, NC),
+      printf(fh, "  wi[~a] = ~a; ~%", (n-1)*4 + a, float(expand(ex)))
+    ),
+  printf(fh, "} ~%")
+)$

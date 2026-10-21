@@ -12,5 +12,9 @@ for c : 1 thru 3 do (
   calcPKPMHarmExpToModal(fh, sconcat("pkpm_harm_exp_to_modal_", c, "x1v_ser_p1"), c),
   printf(fh, "~%"),
   calcPKPMHarmExpConfNodes(fh, sconcat("pkpm_harm_exp_conf_nodes_", c, "x_ser_p1"), c),
+  printf(fh, "~%"),
+  calcPKPMHarmExpFGToNodes(fh, sconcat("pkpm_harm_exp_fg_to_nodes_", c, "x1v_ser_p1"), c),
+  printf(fh, "~%"),
+  calcPKPMHarmExpWInt(fh, sconcat("pkpm_harm_exp_wint_", c, "x1v_ser_p1"), c),
   close(fh)
 )$

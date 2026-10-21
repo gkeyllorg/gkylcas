@@ -15,9 +15,8 @@
    function and the distributions are p=1 in configuration space and p=2 in w), so that every
    closure term contributes the bilinear product (closure x moment) that the nodal closure solve
    charged. Everything else of the velocity-space pass is the surface scatter of the stored w
-   fluxes. The returned CFL estimate is the rate |c_0| + 3|c| at the cell center (a bound of the
-   source eigenvalues c_0 + k c, k = 0 .. 3; the a_perp couplings are nilpotent): the force speeds
-   are accumulated by the w flux updater. */
+   fluxes. Returns 0: the closure sources and force speeds enter the column time-step rate of the
+   closure kernel (pkpm_vars_closure_*, plan 17.27). */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
@@ -26,7 +25,7 @@ load(stringproc)$
 fpprec : 24$
 
 calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
-  [lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, a0_e, c0_e, ch_e, F_e, G_e, vTrans, force_F, force_G, src_F, src_G, expr, i, cflC0, cflCh, clst,
+  [lb, pkC, pkbC, pkV, pkP, pkbP, NC, NP, a0_e, c0_e, ch_e, F_e, G_e, vTrans, force_F, force_G, src_F, src_G, expr, i, clst,
    ap_e, M_e, N_e, c, k, force_X, src_X],
 
   lb : loadPKPMPhaseBasis(cdim),
@@ -47,7 +46,7 @@ calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
   printf(fh, "  // a_perp:    Perpendicular force closing int M0_perp dw [x, y, z]. ~%"),
   printf(fh, "  // f:         Input normalized distribution functions [F, G, M0_perp, N_perp]. ~%"),
   printf(fh, "  // out:       Incremented output [F, G, M0_perp, N_perp]. ~%"),
-  printf(fh, "  // Returns the CFL frequency estimate of the closure rates. ~%"),
+  printf(fh, "  // Returns 0: the closure rates enter the column rate of the closure kernel. ~%"),
   printf(fh, "  const double dv1 = 2.0/dxv[~a]; ~%", cdim),
   printf(fh, "  const double dvpar = dxv[~a], wvpar = w[~a]; ~%", cdim, cdim),
   printf(fh, "  const double *F_0 = &f[~a]; ~%", 0*NP),
@@ -105,8 +104,6 @@ calcPKPMKineticVelVol(fh, funcNm, cdim) := block(
       if expr[i] # 0.0 then printf(fh, "  out[~a] += ~a; ~%", (5+c-1)*NP+i-1, apply(collectterms, cons(expr[i], clst)))
   ),
   printf(fh, " ~%"),
-  cflC0 : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), c0_e))),
-  cflCh : float(expand(subst(makelist(pkC[d] = 0, d, 1, cdim), ch_e))),
-  printf(fh, "  return fabs(~a) + 3.0*fabs(~a); ~%", cflC0, cflCh),
+  printf(fh, "  return 0.0; ~%"),
   printf(fh, "} ~%")
 )$

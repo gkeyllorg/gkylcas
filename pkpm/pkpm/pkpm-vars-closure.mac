@@ -55,9 +55,16 @@
    diagonal; where the distribution does not reach the edges all edge terms vanish.
 
    Policy: if M0(F) <= 0 or the determinant is not positive at any node, all closures and the edge
-   fluxes are zero in the cell and the kernel returns the number of such nodes. cfl[0], cfl[1]
-   receive the time-step rates of the edge fluxes for the lowest and uppermost velocity cells,
-   (2 p_v + 1)/2 dv1 max(|S_L|, |S_R|) over the w-face nodes with the new closures. */
+   fluxes are zero in the cell and the kernel returns the number of such nodes.
+
+   Time step (plan 17.27): every velocity-space rate is a polynomial in w of degree <= 2, so with
+   absolute coefficients evaluated at W = max(|w_lo|, |w_up|) it bounds every w of the column.
+   cfl[0] receives that column rate of the w fluxes and the closure sources:
+   (2 p_v + 1)/2 dv1 max over the w-face nodes of |alpha_0| + |c - K| W + |b.grad xi| W^2 + (the
+   coupling's spectrum bound at W), plus max over the cell of |c_0| + 3 |c| (the source eigenvalues
+   c_0 + k c, k = 0..3; the a_perp couplings are nilpotent), bounded by the absolute modal
+   coefficients times the largest value of each mode. With the new closures; zero closures where
+   they are undefined. cfl[1] = 0. */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
@@ -73,7 +80,7 @@ cvarsClo : [x, y, z]$
 calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   [lb, pkC, pkbC, vv, pkbV, pkP, pkbP, NC, NP, nodes, weights, NN, nodeSub, n, k, d, i, c, nlin,
    n0_e, n1_e, n2_e, nG_e, r0_e, r1_e, r2_e, rG_e, mu_e, rM_e, b_e, h_e, pidx, sOf, xw, x1, w1, NQ, NF,
-   p1fn, c0_c, a0_c, c_c, sc, lst],
+   p1fn, c0_c, a0_c, c_c, sc, lst, mmax],
 
   lb : loadPKPMPhaseBasis(cdim),
   pkC : copylist(lb[1]), pkbC : copylist(lb[2]), vv : lb[3][1], pkbV : copylist(lb[4]),
@@ -90,6 +97,8 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   xw : gaussOrdWeight1D(pkpmVelFluxNumPts), x1 : float(xw[1]), w1 : float(xw[2]),
   NQ : length(x1), NF : NQ^cdim,
   p1fn : sconcat(funcNm, "_p1"),
+  /* the largest value over the cell of each orthonormal p=1 mode */
+  mmax : makelist(float((1/sqrt(2))^(cdim - nlin[k])*sqrt(3/2)^nlin[k]), k, 1, NC),
 
   printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
   printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%~%"),
@@ -113,7 +122,8 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  // f_lo, f_up:   [F, G, M0_perp, N_perp] of the lowest and uppermost velocity cells of this configuration cell. ~%"),
   printf(fh, "  // c_0, alpha_0, c_h, a_perp: Output closures at the ~a Gauss-Legendre nodes, interpolated to p=1. ~%", NN),
   printf(fh, "  // flux_lo, flux_up: Output edge fluxes [8 blocks] in the stored face format. ~%"),
-  printf(fh, "  // cfl:          Output [lower, upper] edge-flux time-step rates. ~%"),
+  printf(fh, "  // cfl:          Output [0]: the time-step rate of the w fluxes and closure sources of the whole column ~%"),
+  printf(fh, "  //               (absolute coefficients at the larger |w| edge, plan 17.27); [1] = 0. ~%"),
   printf(fh, "  // cond:         Output [1]: the smallest determinant of the 3x3 system over the nodes relative to ~%"),
   printf(fh, "  //               its edge-free value (1 when the edge terms vanish; small or negative when the ~%"),
   printf(fh, "  //               velocity-domain edges carry a non-negligible trace: too small velocity extents). ~%"),
@@ -146,10 +156,13 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
     printf(fh, "  ~a(tr, uup[~a]); ~%", p1fn, c)
   ),
   pkpmEmitWNodeFields(fh, p1fn, NF, NC, "alpha_0_prev", "c_h_prev"),
-  printf(fh, "  double Kn[2][8][~a], gn[2][8][~a], kn[2][~a], lon[2][~a], hin[2][~a]; ~%", NF, NF, NF, NF, NF),
+  printf(fh, "  double Kn[2][8][~a], gn[2][8][~a], kw[~a], rest[~a]; ~%", NF, NF, NF, NF),
+  printf(fh, "  const double wm = fmax(fabs(w_lo), fabs(w_up)); ~%"),
   printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NF),
   printf(fh, "    double nv[PKPM_HS_NODE_NV]; ~%"),
   pkpmEmitWNodeFill(fh, "    ", "nv"),
+  printf(fh, "    kw[n] = nv[PKPM_HS_KW]; ~%"),
+  printf(fh, "    rest[n] = pkpm_harm_node_speed_rest(nv, wm); ~%"),
   printf(fh, "    for (int e = 0; e < 2; ++e) { ~%"),
   printf(fh, "      const double w = e == 0 ? w_lo : w_up; ~%"),
   printf(fh, "      double U[8], T[8], lo, hi; ~%"),
@@ -179,7 +192,6 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "        Kn[e][c][n] = wf*(k*U[c] + T[c]) + wu*U[c]; ~%"),
   printf(fh, "        gn[e][c][n] = wf*U[c]; ~%"),
   printf(fh, "      } ~%"),
-  printf(fh, "      kn[e][n] = k; lon[e][n] = lo; hin[e][n] = hi; ~%"),
   printf(fh, "    } ~%"),
   printf(fh, "  } ~%"),
   printf(fh, "  double Kh[2][~a], gh[2][~a]; ~%", 8*NC, 8*NC),
@@ -283,9 +295,13 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, " ~%"),
   printf(fh, "  cond[0] = cond_min; ~%"),
   printf(fh, "  if (num_null > 0) { ~%"),
-  printf(fh, "    // a node with M0 <= 0 or a non-positive determinant zeroes everything in the cell, its ~%"),
-  printf(fh, "    // CFL rate included (the closures it would have needed are not applied) ~%"),
-  printf(fh, "    cfl[0] = 0.0; cfl[1] = 0.0; ~%"),
+  printf(fh, "    // a node with M0 <= 0 or a non-positive determinant zeroes everything in the cell (the ~%"),
+  printf(fh, "    // closures it would have needed are not applied); the rate is that of the known w fluxes ~%"),
+  printf(fh, "    double rate = 0.0; ~%"),
+  printf(fh, "    for (int n = 0; n < ~a; ++n) { ~%", NF),
+  printf(fh, "      rate = fmax(rate, fabs(kw[n])*wm + rest[n]); ~%"),
+  printf(fh, "    } ~%"),
+  printf(fh, "    cfl[0] = 2.5*dv1*rate; cfl[1] = 0.0; ~%"),
   printf(fh, "    for (int k = 0; k < ~a; ++k) { ~%", NC),
   printf(fh, "      c_0[k] = 0.0; alpha_0[k] = 0.0; c_h[k] = 0.0; ~%"),
   printf(fh, "    } ~%"),
@@ -330,19 +346,21 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   ),
   printf(fh, "  } ~%"),
   printf(fh, " ~%"),
-  /* 3. the time-step rates of the edge fluxes with the new closures, at the w-face nodes */
-  printf(fh, "  // the time-step rates of the edge fluxes with the new closures, at the w-face nodes ~%"),
+  /* 3. the column time-step rate with the new closures: the w-flux speed bound at the w-face nodes
+     and the closure sources over the cell */
+  printf(fh, "  // the column time-step rate with the new closures (plan 17.27) ~%"),
   printf(fh, "  double a0f[~a], cf[~a]; ~%", NF, NF),
   printf(fh, "  ~a(alpha_0, a0f); ~%", p1fn),
   printf(fh, "  ~a(c_h, cf); ~%", p1fn),
-  printf(fh, "  double cfl_lo = 0.0, cfl_up = 0.0; ~%"),
+  printf(fh, "  double rate = 0.0; ~%"),
   printf(fh, "  for (int n = 0; n < ~a; ++n) { ~%", NF),
-  printf(fh, "    const double al_lo = a0f[n] + cf[n]*w_lo + kn[0][n], al_up = a0f[n] + cf[n]*w_up + kn[1][n]; ~%"),
-  printf(fh, "    cfl_lo = fmax(cfl_lo, fmax(fabs(al_lo + lon[0][n]), fabs(al_lo + hin[0][n]))); ~%"),
-  printf(fh, "    cfl_up = fmax(cfl_up, fmax(fabs(al_up + lon[1][n]), fabs(al_up + hin[1][n]))); ~%"),
+  printf(fh, "    rate = fmax(rate, fabs(a0f[n]) + fabs(cf[n] + kw[n])*wm + rest[n]); ~%"),
   printf(fh, "  } ~%"),
-  printf(fh, "  cfl[0] = 2.5*dv1*cfl_lo; ~%"),
-  printf(fh, "  cfl[1] = 2.5*dv1*cfl_up; ~%"),
+  printf(fh, "  double src = 0.0; ~%"),
+  for k : 1 thru NC do
+    printf(fh, "  src += ~a*(fabs(c_0[~a]) + 3.0*fabs(c_h[~a])); ~%", mmax[k], k-1, k-1),
+  printf(fh, "  cfl[0] = 2.5*dv1*rate + src; ~%"),
+  printf(fh, "  cfl[1] = 0.0; ~%"),
   printf(fh, " ~%"),
   printf(fh, "  return 0; ~%"),
   printf(fh, "} ~%")
