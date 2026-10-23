@@ -5,8 +5,10 @@
    17.14; notes, eq. fluid-flux-map).
 
    At a face node and a w node the kinetic flux (pkpm-conf-flux-surf.mac, pkpm_harm_conf_flux) is
-   the HLL flux of the eight blocks, split into the contributions of the two sides,
-     Phi = Phi^l + Phi^r,  Phi^l = A_l X_l + (S_R/ds) T_l,  Phi^r = A_r X_r - (S_L/ds) T_r,
+   the HLL flux of the eight blocks for the flux function with face-averaged coefficients,
+   J(X) = a X + T(X; {xi}, {b}, {theta}), a = {u_d} + {xi} {b_d} w (plan 17.41), split into the
+   contributions of the two sides,
+     Phi = Phi^l + Phi^r,  Phi^l = (S_R J(X_l) - S_L S_R X_l)/ds,  Phi^r = (S_L S_R X_r - S_L J(X_r))/ds,
    with T the first-harmonic coupling (xi M0_d, xi N_d, xi G (e_d - b b_d), xi H (e_d - b b_d)).
    Since f = n F/xi with v = u + xi (w b + z) on each side, the physical fluxes are the moment map
    of each contribution with its own frame. With the one-sided moments I_k^s = int w^k Phi^s_F dw
@@ -17,16 +19,16 @@
                           + (xi^s)^2 (I_2^s/2 + I_G^s)).
    xi G (e_d - b b_d) in the M0 flux carries the perpendicular pressure force and its work (no
    separate central term), xi M0_d and xi N_d the first-harmonic mass and heat fluxes; the HLL
-   dissipation of rho, rho u and E is the moment of S_L S_R (X_r - X_l). Every xi is the trace of
+   dissipation of rho, rho u and E is the moment of -S_L S_R [X]/ds. Every xi is the trace of
    the cell's xi expansion that defines the w of the traces (xi^2 the square of that trace).
 
    Two kernels per direction (the face is the LOWER face of the r cell in direction d; the
    l cell is its lower neighbor, evaluated at its upper edge):
-   - pkpm_fluid_flux_accum_<d>_<c>x1v_ser_p1(w, dxv, jacob_pos_l, jacob_pos_r, b_l, b_r, u_l, u_r,
-       xi_l, xi_r, theta_l, theta_r, f_l, f_r, I):
+   - pkpm_fluid_flux_accum_<d>_<c>x1v_ser_p1(w, dxv, jacob_pos_l, jacob_pos_r, fc, f_l, f_r, I):
      accumulates the nodal moments I[k*NN + n], k = 0..6 for [I_0, I_1, I_2, I_G, I_Mx, I_My, I_Mz]^l
      then k = 7..13 the same for r, of one velocity cell at the NN transverse nodes of the face,
-     with the node loop of the kinetic flux kernel (pkpmEmitConfFaceFlux: same traces, same HLL).
+     with the node loop of the kinetic flux kernel (pkpmEmitConfFaceFlux: same face coefficients fc,
+     same HLL).
      The traces of the Jacobian-weighted J X are divided by J_d of their cell, so the moments carry
      the face Jacobian J/J_d of the evolved J-weighted fluid, as the kinetic flux does.
    - pkpm_fluid_flux_<d>_<c>x_ser_p1(bvar_l, bvar_r, u_l, u_r, xi_l, xi_r, fluid_l, fluid_r, I, flux):
@@ -55,18 +57,13 @@ calcPKPMFluidFluxKineticAccum(dir, fh, funcNm, cdim) := block([sz, NN, NI, cvars
   pkpmFluxTabInclude(fh, cdim),
   pkpmEmitConfFaceStage1(fh, funcNm, dir, cdim),
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *jacob_pos_l, const double *jacob_pos_r, const double *b_l, const double *b_r,
-  const double *u_l, const double *u_r, const double *xi_l, const double *xi_r,
-  const double *theta_l, const double *theta_r, const double *f_l, const double *f_r,
-  double* GKYL_RESTRICT I) ~%{ ~%", funcNm),
+  const double *jacob_pos_l, const double *jacob_pos_r, const double *fc, const double *f_l,
+  const double *f_r, double* GKYL_RESTRICT I) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:   Cell-center coordinates of the phase-space cell (r side). ~%"),
   printf(fh, "  // dxv[NDIM]: Cell spacing of the phase-space cell. ~%"),
   printf(fh, "  // jacob_pos_l/r: Position-map Jacobian per configuration direction (cdim blocks of 2 equal ~%"),
   printf(fh, "  //            entries) of the left/right cell. ~%"),
-  printf(fh, "  // b_l/r:     Magnetic field unit vector [bx, by, bz] of the left/right cell. ~%"),
-  printf(fh, "  // u_l/r:     Flow velocity [ux, uy, uz] of the left/right cell. ~%"),
-  printf(fh, "  // xi_l/r:    Thermal speed [xi, xi^2, p] of the left/right cell (the first expansion is used). ~%"),
-  printf(fh, "  // theta_l/r: T_perp/T of the left/right cell. ~%"),
+  printf(fh, "  // fc:        Face coefficients of the face (pkpm_conf_face_coef_~a_~ax_ser_p1). ~%", cvarsStr[dir], cdim),
   printf(fh, "  // f_l/r:     Jacobian-weighted normalized distributions J [F, G, M0_perp, N_perp] of the left/right ~%"),
   printf(fh, "  //            phase-space cell. ~%"),
   printf(fh, "  // I:         Accumulated nodal moments of the kinetic HLL flux at the ~a transverse face nodes: ~%", NN),

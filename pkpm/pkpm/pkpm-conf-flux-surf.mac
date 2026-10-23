@@ -3,30 +3,38 @@
    X = [F, G, M0_perp (x, y, z), N_perp (x, y, z)] and the hyper_dg surface kernels that scatter
    stored modal fluxes.
 
-   pkpm_conf_flux_<dir>_<c>x1v_ser_p1(w, dxv, jacob_pos_l, jacob_pos_r, b_l, b_r, u_l, u_r,
-       xi_l, xi_r, theta_l, theta_r, f_l, f_r, flux)
-     On the LOWER face of the current cell in direction dir (normal e_d), at the face nodes
-     (pkpmConfFluxNumPts Gauss-Legendre points per transverse configuration direction,
-     pkpmConfFluxNumWPts in w), the HLL flux of the eight blocks (plan 17.14),
+   pkpm_conf_face_coef_<dir>_<c>x_ser_p1(b_l, b_r, u_l, u_r, xi_l, xi_r, theta_l, theta_r, fc)
+     The face coefficients of the flux on the LOWER face of the current cell in direction dir
+     (normal e_d) at the face nodes (pkpmConfFluxNumPts Gauss-Legendre points per transverse
+     configuration direction), once per configuration face (plan 17.42): from the traces of b,
+     u_d, xi and theta of both cells (the left cell at its upper edge, the current cell at its lower
+     edge), the face averages {q} = (q_l + q_r)/2 that the flux function uses (the field direction
+     renormalized, b = {b}/|{b}|) and the per-side speeds of the time step (pkpm_harm_face_coef,
+     gkyl_pkpm_harm_coeffs.h): fc[q*NO + i] for the coefficient q = PKPM_FC_* at the node i.
 
-       J(X) = V_n X + T(X),  V_n = u_d + xi w b_d,
+   pkpm_conf_flux_<dir>_<c>x1v_ser_p1(w, dxv, jacob_pos_l, jacob_pos_r, fc, f_l, f_r, flux)
+     On the same face, at the face nodes and pkpmConfFluxNumWPts nodes in w, the HLL flux of the
+     eight blocks (plans 17.14, 17.41) for the flux function with face-averaged coefficients,
+
+       J(X) = a X + T(X),  a = {u_d} + {xi} {b_d} w,
        T_F = xi M0_d, T_G = xi N_d, T_M0 = xi G (e_d - b b_d), T_N = xi H (e_d - b b_d),
 
-     H = 4 theta G - 2 theta^2 F, with every factor the trace of its own cell (the left cell at its
-     upper edge, the current cell at its lower edge), formed by pkpm_harm_conf_flux
-     (gkyl_pkpm_harm_coeffs.h), and its projection onto the surface modal basis of each block:
+     H = 4 theta G - 2 theta^2 F, each side keeping its own state X, formed from the face
+     coefficients fc by pkpm_harm_conf_flux (gkyl_pkpm_harm_coeffs.h), and its projection onto the
+     surface modal basis of each block:
      flux = [8 blocks x NK]. The distributions are the normalized blocks of the factored,
      thermal-velocity normalized update; the traces of the Jacobian-weighted J X are scaled by
-     1/J_d of their cell. Returns the stable time-step estimate (2p+1)/2 dx1 max(-S_L, S_R)/J_d.
+     1/J_d of their cell. Returns the stable time-step estimate (2p+1)/2 dx1 max(-S_L, S_R)/J_d with
+     S_L, S_R the envelope of both sides' speeds and of the face flux at the nodes (plan 17.42).
 
    pkpm_stream_surf<dir>_<c>x1v_ser_p1(w, dxv, flux_l, flux_r, out)
      Scatter the stored modal fluxes of the lower (flux_l) and upper (flux_r) faces of the cell
      into the volume increment of the eight blocks, through the consumer projection maps of the
      table header.
 
-   The node loop (traces, HLL) is emitted by pkpmEmitConfFaceFlux, which the fluid-moment kernel
+   The node loop (HLL) is emitted by pkpmEmitConfFaceFlux, which the fluid-moment kernel
    pkpm_fluid_flux_accum_* (pkpm-fluid-flux-kinetic.mac) shares: the fluid flux is the moment of
-   this flux, node by node, with the same arithmetic. */
+   this flux, node by node, with the same arithmetic and face coefficients. */
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 load("core/nodal_operations/nodal_functions.mac")$
@@ -79,23 +87,24 @@ pkpmEmitConfFaceStage1(fh, funcNm, dir, cdim) := block([sz],
   laxEmitStage1Fn(fh, funcNm, sz[12], sz[5], sz[6], sz[4])
 )$
 
-/* Emit the body of a configuration-face flux kernel up to and including the call of
-   pkpm_harm_conf_flux at every face node: the traces of b, u_d, xi and theta of both cells at the
-   transverse nodes, the trace factors of the eight blocks (scaled by 1/J_d of their cell), and, in
-   the loop over the transverse node i and the w node j (w value wq), the side contributions
-   phi_l[8], phi_r[8] and the bounds sb[2]. consumer(fh) emits the statements that use them, inside
-   the loop. The kernel arguments are named w, dxv, jacob_pos_l/r, b_l/r, u_l/r, xi_l/r, theta_l/r,
-   f_l/r. */
-pkpmEmitConfFaceFlux(fh, funcNm, dir, cdim, consumer) := block(
-  [sz, NC, NP, NO, NI, NA, nodes_crem, nodes_vvol, surfCVars, cv, pkbC, tabP, a, j],
+/* Face-coefficient kernel of direction dir (configuration space): the traces of b, u_d, xi and
+   theta of both cells at the transverse face nodes and, node by node, pkpm_harm_face_coef. */
+calcPKPMConfFaceCoef(dir, fh, funcNm, cdim) := block(
+  [sz, NC, NO, nodes_crem, surfCVars, cv, pkbC, a],
   sz : pkpmConfFaceSizes(dir, cdim),
-  NC : sz[1], NP : sz[2], NO : sz[3], NI : sz[4], NA : sz[5],
-  nodes_crem : sz[7], nodes_vvol : sz[8], surfCVars : sz[9], cv : sz[10], pkbC : sz[11],
-  tabP : sz[12],
-  printf(fh, "  const double jdinv_l = 1.0/jacob_pos_l[~a], jdinv_r = 1.0/jacob_pos_r[~a]; ~%", 2*(dir-1), 2*(dir-1)),
-  printf(fh, "  const double wv = w[~a], dv = dxv[~a]; ~%", cdim, cdim),
-  printf(fh, "  // w of the nodes: wv + wn[j] dv ~%"),
-  printf(fh, "  const double wn[~a] = {~{~a~^, ~}}; ~%", NI, makelist(float(0.5*nodes_vvol[j][1]), j, 1, NI)),
+  NC : sz[1], NO : sz[3],
+  nodes_crem : sz[7], surfCVars : sz[9], cv : sz[10], pkbC : sz[11],
+  printf(fh, "#include <gkyl_pkpm_kinetic_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *b_l, const double *b_r, const double *u_l, const double *u_r,
+  const double *xi_l, const double *xi_r, const double *theta_l, const double *theta_r,
+  double* GKYL_RESTRICT fc) ~%{ ~%", funcNm),
+  printf(fh, "  // b_l/b_r:   Magnetic field unit vector [bx, by, bz] in the left/current cell. ~%"),
+  printf(fh, "  // u_l/u_r:   Flow velocity [ux, uy, uz] in the left/current cell. ~%"),
+  printf(fh, "  // xi_l/xi_r: Thermal speed [xi, xi^2, p] in the left/current cell (the first expansion is used). ~%"),
+  printf(fh, "  // theta_l/r: T_perp/T in the left/current cell. ~%"),
+  printf(fh, "  // fc:        Output face coefficients of the flux on the lower face of the current cell in ~%"),
+  printf(fh, "  //            direction ~a at the ~a transverse nodes: fc[q*~a + i] for q = PKPM_FC_*. ~%", cvars[dir], NO, NO),
   for a : 1 thru 3 do (
     printf(fh, "  const double *b~a_l = &b_l[~a], *b~a_r = &b_r[~a]; ~%", a-1, (a-1)*NC, a-1, (a-1)*NC)
   ),
@@ -117,6 +126,29 @@ pkpmEmitConfFaceFlux(fh, funcNm, dir, cdim, consumer) := block(
   pkpmWriteNodeExprs(fh, "thq_l", pkpmFaceNodeExprs(theta_l, pkbC, cv, 1, cdim, surfCVars, nodes_crem)),
   pkpmWriteNodeExprs(fh, "thq_r", pkpmFaceNodeExprs(theta_r, pkbC, cv, -1, cdim, surfCVars, nodes_crem)),
   printf(fh, " ~%"),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
+  printf(fh, "    const double bn_l[3] = {bq0_l[i], bq1_l[i], bq2_l[i]}, bn_r[3] = {bq0_r[i], bq1_r[i], bq2_r[i]}; ~%"),
+  printf(fh, "    pkpm_harm_face_coef(~a, uq_l[i], uq_r[i], xq_l[i], xq_r[i], bn_l, bn_r, thq_l[i], thq_r[i], ~a, &fc[i]); ~%", dir-1, NO),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
+
+/* Emit the body of a configuration-face flux kernel up to and including the call of
+   pkpm_harm_conf_flux at every face node: the trace factors of the eight blocks (scaled by 1/J_d of
+   their cell) and, in the loop over the transverse node i and the w node j (w value wq), the side
+   contributions phi_l[8], phi_r[8] and the bounds sb[2] from the face coefficients fc of the node.
+   consumer(fh) emits the statements that use them, inside the loop. The kernel arguments are named
+   w, dxv, jacob_pos_l/r, fc, f_l/r. */
+pkpmEmitConfFaceFlux(fh, funcNm, dir, cdim, consumer) := block(
+  [sz, NC, NP, NO, NI, NA, nodes_vvol, tabP, j],
+  sz : pkpmConfFaceSizes(dir, cdim),
+  NC : sz[1], NP : sz[2], NO : sz[3], NI : sz[4], NA : sz[5],
+  nodes_vvol : sz[8], tabP : sz[12],
+  printf(fh, "  const double jdinv_l = 1.0/jacob_pos_l[~a], jdinv_r = 1.0/jacob_pos_r[~a]; ~%", 2*(dir-1), 2*(dir-1)),
+  printf(fh, "  const double wv = w[~a], dv = dxv[~a]; ~%", cdim, cdim),
+  printf(fh, "  // w of the nodes: wv + wn[j] dv ~%"),
+  printf(fh, "  const double wn[~a] = {~{~a~^, ~}}; ~%", NI, makelist(float(0.5*nodes_vvol[j][1]), j, 1, NI)),
+  printf(fh, " ~%"),
   printf(fh, "  // Trace factors of the eight blocks, scaled by 1/J_~a of their cell. ~%", cvars[dir]),
   printf(fh, "  double GU_l[8][~a], GU_r[8][~a]; ~%", NI*NA, NI*NA),
   printf(fh, "  for (int c = 0; c < 8; ++c) { ~%"),
@@ -125,7 +157,6 @@ pkpmEmitConfFaceFlux(fh, funcNm, dir, cdim, consumer) := block(
   printf(fh, "  } ~%"),
   printf(fh, " ~%"),
   printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
-  printf(fh, "    const double bn_l[3] = {bq0_l[i], bq1_l[i], bq2_l[i]}, bn_r[3] = {bq0_r[i], bq1_r[i], bq2_r[i]}; ~%"),
   printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
   printf(fh, "      const double wq = wv + wn[j]*dv; ~%"),
   printf(fh, "      double X_l[8], X_r[8]; ~%"),
@@ -138,8 +169,7 @@ pkpmEmitConfFaceFlux(fh, funcNm, dir, cdim, consumer) := block(
   printf(fh, "        X_l[c] = x_l; X_r[c] = x_r; ~%"),
   printf(fh, "      } ~%"),
   printf(fh, "      double phi_l[8], phi_r[8], sb[2]; ~%"),
-  printf(fh, "      pkpm_harm_conf_flux(~a, X_l, X_r, xq_l[i]*bn_l[~a]*wq + uq_l[i], xq_r[i]*bn_r[~a]*wq + uq_r[i], ~%", dir-1, dir-1, dir-1),
-  printf(fh, "        xq_l[i], xq_r[i], bn_l, bn_r, thq_l[i], thq_r[i], phi_l, phi_r, sb); ~%"),
+  printf(fh, "      pkpm_harm_conf_flux(~a, X_l, X_r, wq, &fc[i], ~a, phi_l, phi_r, sb); ~%", dir-1, NO),
   consumer(fh),
   printf(fh, "    } ~%"),
   printf(fh, "  } ~%")
@@ -167,18 +197,13 @@ calcPKPMConfFluxSurf(dir, fh, funcNm, cdim) := block(
   laxEmitPrjFn(fh, funcNm, prjPre, NK, length(factP[1]), NMVp, NO, NI, 0),
 
   printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
-  const double *jacob_pos_l, const double *jacob_pos_r, const double *b_l, const double *b_r,
-  const double *u_l, const double *u_r, const double *xi_l, const double *xi_r,
-  const double *theta_l, const double *theta_r, const double *f_l, const double *f_r,
-  double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  const double *jacob_pos_l, const double *jacob_pos_r, const double *fc, const double *f_l,
+  const double *f_r, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
   printf(fh, "  // w[NDIM]:   Cell-center coordinates (current cell, computational). ~%"),
   printf(fh, "  // dxv[NDIM]: Cell spacing (current cell, computational). ~%"),
   printf(fh, "  // jacob_pos_l/r: Position-map Jacobian per configuration direction (cdim blocks of 2 equal ~%"),
   printf(fh, "  //            entries) of the left/current cell; the total Jacobian J is their product. ~%"),
-  printf(fh, "  // b_l/b_r:   Magnetic field unit vector [bx, by, bz] in the left/current cell. ~%"),
-  printf(fh, "  // u_l/u_r:   Flow velocity [ux, uy, uz] in the left/current cell. ~%"),
-  printf(fh, "  // xi_l/xi_r: Thermal speed [xi, xi^2] in the left/current cell (the first expansion is used). ~%"),
-  printf(fh, "  // theta_l/r: T_perp/T in the left/current cell. ~%"),
+  printf(fh, "  // fc:        Face coefficients of the face (pkpm_conf_face_coef_~a_~ax_ser_p1). ~%", cvars[dir], cdim),
   printf(fh, "  // f_l/f_r:   Jacobian-weighted normalized distributions J [F, G, M0_perp, N_perp] in the left/current cell. ~%"),
   printf(fh, "  // flux:      Output modal surface fluxes of the eight evolved blocks on the lower face of the ~%"),
   printf(fh, "  //            current cell in direction ~a: the physical HLL flux of the physical traces ~%", cvars[dir]),
