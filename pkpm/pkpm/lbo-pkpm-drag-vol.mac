@@ -5,6 +5,7 @@ load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac");
 load("util_maxima/utilities.mac");
 load(stringproc)$
+load("pkpm/pkpm/lbo-pkpm-blocks.mac")$
 fpprec : 24$
 
 calcVlasovPKPMLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
@@ -34,25 +35,22 @@ calcVlasovPKPMLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := 
   printf(fh, "  // dxv[NDIM]:     Cell spacing. ~%"),
   printf(fh, "  // nuSum:         Collisionalities added (self and cross species collisionalities). ~%"),
   printf(fh, "  // nuPrimMomsSum: Sum of bulk velocities and thermal speeds (squared) times their respective collisionalities. ~%"),
-  printf(fh, "  // f:             Input distribution functions [F_0, T_perp/m G_1 = T_perp/m (F_0 - F_1)].~%"),
+  printf(fh, "  // f:             Input distribution functions [F_0, T_perp/m G_1 = T_perp/m (F_0 - F_1), M0_perp, N_perp].~%"),
   printf(fh, "  // out:           Incremented output distribution functions. ~%"),
 
   /* grid spacing in v_parallel and v_parallel coordinate */
   printf(fh, "  const double rdvpar = 2.0/dxv[~a]; ~%", cdim),
   printf(fh, "  const double dvpar = dxv[~a], wvpar = w[~a]; ~%", cdim, cdim),
 
-  /* Access F_0 and T_perp G, first two Laguerre moments */
-  printf(fh, "  const double *F_0 = &f[~a]; ~%", 0),
-  printf(fh, "  const double *G_1 = &f[~a]; ~%", NP),  
-
-  /* Access the components of out for the first two Laguerre moments */
-  printf(fh, "  double *out_F_0 = &out[~a]; ~%", 0),
-  printf(fh, "  double *out_G_1 = &out[~a]; ~%", NP),   
+  /* The eight blocks: the gyrotropic pair F_0, G_1 and the Cartesian first-harmonic pair
+     M0_perp, N_perp. One three-dimensional Dougherty operator acts on all of them: the same
+     parallel drag and diffusion, and perpendicular sources that differ per harmonic. */
+  blk : pkpmLBOBlocks,
+  for k : 1 thru length(blk) do
+    printf(fh, "  const double *~a = &f[~a]; ~%", blk[k], (k-1)*NP),
+  for k : 1 thru length(blk) do
+    printf(fh, "  double *out_~a = &out[~a]; ~%", blk[k], (k-1)*NP),
   printf(fh, "~%"),
-
-  /* Expand distribution functions F_0 and T_perp G in phase basis. */
-  F_0_e : doExpand1(F_0, bP),
-  G_1_e : doExpand1(G_1, bP),
 
   /* Create expansion of drag term, which includes a correction to M1 to avoid spurious flow generation */
   nuSum_e : doExpand1(nuSum,bC),
@@ -78,23 +76,34 @@ calcVlasovPKPMLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := 
   max(abs(alpha_vdim))/(dv_i/(2p+1)). */
   cflFreq_mid : gcfac(float(expand(subst(zr,(2*pOrderV+1)*0.5*alphaDrag_NoZero_e)))),
 
-  /* Volume increment from configuration space. */
-  incrDrag_F_0 : calcInnerProdList(varsP, 1, diff(bP,vx), alphaDrag_NoZero_e*F_0_e),
-  incrDrag_G_1 : calcInnerProdList(varsP, 1, diff(bP,vx), alphaDrag_NoZero_e*G_1_e),
-  /* Collisional source of the perpendicular-energy moment: the Laguerre reduction of the
-     perpendicular drag and diffusion gives 2 nu vth^2 F_0 - 2 nu G (the LBO relaxes G
-     towards vth^2 F_0). Together with the parallel drag-diffusion this conserves the
-     energy p_par + 2 p_perp; it belongs to the collision operator, not to the
+  /* Collisional sources of the perpendicular moments: the Laguerre reduction of the
+     perpendicular drag and diffusion (lbo_first_harmonic.tex). G relaxes towards vth^2 F_0 at
+     2 nu; the first-harmonic pair relaxes at nu and 3 nu,
+       C[M0_perp] = -nu M0_perp,  C[N_perp] = 4 nu vth^2 M0_perp - 3 nu N_perp.
+     Together with the parallel drag-diffusion these conserve the energy p_par + 2 p_perp and
+     the perpendicular momentum int M0_perp; they belong to the collision operator, not to the
      collisionless update. */
   printf(fh, "  const double *sumNuVtSq = &nuPrimMomsSum[~a]; ~%", vdim*NC),
   nuVtSq_e : doExpand1(sumNuVtSq, bC),
-  incrSrc_G_1 : calcInnerProdList(varsP, 1, bP, 2*nuVtSq_e*F_0_e - 2*nuSum_e*G_1_e),
+  blk_e : makelist(doExpand1(parse_string(blk[k]), bP), k, 1, length(blk)),
+  src_e : [0, 2*nuVtSq_e*blk_e[1] - 2*nuSum_e*blk_e[2],
+           -nuSum_e*blk_e[3], -nuSum_e*blk_e[4], -nuSum_e*blk_e[5],
+           4*nuVtSq_e*blk_e[3] - 3*nuSum_e*blk_e[6],
+           4*nuVtSq_e*blk_e[4] - 3*nuSum_e*blk_e[7],
+           4*nuVtSq_e*blk_e[5] - 3*nuSum_e*blk_e[8]],
 
-  writeCIncrExprs1(out_F_0, incrDrag_F_0),
-  writeCIncrExprs1(out_G_1, incrDrag_G_1 + incrSrc_G_1),
+  /* Volume increment: the drag acting on each block plus its source. */
+  for k : 1 thru length(blk) do (
+    incrDrag_k : calcInnerProdList(varsP, 1, diff(bP,vx), alphaDrag_NoZero_e*blk_e[k]),
+    if src_e[k] = 0 then
+      writeCIncrExprs1(parse_string(sconcat("out_", blk[k])), incrDrag_k)
+    else
+      writeCIncrExprs1(parse_string(sconcat("out_", blk[k])), incrDrag_k + calcInnerProdList(varsP, 1, bP, src_e[k]))
+  ),
   printf(fh, "~%"),
 
-  printf(fh, "  return fabs(~a) + 2.0*fabs(~a); ~%", cflFreq_mid, float(expand(subst(zr, nuSum_e)))),
+  /* The source rates are 2 nu (G), nu and 3 nu (M0_perp, N_perp); bound them by 3 nu. */
+  printf(fh, "  return fabs(~a) + 3.0*fabs(~a); ~%", cflFreq_mid, float(expand(subst(zr, nuSum_e)))),
 
   printf(fh, "~%"),
   printf(fh, "} ~%")

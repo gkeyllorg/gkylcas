@@ -6,6 +6,7 @@ load("util_maxima/out-scripts.mac");
 load("core/recovery.mac")$
 load("util_maxima/utilities.mac")$
 load(stringproc)$
+load("pkpm/pkpm/lbo-pkpm-blocks.mac")$
 fpprec : 24$
 
 calcVlasovPKPMLBODiffBoundarySurfUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
@@ -27,24 +28,23 @@ calcVlasovPKPMLBODiffBoundarySurfUpdater(fh, funcNm, cdim, vdim, basisFun, polyO
 
   basis_v : diff(bP,vx),
 
-  F_0_Skin_e : doExpand1(F_0Skin, bP),
-  F_0_Edge_e : doExpand1(F_0Edge, bP),
-  G_1_Skin_e : doExpand1(G_1Skin, bP),
-  G_1_Edge_e : doExpand1(G_1Edge, bP),
+  /* The same diffusion acts on every block (F_0, G_1, M0_perp, N_perp). */
+  blk : pkpmLBOBlocks,
+  nb : length(blk),
+  bsym(k, sfx) := parse_string(sconcat(blk[k], sfx)),
+  Skin_e : makelist(doExpand1(bsym(k, "Skin"), bP), k, 1, nb),
   /* Construct the recovery polynomial */
   if polyOrder=1 then /* Force p=1 to mean hybrid. */
     bType : "hyb"
   else
     bType : basisFun,
-  h_F_0_l_e : calcRecov2CellGen(bType,vx,varsP,polyOrder,dg(makelist(F_0Edge[i-1],i,1,NP)), dg(makelist(F_0Skin[i-1],i,1,NP))),
-  h_F_0_r_e : calcRecov2CellGen(bType,vx,varsP,polyOrder,dg(makelist(F_0Skin[i-1],i,1,NP)), dg(makelist(F_0Edge[i-1],i,1,NP))),
-  h_G_1_l_e : calcRecov2CellGen(bType,vx,varsP,polyOrder,dg(makelist(G_1Edge[i-1],i,1,NP)), dg(makelist(G_1Skin[i-1],i,1,NP))),
-  h_G_1_r_e : calcRecov2CellGen(bType,vx,varsP,polyOrder,dg(makelist(G_1Skin[i-1],i,1,NP)), dg(makelist(G_1Edge[i-1],i,1,NP))),
+  coefs(k, sfx) := dg(makelist(arraymake(bsym(k, sfx), [i-1]),i,1,NP)),
+  h_l_e : makelist(calcRecov2CellGen(bType,vx,varsP,polyOrder,coefs(k, "Edge"), coefs(k, "Skin")), k, 1, nb),
+  h_r_e : makelist(calcRecov2CellGen(bType,vx,varsP,polyOrder,coefs(k, "Skin"), coefs(k, "Edge")), k, 1, nb),
   hOrder : 2*polyOrder+1,
-  hsol_F_0_l : cons(subst(vx=0,h_F_0_l_e),makelist(subst(vx=0,diff(h_F_0_l_e,vx,ord)/(ord!)),ord,1,hOrder)),
-  hsol_F_0_r : cons(subst(vx=0,h_F_0_r_e),makelist(subst(vx=0,diff(h_F_0_r_e,vx,ord)/(ord!)),ord,1,hOrder)),
-  hsol_G_1_l : cons(subst(vx=0,h_G_1_l_e),makelist(subst(vx=0,diff(h_G_1_l_e,vx,ord)/(ord!)),ord,1,hOrder)),
-  hsol_G_1_r : cons(subst(vx=0,h_G_1_r_e),makelist(subst(vx=0,diff(h_G_1_r_e,vx,ord)/(ord!)),ord,1,hOrder)),
+  hsol(h) := cons(subst(vx=0,h),makelist(subst(vx=0,diff(h,vx,ord)/(ord!)),ord,1,hOrder)),
+  hsol_l : makelist(hsol(h_l_e[k]), k, 1, nb),
+  hsol_r : makelist(hsol(h_r_e[k]), k, 1, nb),
   /*............. RECOVERY DONE ..............................*/
 
   printf(fh, "#include <gkyl_lbo_pkpm_kernels.h> ~%"),        
@@ -53,22 +53,19 @@ calcVlasovPKPMLBODiffBoundarySurfUpdater(fh, funcNm, cdim, vdim, basisFun, polyO
   printf(fh, "  // dxv[NDIM]:     Cell spacing. ~%"),
   printf(fh, "  // nuSum:         Collisionalities added (self and cross species collisionalities). ~%"),
   printf(fh, "  // nuPrimMomsSum: Sum of bulk velocities and thermal speeds (squared) times their respective collisionalities. ~%"),
-  printf(fh, "  // fSkin/fEdge:   Input distribution functions [F_0, T_perp G = T_perp (F_1 - F_0)] in skin cell/last edge cell. ~%"),
+  printf(fh, "  // fSkin/fEdge:   Input distribution functions [F_0, T_perp G = T_perp (F_1 - F_0), M0_perp, N_perp] in skin cell/last edge cell. ~%"),
   printf(fh, "  // out:           Incremented distribution functions in skin cell. ~%"),
   printf(fh, "  double rdvSq4 = 4.0/(dxv[~a]*dxv[~a]); ~%", cdim, cdim),
   /* Create a pointer to nuVtSqSum. */
   printf(fh, "  const double *nuVtSqSum = &nuPrimMomsSum[~a];~%", vdim*NC),
   printf(fh, "~%"),
   
-  /* Access F_0 and T_perp G, first two Laguerre moments */
-  printf(fh, "  const double *F_0Skin = &fSkin[~a]; ~%", 0),
-  printf(fh, "  const double *G_1Skin = &fSkin[~a]; ~%", NP),  
-  printf(fh, "  const double *F_0Edge = &fEdge[~a]; ~%", 0),
-  printf(fh, "  const double *G_1Edge = &fEdge[~a]; ~%", NP), 
-
-  /* Access the components of out for the first two Laguerre moments */
-  printf(fh, "  double *out_F_0 = &out[~a]; ~%", 0),
-  printf(fh, "  double *out_G_1 = &out[~a]; ~%", NP),  
+  for k : 1 thru nb do (
+    printf(fh, "  const double *~aSkin = &fSkin[~a]; ~%", blk[k], (k-1)*NP),
+    printf(fh, "  const double *~aEdge = &fEdge[~a]; ~%", blk[k], (k-1)*NP)
+  ),
+  for k : 1 thru nb do
+    printf(fh, "  double *out_~a = &out[~a]; ~%", blk[k], (k-1)*NP),
   printf(fh, "~%"),
   /* First compute the contribution coming from the second
      differentiation by parts to left and right cells. */
@@ -80,161 +77,86 @@ calcVlasovPKPMLBODiffBoundarySurfUpdater(fh, funcNm, cdim, vdim, basisFun, polyO
   ),
 
   /* Volume increment from configuration space. */
-  vol_incr_F_0_e : rdvSq4*calcInnerProdList(varsP, 1, diff(bP,vx,2), nuVtSqSum_e*F_0_Skin_e),
-  vol_incr_G_1_e : rdvSq4*calcInnerProdList(varsP, 1, diff(bP,vx,2), nuVtSqSum_e*G_1_Skin_e),
-  printf(fh, "  double vol_incr_F_0[~a] = {0.0}; ~%", NP),
-  printf(fh, "  double vol_incr_G_1[~a] = {0.0}; ~%", NP),
-  writeCExprs1(vol_incr_F_0, vol_incr_F_0_e),
-  writeCExprs1(vol_incr_G_1, vol_incr_G_1_e),
+  for k : 1 thru nb do (
+    printf(fh, "  double vol_incr_~a[~a] = {0.0}; ~%", blk[k], NP),
+    writeCExprs1(parse_string(sconcat("vol_incr_", blk[k])),
+      rdvSq4*calcInnerProdList(varsP, 1, diff(bP,vx,2), nuVtSqSum_e*Skin_e[k]))
+  ),
   printf(fh, "~%"),
-    
-  Gdiff_F_0_l_c : calcInnerProdList(surfVars,1,bSurf,hsol_F_0_l[2]),
-  Gdiff_F_0_r_c : calcInnerProdList(surfVars,1,bSurf,hsol_F_0_r[2]),
-  Gdiff_F_0_l_e : doExpand(Gdiff_F_0_l_c, bSurf),
-  Gdiff_F_0_r_e : doExpand(Gdiff_F_0_r_c, bSurf),
 
-  Gdiff2_F_0_l_c : calcInnerProdList(surfVars,1,bSurf,hsol_F_0_l[1]),
-  Gdiff2_F_0_r_c : calcInnerProdList(surfVars,1,bSurf,hsol_F_0_r[1]),
-  Gdiff2_F_0_l_e : doExpand(Gdiff2_F_0_l_c, bSurf),
-  Gdiff2_F_0_r_e : doExpand(Gdiff2_F_0_r_c, bSurf),
-
-  Gdiff_G_1_l_c : calcInnerProdList(surfVars,1,bSurf,hsol_G_1_l[2]),
-  Gdiff_G_1_r_c : calcInnerProdList(surfVars,1,bSurf,hsol_G_1_r[2]),
-  Gdiff_G_1_l_e : doExpand(Gdiff_G_1_l_c, bSurf),
-  Gdiff_G_1_r_e : doExpand(Gdiff_G_1_r_c, bSurf),
-
-  Gdiff2_G_1_l_c : calcInnerProdList(surfVars,1,bSurf,hsol_G_1_l[1]),
-  Gdiff2_G_1_r_c : calcInnerProdList(surfVars,1,bSurf,hsol_G_1_r[1]),
-  Gdiff2_G_1_l_e : doExpand(Gdiff2_G_1_l_c, bSurf),
-  Gdiff2_G_1_r_e : doExpand(Gdiff2_G_1_r_c, bSurf),
+  Gd(hs, i) := doExpand(calcInnerProdList(surfVars,1,bSurf,hs[i]), bSurf),
+  Gdiff_l_e : makelist(Gd(hsol_l[k], 2), k, 1, nb),
+  Gdiff_r_e : makelist(Gd(hsol_r[k], 2), k, 1, nb),
+  Gdiff2_l_e : makelist(Gd(hsol_l[k], 1), k, 1, nb),
+  Gdiff2_r_e : makelist(Gd(hsol_r[k], 1), k, 1, nb),
 
   if (polyOrder=1 or sdowncase(basisFun)="tensor") then (
     /* This simplification of separating vth^2 from the recovered distribution function
        only works for p=1 because it is a tensor product of
        conf and velocity space (remains to be checked for tensor basis). */
-    temp_diff_F_0_le : fullratsimp(calcInnerProdList(surfVars, -1, subst(vx=-1, bP), Gdiff_F_0_l_e)
-                              -calcInnerProdList(surfVars, -1, subst(vx=-1, basis_v), Gdiff2_F_0_l_e)),
-    temp_diff_F_0_re : fullratsimp(calcInnerProdList(surfVars, 1, subst(vx=1, bP), Gdiff_F_0_r_e)
-                              -calcInnerProdList(surfVars, 1, subst(vx=1, basis_v), Gdiff2_F_0_r_e)),
-    temp_edge_F_0_le : -calcInnerProdList(surfVars, -1, subst(vx=-1, basis_v), subst(vx=-1, F_0_Skin_e)),
-    temp_edge_F_0_re : -calcInnerProdList(surfVars, 1, subst(vx=1, basis_v), subst(vx=1, F_0_Skin_e)),
-    incr_diff_F_0_le : calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(temp_F_0_diff, bP)),
-    incr_diff_F_0_re : calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(temp_F_0_diff, bP)),
-    incr_edge_F_0_le : calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(temp_F_0_edge, bP)),
-    incr_edge_F_0_re : calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(temp_F_0_edge, bP)),
+    temp_diff_le : makelist(fullratsimp(calcInnerProdList(surfVars, -1, subst(vx=-1, bP), Gdiff_l_e[k])
+                              -calcInnerProdList(surfVars, -1, subst(vx=-1, basis_v), Gdiff2_l_e[k])), k, 1, nb),
+    temp_diff_re : makelist(fullratsimp(calcInnerProdList(surfVars, 1, subst(vx=1, bP), Gdiff_r_e[k])
+                              -calcInnerProdList(surfVars, 1, subst(vx=1, basis_v), Gdiff2_r_e[k])), k, 1, nb),
+    temp_edge_le : makelist(-calcInnerProdList(surfVars, -1, subst(vx=-1, basis_v), subst(vx=-1, Skin_e[k])), k, 1, nb),
+    temp_edge_re : makelist(-calcInnerProdList(surfVars, 1, subst(vx=1, basis_v), subst(vx=1, Skin_e[k])), k, 1, nb),
+    incr_diff : makelist(calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(bsym(k, "_temp_diff"), bP)), k, 1, nb),
+    incr_edge : makelist(calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(bsym(k, "_temp_edge"), bP)), k, 1, nb),
 
-    printf(fh, "  double temp_F_0_diff[~a] = {0.0}; ~%", NP),
-    printf(fh, "  double temp_F_0_edge[~a] = {0.0}; ~%", NP),
-    printf(fh, "  double diff_F_0_incr[~a] = {0.0}; ~%", NP),
-    printf(fh, "  double edge_F_0_incr[~a] = {0.0}; ~%", NP),
-    printf(fh, "~%"),
-
-    temp_diff_G_1_le : fullratsimp(calcInnerProdList(surfVars, -1, subst(vx=-1, bP), Gdiff_G_1_l_e)
-                              -calcInnerProdList(surfVars, -1, subst(vx=-1, basis_v), Gdiff2_G_1_l_e)),
-    temp_diff_G_1_re : fullratsimp(calcInnerProdList(surfVars, 1, subst(vx=1, bP), Gdiff_G_1_r_e)
-                              -calcInnerProdList(surfVars, 1, subst(vx=1, basis_v), Gdiff2_G_1_r_e)),
-    temp_edge_G_1_le : -calcInnerProdList(surfVars, -1, subst(vx=-1, basis_v), subst(vx=-1, G_1_Skin_e)),
-    temp_edge_G_1_re : -calcInnerProdList(surfVars, 1, subst(vx=1, basis_v), subst(vx=1, G_1_Skin_e)),
-    incr_diff_G_1_le : calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(temp_G_1_diff, bP)),
-    incr_diff_G_1_re : calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(temp_G_1_diff, bP)),
-    incr_edge_G_1_le : calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(temp_G_1_edge, bP)),
-    incr_edge_G_1_re : calcInnerProdList(varsP, nuVtSqSum_e, bP, doExpand1(temp_G_1_edge, bP)),
-
-    printf(fh, "  double temp_G_1_diff[~a] = {0.0}; ~%", NP),
-    printf(fh, "  double temp_G_1_edge[~a] = {0.0}; ~%", NP),
-    printf(fh, "  double diff_G_1_incr[~a] = {0.0}; ~%", NP),
-    printf(fh, "  double edge_G_1_incr[~a] = {0.0}; ~%", NP),
+    for k : 1 thru nb do (
+      printf(fh, "  double ~a_temp_diff[~a] = {0.0}; ~%", blk[k], NP),
+      printf(fh, "  double ~a_temp_edge[~a] = {0.0}; ~%", blk[k], NP),
+      printf(fh, "  double ~a_diff_incr[~a] = {0.0}; ~%", blk[k], NP),
+      printf(fh, "  double ~a_edge_incr[~a] = {0.0}; ~%", blk[k], NP)
+    ),
     printf(fh, "~%"),
 
-    printf(fh, "  if (edge == -1) { ~%~%"),
-      
-    writeCExprs1(temp_F_0_diff, temp_diff_F_0_re),
-    writeCExprs1(temp_G_1_diff, temp_diff_G_1_re),
-    printf(fh, "~%"),
-      
-    writeCExprs1(temp_F_0_edge, temp_edge_F_0_le),
-    writeCExprs1(temp_G_1_edge, temp_edge_G_1_le),
-    printf(fh, "~%"),
-      
-    writeCExprs1(diff_F_0_incr, incr_diff_F_0_re),
-    writeCExprs1(diff_G_1_incr, incr_diff_G_1_re),
-    printf(fh, "~%"),
-    writeCExprs1(edge_F_0_incr, incr_edge_F_0_le),
-    writeCExprs1(edge_G_1_incr, incr_edge_G_1_le),
-    printf(fh, "~%"),
-    
-    /* otherwise edge == +1, we are doing the right edge boundary and the skin cell needs to be evauluated at -1 */
-    printf(fh, "~%  } else { ~%~%"),
-    
-    writeCExprs1(temp_F_0_diff, temp_diff_F_0_le),
-    writeCExprs1(temp_G_1_diff, temp_diff_G_1_le),
-    printf(fh, "~%"),
-      
-    writeCExprs1(temp_F_0_edge, temp_edge_F_0_re),
-    writeCExprs1(temp_G_1_edge, temp_edge_G_1_re),
-    printf(fh, "~%"),
-      
-    writeCExprs1(diff_F_0_incr, incr_diff_F_0_le),
-    writeCExprs1(diff_G_1_incr, incr_diff_G_1_le),
-    printf(fh, "~%"),
-    writeCExprs1(edge_F_0_incr, incr_edge_F_0_re),
-    writeCExprs1(edge_G_1_incr, incr_edge_G_1_re),
-    printf(fh, "~%"),
+    /* edge == -1: left edge boundary, the skin cell evaluated at +1; otherwise the right edge
+       boundary, the skin cell evaluated at -1. */
+    for side : 1 thru 2 do (
+      if side = 1 then printf(fh, "  if (edge == -1) { ~%~%") else printf(fh, "~%  } else { ~%~%"),
+      for k : 1 thru nb do (
+        writeCExprs1(bsym(k, "_temp_diff"), if side = 1 then temp_diff_re[k] else temp_diff_le[k]),
+        writeCExprs1(bsym(k, "_temp_edge"), if side = 1 then temp_edge_le[k] else temp_edge_re[k]),
+        writeCExprs1(bsym(k, "_diff_incr"), incr_diff[k]),
+        writeCExprs1(bsym(k, "_edge_incr"), incr_edge[k]),
+        printf(fh, "~%")
+      )
+    ),
     printf(fh, "  } ~%"),
     printf(fh, "~%")
 
   ) else (
-    incr_diff_F_0_le : fullratsimp(calcInnerProdList(surfVars, -nuVtSqSum_e, subst(vx=-1, bP), Gdiff_F_0_l_e)
-                              -calcInnerProdList(surfVars, -nuVtSqSum_e, subst(vx=-1, basis_v), Gdiff2_F_0_l_e)),
-    incr_diff_F_0_re : fullratsimp(calcInnerProdList(surfVars, nuVtSqSum_e, subst(vx=1, bP), Gdiff_F_0_r_e)
-                              -calcInnerProdList(surfVars, nuVtSqSum_e, subst(vx=1, basis_v), Gdiff2_F_0_r_e)),
-    incr_edge_F_0_le : -calcInnerProdList(surfVars, -nuVtSqSum_e, subst(vx=-1, basis_v), subst(vx=-1, F_0_Skin_e)),
-    incr_edge_F_0_re : -calcInnerProdList(surfVars, nuVtSqSum_e, subst(vx=1, basis_v), subst(vx=1, F_0_Skin_e)),
-
-    printf(fh, "  double diff_F_0_incr[~a] = {0.0}; ~%", NP),
-    printf(fh, "  double edge_F_0_incr[~a] = {0.0}; ~%", NP),
+    for k : 1 thru nb do (
+      printf(fh, "  double ~a_diff_incr[~a] = {0.0}; ~%", blk[k], NP),
+      printf(fh, "  double ~a_edge_incr[~a] = {0.0}; ~%", blk[k], NP)
+    ),
     printf(fh, "~%"),
-
-    incr_diff_G_1_le : fullratsimp(calcInnerProdList(surfVars, -nuVtSqSum_e, subst(vx=-1, bP), Gdiff_G_1_l_e)
-                              -calcInnerProdList(surfVars, -nuVtSqSum_e, subst(vx=-1, basis_v), Gdiff2_G_1_l_e)),
-    incr_diff_G_1_re : fullratsimp(calcInnerProdList(surfVars, nuVtSqSum_e, subst(vx=1, bP), Gdiff_G_1_r_e)
-                              -calcInnerProdList(surfVars, nuVtSqSum_e, subst(vx=1, basis_v), Gdiff2_G_1_r_e)),
-    incr_edge_G_1_le : -calcInnerProdList(surfVars, -nuVtSqSum_e, subst(vx=-1, basis_v), subst(vx=-1, G_1_Skin_e)),
-    incr_edge_G_1_re : -calcInnerProdList(surfVars, nuVtSqSum_e, subst(vx=1, basis_v), subst(vx=1, G_1_Skin_e)),
-
-    printf(fh, "  double diff_G_1_incr[~a] = {0.0}; ~%", NP),
-    printf(fh, "  double edge_G_1_incr[~a] = {0.0}; ~%", NP),
-    printf(fh, "~%"),
-    printf(fh, "  if (edge == -1) { ~%~%"),
-      
-    writeCExprs1(diff_F_0_incr, incr_diff_F_0_re),
-    writeCExprs1(diff_G_1_incr, incr_diff_G_1_re),
-    printf(fh, "~%"),
-    writeCExprs1(edge_F_0_incr, incr_edge_F_0_le),
-    writeCExprs1(edge_G_1_incr, incr_edge_G_1_le),
-    printf(fh, "~%"),
-    
-    /* otherwise edge == +1, we are doing the right edge boundary and the skin cell needs to be evauluated at -1 */
-    printf(fh, "~%  } else { ~%~%"),
-      
-    writeCExprs1(diff_F_0_incr, incr_diff_F_0_le),
-    writeCExprs1(diff_G_1_incr, incr_diff_G_1_le),
-    printf(fh, "~%"),
-    writeCExprs1(edge_F_0_incr, incr_edge_F_0_re),
-    writeCExprs1(edge_G_1_incr, incr_edge_G_1_re),
-    printf(fh, "~%"),
+    for side : 1 thru 2 do (
+      if side = 1 then printf(fh, "  if (edge == -1) { ~%~%") else printf(fh, "~%  } else { ~%~%"),
+      for k : 1 thru nb do (
+        if side = 1 then (
+          writeCExprs1(bsym(k, "_diff_incr"), fullratsimp(calcInnerProdList(surfVars, nuVtSqSum_e, subst(vx=1, bP), Gdiff_r_e[k])
+                                   -calcInnerProdList(surfVars, nuVtSqSum_e, subst(vx=1, basis_v), Gdiff2_r_e[k]))),
+          writeCExprs1(bsym(k, "_edge_incr"), -calcInnerProdList(surfVars, -nuVtSqSum_e, subst(vx=-1, basis_v), subst(vx=-1, Skin_e[k])))
+        ) else (
+          writeCExprs1(bsym(k, "_diff_incr"), fullratsimp(calcInnerProdList(surfVars, -nuVtSqSum_e, subst(vx=-1, bP), Gdiff_l_e[k])
+                                   -calcInnerProdList(surfVars, -nuVtSqSum_e, subst(vx=-1, basis_v), Gdiff2_l_e[k]))),
+          writeCExprs1(bsym(k, "_edge_incr"), -calcInnerProdList(surfVars, nuVtSqSum_e, subst(vx=1, basis_v), subst(vx=1, Skin_e[k])))
+        ),
+        printf(fh, "~%")
+      )
+    ),
     printf(fh, "  } ~%"),
     printf(fh, "~%")
   ),
 
-  vol_F_0_out : makelist(vol_incr_F_0[i-1],i,1,NP),
-  diff_F_0_out : makelist(diff_F_0_incr[i-1],i,1,NP),
-  edge_F_0_out : makelist(edge_F_0_incr[i-1],i,1,NP),
-  vol_G_1_out : makelist(vol_incr_G_1[i-1],i,1,NP),
-  diff_G_1_out : makelist(diff_G_1_incr[i-1],i,1,NP),
-  edge_G_1_out : makelist(edge_G_1_incr[i-1],i,1,NP),
-  writeCIncrExprs1(out_F_0, rdvSq4*(diff_F_0_out + edge_F_0_out) + vol_F_0_out),
-  writeCIncrExprs1(out_G_1, rdvSq4*(diff_G_1_out + edge_G_1_out) + vol_G_1_out),
+  for k : 1 thru nb do (
+    vol_out : makelist(arraymake(parse_string(sconcat("vol_incr_", blk[k])), [i-1]),i,1,NP),
+    diff_out : makelist(arraymake(bsym(k, "_diff_incr"), [i-1]),i,1,NP),
+    edge_out : makelist(arraymake(bsym(k, "_edge_incr"), [i-1]),i,1,NP),
+    writeCIncrExprs1(parse_string(sconcat("out_", blk[k])), rdvSq4*(diff_out + edge_out) + vol_out)
+  ),
   printf(fh, "~%"),
 
   printf(fh, "  return 0.;~%"),  /* Return CFL frequency from volume kernel. */

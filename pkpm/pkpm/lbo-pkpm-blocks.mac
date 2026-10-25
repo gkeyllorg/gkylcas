@@ -1,0 +1,4 @@
+/* The blocks of the PKPM distribution acted on by the Lenard Bernstein (Dougherty) operator,
+   in storage order: the gyrotropic pair F_0, G_1 = T_perp/m (F_0 - F_1) and the three Cartesian
+   components of the first-harmonic pair M0_perp, N_perp. */
+pkpmLBOBlocks : ["F_0", "G_1", "M0_x", "M0_y", "M0_z", "N_x", "N_y", "N_z"]$
