@@ -33,9 +33,9 @@ for bInd : 1 thru length(bName) do (
     for polyOrder : 1 thru maxPolyOrder[bInd] do (
       funcName : sconcat("fem_proj_", c, "x_", bName[bInd], "_p", polyOrder),
 
-      /* Global node count and local-to-global lattice keys. */
+      /* Global node count and local-to-global grid node indices. */
       printf(fh, "long ~a_num_nodes(const int *cells, const bool *periodic);~%", funcName),
-      printf(fh, "void ~a_local_to_global(const int *idx, const int *shape, long *keys);~%", funcName),
+      printf(fh, "void ~a_local_to_global(const int *idx, const int *shape, long *global_idx);~%", funcName),
 
       /* Consistent mass and source kernels, with unity or DG weights. */
       for suffix in ["", "_weighted"] do (
