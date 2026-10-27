@@ -3,6 +3,7 @@ load("core/nodal_operations/nodal_functions.mac")$
 load("moments/fem/fem-util.mac")$
 load("util_maxima/out-scripts.mac")$
 load(stringproc)$
+load("gyrokinetic/fem_proj/fem-proj-local_to_global.mac")$
 
 /* Global serendipity node count, including periodic identification. */
 generate_fem_proj_num_nodes(fh, funcNm, dim, order) := block(
@@ -22,23 +23,6 @@ generate_fem_proj_num_nodes(fh, funcNm, dim, order) := block(
     )
   ),
   printf(fh, "  return count;~%}~%~%")
-)$
-
-/* Global grid node indices with periodic wrapping; the updater removes unused indices. */
-generate_fem_proj_local_to_global(fh, funcNm, dim, basisFun, order) := block(
-  [nodes, i, d, j],
-  nodes : args(getNodes(basisFun, dim, order)),
-  printf(fh, "void ~a_local_to_global(const int *idx, const int *shape, long *global_idx) {~%", funcNm),
-  for i : 1 thru length(nodes) do (
-    printf(fh, "  global_idx[~a] = ", i-1),
-    for d : dim step -1 thru 1 do (
-      if d < dim then printf(fh, " + "),
-      printf(fh, "(long)((~a*idx[~a]+~a)%shape[~a])", order, d-1, order*(nodes[i][d]+1)/2, d-1),
-      for j : 1 thru d-1 do printf(fh, "*shape[~a]", j-1)
-    ),
-    printf(fh, ";~%")
-  ),
-  printf(fh, "}~%~%")
 )$
 
 /* Consistent mass matrix, with a unity or DG weight. */
