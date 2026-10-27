@@ -1,0 +1,133 @@
+/* Independent consistent FEM mass projection. No differential operator. */
+load("core/nodal_operations/nodal_functions.mac")$
+load("moments/fem/fem-util.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+
+/* Global serendipity node count, including periodic identification. */
+generate_fem_proj_num_nodes(fh, funcNm, dim, order) := block(
+  [d, j],
+  printf(fh, "long ~a_num_nodes(const int *cells, const bool *periodic) {~%", funcNm),
+  printf(fh, "  long count = 1;~%"),
+  for d : 1 thru dim do (
+    printf(fh, "  count *= cells[~a]+!periodic[~a];~%", d-1, d-1)
+  ),
+  if order = 2 then (
+    for d : 1 thru dim do (
+      printf(fh, "  count += (long)cells[~a]", d-1),
+      for j : 1 thru dim do if j # d then (
+        printf(fh, "*(cells[~a]+!periodic[~a])", j-1, j-1)
+      ),
+      printf(fh, ";~%")
+    )
+  ),
+  printf(fh, "  return count;~%}~%~%")
+)$
+
+/* Periodic lattice keys; the updater compacts absent serendipity nodes. */
+generate_fem_proj_local_to_global(fh, funcNm, dim, basisFun, order) := block(
+  [nodes, i, d, j],
+  nodes : args(getNodes(basisFun, dim, order)),
+  printf(fh, "void ~a_local_to_global(const int *idx, const int *shape, long *keys) {~%", funcNm),
+  for i : 1 thru length(nodes) do (
+    printf(fh, "  keys[~a] = ", i-1),
+    for d : dim step -1 thru 1 do (
+      if d < dim then printf(fh, " + "),
+      printf(fh, "(long)((~a*idx[~a]+~a)%shape[~a])", order, d-1, order*(nodes[i][d]+1)/2, d-1),
+      for j : 1 thru d-1 do printf(fh, "*shape[~a]", j-1)
+    ),
+    printf(fh, ";~%")
+  ),
+  printf(fh, "}~%~%")
+)$
+
+/* Consistent mass matrix, with a unity or DG weight. */
+generate_fem_proj_mass(fh, funcNm, dim, basisFun, order, weighted) := block(
+  [varsC, varsP, basisC, basisP, basisConstant, vars, modal, nodal, nb,
+   fun, mass_c, entry, coef, weight, out, i, j, k],
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x.lisp")),
+  vars  : varsC,
+  modal : basisC[order],
+  nodal : getNodalBasis(basisFun, dim, order),
+  nb    : length(nodal),
+  fun   : sconcat(funcNm, if weighted then "_mass_weighted" else "_mass"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *weight, double *out) {~%", fun),
+  mass_c : [],
+  for i : 1 thru nb do (
+    for j : 1 thru nb do (
+      entry : 0,
+      if weighted then (
+        for k : 1 thru nb do (
+          coef  : radcan(innerProd(vars, modal[k], nodal[i], nodal[j])),
+          entry : entry + coef*weight[k-1]
+        )
+      ) else (
+        entry : radcan(innerProd(vars, 1, nodal[i], nodal[j]))
+      ),
+      mass_c : endcons(entry, mass_c)
+    )
+  ),
+  writeCExprsWithZeros1(out, mass_c),
+  printf(fh, "}~%~%")
+)$
+
+/* Source vector, integrating the weighted DG product without truncation. */
+generate_fem_proj_src(fh, funcNm, dim, basisFun, order, weighted) := block(
+  [varsC, varsP, basisC, basisP, basisConstant, vars, modal, nodal, nb,
+   fun, src_c, entry, coef, weight, rhs, out, i, j, k],
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x.lisp")),
+  vars  : varsC,
+  modal : basisC[order],
+  nodal : getNodalBasis(basisFun, dim, order),
+  nb    : length(nodal),
+  fun   : sconcat(funcNm, if weighted then "_src_weighted" else "_src"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *weight, const double *rhs, double *out) {~%", fun),
+  src_c : [],
+  for i : 1 thru nb do (
+    entry : 0,
+    for j : 1 thru nb do (
+      if weighted then (
+        for k : 1 thru nb do (
+          coef  : radcan(innerProd(vars, modal[k], nodal[i], modal[j])),
+          entry : entry + coef*rhs[j-1]*weight[k-1]
+        )
+      ) else (
+        entry : entry + radcan(innerProd(vars, 1, nodal[i], modal[j]))*rhs[j-1]
+      )
+    ),
+    src_c : endcons(entry, src_c)
+  ),
+  writeCExprsWithZeros1(out, src_c),
+  printf(fh, "}~%~%")
+)$
+
+/* Common emitter for a nodal/modal transformation matrix. */
+fem_proj_transform(fh, funcNm, transform) := block(
+  [nb, out_c, entry, input, out, i, j],
+  nb : length(transform),
+  printf(fh, "GKYL_CU_DH void ~a(const double *input, double *out) {~%", funcNm),
+  out_c : [],
+  for i : 1 thru nb do (
+    entry : 0,
+    for j : 1 thru nb do entry : entry + transform[i][j]*input[j-1],
+    out_c : endcons(entry, out_c)
+  ),
+  writeCExprsWithZeros1(out, out_c),
+  printf(fh, "}~%~%")
+)$
+
+/* Evaluate the DG expansion at FEM nodes, including boundary nodes. */
+generate_fem_proj_eval(fh, funcNm, dim, basisFun, order) := block(
+  [varsC, varsP, basisC, basisP, basisConstant, nodes, evalmat],
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x.lisp")),
+  nodes   : args(getNodes(basisFun, dim, order)),
+  evalmat : evAtNodes(basisC[order], nodes, varsC),
+  fem_proj_transform(fh, sconcat(funcNm, "_eval"), evalmat)
+)$
+
+/* Reconstruct modal DG coefficients from the continuous nodal solution. */
+generate_fem_proj_sol(fh, funcNm, dim, basisFun, order) := block(
+  [invmat],
+  invmat : calcNodToMod(basisFun, dim, order),
+  fem_proj_transform(fh, sconcat(funcNm, "_sol"), invmat)
+)$
