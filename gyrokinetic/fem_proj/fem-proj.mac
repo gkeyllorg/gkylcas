@@ -80,7 +80,7 @@ generate_fem_proj_src(fh, funcNm, dim, basisFun, order, weighted) := block(
   modal : basisC[order],
   nodal : getNodalBasis(basisFun, dim, order),
   nb    : length(nodal),
-  fun   : sconcat(funcNm, if weighted then "_src_weighted" else "_src"),
+  fun   : sconcat(funcNm, if weighted then "_src_weighted" else "_src_noweight"),
   printf(fh, "GKYL_CU_DH void ~a(const double *weight, const double *rhs, double *out) {~%", fun),
   src_c : [],
   for i : 1 thru nb do (
