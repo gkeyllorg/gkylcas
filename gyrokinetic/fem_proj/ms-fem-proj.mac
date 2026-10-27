@@ -46,8 +46,7 @@ for bInd : 1 thru length(bName) do (
         generate_fem_proj_src(fh, funcName, c, bName[bInd], polyOrder, weighted)
       ),
 
-      /* Boundary evaluation and solution reconstruction. */
-      generate_fem_proj_eval(fh, funcName, c, bName[bInd], polyOrder),
+      /* Solution reconstruction. */
       generate_fem_proj_sol(fh, funcName, c, bName[bInd], polyOrder),
       close(fh)
     )
