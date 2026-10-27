@@ -1,5 +1,5 @@
-/* Numbering in cell-ownership order (last coordinate fastest). */
-   Only general basis/node utilities are used; no Poisson generator is loaded.
+/* Numbering in cell-ownership order (last coordinate fastest).
+   Only general basis/node utilities are used; no Poisson generator is loaded. */
 load(stringproc)$
 
 /* Bit d-1 identifies periodic or upper-boundary directions. */

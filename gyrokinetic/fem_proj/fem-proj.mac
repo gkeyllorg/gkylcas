@@ -34,7 +34,7 @@ generate_fem_proj_mass(fh, funcNm, dim, basisFun, order, weighted) := block(
   modal : basisC[order],
   nodal : getNodalBasis(basisFun, dim, order),
   nb    : length(nodal),
-  fun   : sconcat(funcNm, if weighted then "_mass_weighted" else "_mass"),
+  fun   : sconcat(funcNm, if weighted then "_mass_weighted" else "_mass_noweight"),
   printf(fh, "GKYL_CU_DH void ~a(const double *weight, double *out) {~%", fun),
   mass_c : [],
   for i : 1 thru nb do (

@@ -44,10 +44,10 @@ for bInd : 1 thru length(bName) do (
       ),
 
       /* Consistent mass and source kernels, with unity or DG weights. */
-      for suffix in ["", "_weighted"] do (
+      for suffix in ["_noweight", "_weighted"] do (
         printf(fh, "GKYL_CU_DH void ~a_mass~a(const double *weight, double *out);~%", funcName, suffix),
         printf(fh, "GKYL_CU_DH void ~a_src~a(const double *weight, const double *rhs, double *out);~%",
-          funcName, if suffix = "" then "_noweight" else suffix)
+          funcName, suffix)
       ),
 
       /* Boundary evaluation and solution reconstruction. */
