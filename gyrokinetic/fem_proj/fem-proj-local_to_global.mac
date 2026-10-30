@@ -1,0 +1,98 @@
+/* Numbering in cell-ownership order (last coordinate fastest).
+   Only general basis/node utilities are used; no Poisson generator is loaded. */
+load(stringproc)$
+
+/* Bit d-1 identifies periodic or upper-boundary directions. */
+fem_proj_index_bit(mask, d) := mod(floor(mask/2^(d-1)), 2)$
+
+/* Match the descriptive boundary suffixes used by the FEM Poisson kernels. */
+fem_proj_l2g_suffix(dim, periodicMask, upperMask) := block(
+  [suffix : "", coord : ["x", "y", "z"], d],
+  for d : 1 thru dim do (
+    suffix : sconcat(suffix, if fem_proj_index_bit(upperMask,d)=1 then "_up" else "_in",
+      coord[d], if fem_proj_index_bit(periodicMask,d)=1 then "_periodic" else "_nonperiodic", coord[d])
+  ),
+  return(suffix)
+)$
+
+/* A cell owns a node unless it lies on an upper face that the cell does not own.
+   upper[d]=1 permits that face at a nonperiodic domain boundary. */
+fem_proj_owned_count(nodes, upper) := block(
+  [count : 0, keep, node, d],
+  for node in nodes do (
+    keep : 1,
+    for d : 1 thru length(upper) do if node[d]=1 then keep : keep*upper[d],
+    count : count+keep
+  ),
+  return(expand(count))
+)$
+
+/* Count nodes in preceding cells, summing complete rows/planes in every dimension.
+   Earlier coordinates are fixed at the owner cell; later ones span the domain.
+   This construction is identical in 1D, 2D and 3D. */
+fem_proj_owner_offset(nodes, dim, periodicMask) := block(
+  [offset : 0, flags, multiplicity, d, j, mask, bit],
+  for d : 1 thru dim do (
+    for mask : 0 thru 2^(dim-d)-1 do (
+      flags : makelist(0,j,1,dim),
+      for j : 1 thru d-1 do flags[j] : upper[j-1],
+      multiplicity : 1,
+      for j : d+1 thru dim do (
+        bit : fem_proj_index_bit(mask,j-d),
+        flags[j] : bit*(1-fem_proj_index_bit(periodicMask,j)),
+        if bit=0 then multiplicity : multiplicity*(num_cells[j-1]-1)
+      ),
+      offset : offset+owner[d-1]*multiplicity*fem_proj_owned_count(nodes,flags)
+    )
+  ),
+  return(expand(offset))
+)$
+
+/* Generate final global FEM indices. The zero-based input cell is specialized by
+  periodicity and upper-boundary flags.  Periodic wrapping precedes owner
+  classification, including one-cell directions. */
+generate_fem_proj_local_to_global(fh, funcNm, dim, basisFun, order) := block(
+  [nodes, periodicMask, upperMask, suffix, offset, localNode, rank, prefixNodes,
+   n, d, nodeIndex, owner, upper, num_cells],
+
+  nodes : args(getNodes(basisFun, dim, order)),
+
+  for periodicMask : 0 thru 2^dim-1 do (
+
+    offset : fem_proj_owner_offset(nodes, dim, periodicMask),
+
+    for upperMask : 0 thru 2^dim-1 do (
+
+      suffix : fem_proj_l2g_suffix(dim, periodicMask, upperMask),
+      printf(fh, "GKYL_CU_DH void ~a_local_to_global~a(const int *num_cells, const int *idx, long *global_idx) {~%", funcNm, suffix),
+      printf(fh, "  long owner[~a];~%  int upper[~a];~%", dim, dim),
+
+      for n : 1 thru length(nodes) do (
+
+        localNode : copylist(nodes[n]),
+
+        for d : 1 thru dim do (
+          if nodes[n][d]=1 and fem_proj_index_bit(upperMask,d)=0 then (
+            printf(fh, "  owner[~a] = (long)idx[~a]+1;~%", d-1, d-1),
+            localNode[d] : -1
+          ) elseif nodes[n][d]=1 and fem_proj_index_bit(periodicMask,d)=1 then (
+            printf(fh, "  owner[~a] = 0;~%", d-1),
+            localNode[d] : -1
+          ) else (
+            printf(fh, "  owner[~a] = idx[~a];~%", d-1, d-1)
+          ),
+          if fem_proj_index_bit(periodicMask,d)=1 then (
+            printf(fh, "  upper[~a] = 0;~%", d-1)
+          ) else (
+            printf(fh, "  upper[~a] = owner[~a] == num_cells[~a]-1;~%", d-1, d-1, d-1)
+          )
+        ),
+        nodeIndex : sublist_indices(nodes,lambda([node],node=localNode))[1],
+        prefixNodes : makelist(nodes[d],d,1,nodeIndex-1),
+        rank : fem_proj_owned_count(prefixNodes,makelist(upper[d-1],d,1,dim)),
+        printf(fh, "  global_idx[~a] = ~a;~%", n-1, expand(offset+rank))
+      ),
+      printf(fh, "}~%~%")
+    )
+  )
+)$
