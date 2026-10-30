@@ -1,16 +1,76 @@
-/* Generate kernels for updater averaging a gkyl_array in given dimensions .*/
+/* Generate kernels for the updater averaging a gkyl_array over a subset of
+   its dimensions. */
 
 load("core/array_average/array_average.mac")$
 
 /* ...... USER INPUTS........ */
 
-/* Serendipity basis. */
-polyOrder : 1$
-basisType : "ser"$
-/* Out file names */
-cfname : "~/max-out/array_average_kernels.c"$
-hfname : "~/max-out/gkyl_array_average_kernels.h"$
+/* Conf-space serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Phase-space serendipity basis (p=2 only, p=1 uses the hybrid bases). */
+minPolyOrder_SerPhase : 2$
+maxPolyOrder_SerPhase : 2$
+/* Only generate p=2 phase-space kernels up to this cdim. */
+maxCdim_SerPhase : 2$
+
+/* Gyrokinetic and Vlasov hybrid bases (p=1 only). */
+minCdim_Hyb : 1$
+maxCdim_Hyb : 3$
 
 /* ...... END OF USER INPUTS........ */
 
-array_average(polyOrder,basisType,cfname,hfname)$
+/* Vdim possibilities for each of Cdim=[1,2,3]. */
+gkVdims : [[1,2], [2], [2]]$
+vlasovVdims : [[1,2,3], [2,3], [3]]$
+
+outDir : "~/max-out/"$
+
+/* Header shared by all kernel files. */
+fhHeader : openw(sconcat(outDir, "gkyl_array_average_kernels.h"))$
+printf(fhHeader, "#pragma once~%~%")$
+printf(fhHeader, "#include <gkyl_util.h>~%")$
+printf(fhHeader, "EXTERN_C_BEG~%~%")$
+
+/* Conf-space kernels. */
+for cd : minCdim_Ser thru maxCdim_Ser do (
+  fh : openw(sconcat(outDir, "array_average_", cd, "x_ser.c")),
+  printf(fh, "#include <gkyl_array_average_kernels.h>~%~%"),
+  for polyOrder : minPolyOrder_Ser thru maxPolyOrder_Ser do (
+    genArrayAverageKernels(fh, fhHeader, cd, 0, "ser", polyOrder)
+  ),
+  close(fh)
+)$
+
+/* Phase-space kernels. The p=2 serendipity bases of gyrokinetics and Vlasov
+   are the same, so they are generated once. */
+for cd : minCdim_Hyb thru maxCdim_Hyb do (
+  for vd in gkVdims[cd] do (
+    fh : openw(sconcat(outDir, "array_average_", cd, "x", vd, "v_gkhyb.c")),
+    printf(fh, "#include <gkyl_array_average_kernels.h>~%~%"),
+    genArrayAverageKernels(fh, fhHeader, cd, vd, "gkhyb", 1),
+    close(fh)
+  ),
+  for vd in vlasovVdims[cd] do (
+    fh : openw(sconcat(outDir, "array_average_", cd, "x", vd, "v_hyb.c")),
+    printf(fh, "#include <gkyl_array_average_kernels.h>~%~%"),
+    genArrayAverageKernels(fh, fhHeader, cd, vd, "hyb", 1),
+    close(fh)
+  ),
+  if cd <= maxCdim_SerPhase then (
+    for vd in unique(append(gkVdims[cd], vlasovVdims[cd])) do (
+      fh : openw(sconcat(outDir, "array_average_", cd, "x", vd, "v_ser.c")),
+      printf(fh, "#include <gkyl_array_average_kernels.h>~%~%"),
+      for polyOrder : minPolyOrder_SerPhase thru maxPolyOrder_SerPhase do (
+        genArrayAverageKernels(fh, fhHeader, cd, vd, "ser", polyOrder)
+      ),
+      close(fh)
+    )
+  )
+)$
+
+printf(fhHeader, "~%EXTERN_C_END~%")$
+close(fhHeader)$

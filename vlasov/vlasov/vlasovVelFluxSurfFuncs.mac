@@ -424,17 +424,19 @@ calcNodalLaxToModalVelFlux(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, rep
     (dir-1)*NK),
 
   /* CFL finalizer: converts the node-loop's alpha_max reduction into the
-     stable time-step estimate (kernel-specific jacobian handling). */
+     stable time-step estimate (kernel-specific jacobian handling). The
+     factor (2p+1)/2 uses the velocity-space order: the tensor p=1 hybrid
+     is p=2 in velocity. */
   vid : vidx(cdim,vdim),
   printf(fh, "GKYL_CU_DH double ~a_cfl(const double *dxv, const double *jacob_vel_surf_l, const double *jacob_vel_surf_r, double alpha_max) ~%{ ~%", funcNm),
   printf(fh, "  double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]),
   if (rep = "cubic") then (
     printf(fh, "  const double *jacob_vel_surf_~a = &jacob_vel_surf_r[~a]; ~%", vlabels[dir], nPts*(dir-1)),
-    printf(fh, "  return ~a*~a*alpha_max/(~a);~%", float(0.5*(2*polyOrder+1)), dv1[dir], float(expand(jacob_edge[dir])))
+    printf(fh, "  return ~a*~a*alpha_max/(~a);~%", float(0.5*(2*vlasovPVel(basisFun, polyOrder)+1)), dv1[dir], float(expand(jacob_edge[dir])))
   )
   else (
     printf(fh, "  const double jacob_vel_surf_min = fmin(jacob_vel_surf_l[~a], jacob_vel_surf_r[~a]); ~%", nPts*(dir-1), nPts*(dir-1)),
-    printf(fh, "  return ~a*~a*alpha_max/jacob_vel_surf_min;~%", float(0.5*(2*polyOrder+1)), dv1[dir])
+    printf(fh, "  return ~a*~a*alpha_max/jacob_vel_surf_min;~%", float(0.5*(2*vlasovPVel(basisFun, polyOrder)+1)), dv1[dir])
   ),
   printf(fh, "} ~%~%"),
 
