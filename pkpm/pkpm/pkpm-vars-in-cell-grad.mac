@@ -1,0 +1,66 @@
+/* pkpm-vars-in-cell-grad.mac ------------------------------------------------------
+   In-cell gradient of the frame variables of the p=1 PKPM solver, with the blend-weighted lift of
+   each face jump.
+
+   pkpm_vars_in_cell_grad_<dir>_<c>x_ser_p1(dxv, jacob_pos, blend_lo, blend_up, q_l, q_c, q_r, grad)
+     Writes the p=1 expansion of d_dir q_j, j = x, y, z, into the block
+     grad[(dir*3 + j) NC ...] (the full array holds cdim x 3 expansions) from
+
+       <psi_k, d_dir q_j> = dx1 [ psi_k(+1) qhat_r - psi_k(-1) qhat_l - <d_xi psi_k, q_c> ],
+       qhat_r = q_c(+1) + blend_up/2 (q_r(-1) - q_c(+1)),
+       qhat_l = q_c(-1) - blend_lo/2 (q_c(-1) - q_l(+1)).
+
+     blend_lo/up are the weights of the label-paired flux in the lower/upper face of the cell
+     (gkyl_dg_pkpm_remap_flux_surf). The remap maps the jumps of the frame exactly at a face, so
+     its share (1 - blend) of each jump belongs to the face and the volume term sees none of it;
+     the label-paired flux does not, so its share blend of the jump is lifted into the volume. At
+     blend = 0 this is the in-cell gradient; at blend = 1 the weak (surface-averaged) gradient. */
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("pkpm/pkpm/pkpm-cas-util.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcPKPMVarsInCellGrad(dir, fh, funcNm, cdim) := block(
+  [varsC, bC, NC, cv, surfVars, j, k, ql_e, qc_e, qr_e, qhat_r, qhat_l, vol, sl, sr, g, cvarsG],
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis("ser", cdim, 1),
+  cvarsG : [x, y, z],
+  NC : length(bC),
+  cv : varsC[dir],
+  surfVars : delete(cv, varsC),
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *dxv, const double *jacob_pos, double blend_lo, double blend_up,
+  const double *q_l, const double *q_c, const double *q_r, double* GKYL_RESTRICT grad) ~%{ ~%", funcNm),
+  printf(fh, "  // dxv[NDIM]: Cell spacing (computational). ~%"),
+  printf(fh, "  // jacob_pos: Position-map Jacobian per configuration direction (cdim blocks of 2 equal entries). ~%"),
+  printf(fh, "  // blend_lo/up: Weight of the label-paired flux in the lower/upper face of direction ~a. ~%", cv),
+  printf(fh, "  // q_l/q_c/q_r: Three-component field in the left/current/right cell in direction ~a. ~%", cv),
+  printf(fh, "  // grad:      Output gradient, block of direction ~a: [d_~a qx, d_~a qy, d_~a qz]. ~%", cv, cv, cv, cv),
+  printf(fh, "  const double dx1 = 2.0/(dxv[~a]*jacob_pos[~a]); ~%", dir-1, 2*(dir-1)),
+  for j : 1 thru 3 do (
+    printf(fh, "  const double *q~a_l = &q_l[~a]; ~%", cvarsG[j], (j-1)*NC),
+    printf(fh, "  const double *q~a_c = &q_c[~a]; ~%", cvarsG[j], (j-1)*NC),
+    printf(fh, "  const double *q~a_r = &q_r[~a]; ~%", cvarsG[j], (j-1)*NC),
+    printf(fh, "  double *grad_q~a = &grad[~a]; ~%", cvarsG[j], ((dir-1)*3 + (j-1))*NC)
+  ),
+  printf(fh, " ~%"),
+  for j : 1 thru 3 do (
+    ql_e : doExpand1(concat(q, cvarsG[j], "_l"), bC),
+    qc_e : doExpand1(concat(q, cvarsG[j], "_c"), bC),
+    qr_e : doExpand1(concat(q, cvarsG[j], "_r"), bC),
+    qhat_r : subst(cv = 1, qc_e) + blend_up/2*(subst(cv = -1, qr_e) - subst(cv = 1, qc_e)),
+    qhat_l : subst(cv = -1, qc_e) - blend_lo/2*(subst(cv = -1, qc_e) - subst(cv = 1, ql_e)),
+    vol : calcInnerProdList(varsC, 1, diff(bC, cv), qc_e),
+    if cdim > 1 then (
+      sr : calcInnerProdList(surfVars, 1, subst(cv = 1, bC), qhat_r),
+      sl : calcInnerProdList(surfVars, 1, subst(cv = -1, bC), qhat_l)
+    ) else (
+      sr : makelist(subst(cv = 1, bC[k])*qhat_r, k, 1, NC),
+      sl : makelist(subst(cv = -1, bC[k])*qhat_l, k, 1, NC)
+    ),
+    g : dx1*(sr - sl - vol),
+    pkpmWriteDefExprs(fh, sconcat("grad_q", cvarsG[j]), g)
+  ),
+  printf(fh, "} ~%")
+)$

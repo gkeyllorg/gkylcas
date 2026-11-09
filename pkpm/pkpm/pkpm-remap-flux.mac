@@ -1,0 +1,104 @@
+/* pkpm-remap-flux.mac ------------------------------------------------------------
+   Kernels of the exact-remap configuration-space face flux of the eight PKPM blocks
+   X = [F, G, M0_perp (x, y, z), N_perp (x, y, z)] (gkyl_dg_pkpm_remap_flux_surf). The transverse
+   node count is a run-time input, so nothing here depends on it: the kernels work in the
+   orthonormal modal basis of the face,
+
+     psi_a(transverse) phi_m(w),  phi = [1/sqrt(2), sqrt(3/2) w, sqrt(5/2) (3 w^2 - 1)/2],
+
+   with psi_a the products over the transverse directions (ascending) of [1/sqrt(2), sqrt(3/2) s],
+   a = bit 0 for the first transverse direction and bit 1 for the second (psi_0 = 1 in 1x).
+
+   pkpm_remap_flux_trace_<dir>_<c>x1v_ser_p1(jdinv_l, jdinv_r, f_l, f_r, G_l, G_r)
+     The traces of the eight blocks of one velocity cell on both sides of a face of direction dir,
+     G_s[c*NT + a*3 + m] = int psi_a phi_m X_c(trace), the left cell at its upper edge and the
+     right cell at its lower edge, each scaled by 1/J_dir of its cell: the blocks are stored
+     Jacobian-weighted, and the flux needs (J X)/J_dir, as the face Jacobian J/J_dir times the
+     physical trace.
+
+   pkpm_remap_flux_store_<dir>_<c>x1v_ser_p1(wpsi, proj, flux)
+     Accumulate into the stored surface modes of one side of the face the Legendre projections
+     proj[m*8 + c] of the eight blocks at one transverse node:
+     flux[c*NK + k(a, m)] += wpsi[a] proj[m*8 + c]/coef_k, where wpsi[a] = (weight of the node)
+     psi_a(node) and coef_k the factor of the surface mode in the factorized basis. */
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("vlasov/vlasov/vlasov-basis.mac")$
+load("vlasov/vlasov/nodal-lax-emit.mac")$
+load("vlasov/vlasov/nodal-hll-emit.mac")$
+load("vlasov/vlasov/surf-eval-tables.mac")$
+load("pkpm/pkpm/pkpm-flux-tables.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* The orthonormal face modes: [psi list, phi list, flat list psi_a phi_m in the order a*3 + m]. */
+pkpmRemapFluxModes(surfCVars, vv) := block([modes, old, i, j, a, m, phi],
+  modes : [1],
+  for i : 1 thru length(surfCVars) do (
+    old : modes,
+    modes : append(makelist(old[j]/sqrt(2), j, 1, length(old)),
+                   makelist(old[j]*sqrt(3/2)*surfCVars[i], j, 1, length(old)))
+  ),
+  phi : [1/sqrt(2), sqrt(3/2)*vv, sqrt(5/2)*(3*vv^2 - 1)/2],
+  [modes, phi, flatten(makelist(makelist(modes[a]*phi[m], m, 1, 3), a, 1, length(modes)))]
+)$
+
+calcPKPMRemapFluxTrace(dir, fh, funcNm, cdim) := block(
+  [lb, pkC, pkV, pkbP, NP, cv, surfCVars, vv, md, tr, NT, ipVars, gl, gr, k],
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkV : copylist(lb[3]), pkbP : copylist(lb[6]),
+  NP : length(pkbP), cv : pkC[dir], surfCVars : delete(cv, pkC), vv : pkV[1],
+  md : pkpmRemapFluxModes(surfCVars, vv), tr : md[3], NT : length(tr),
+  ipVars : append(surfCVars, [vv]),
+  gl : calcInnerProdList(ipVars, 1, tr, subst(cv = 1, doExpand1(fl, pkbP))),
+  gr : calcInnerProdList(ipVars, 1, tr, subst(cv = -1, doExpand1(fr, pkbP))),
+  printf(fh, "#include <gkyl_pkpm_remap_flux_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(double jdinv_l, double jdinv_r, const double *f_l, const double *f_r,
+  double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r) ~%{ ~%", funcNm),
+  printf(fh, "  // jdinv_l/r: 1/J_~a of the left/right cell (J_~a: position-map Jacobian of direction ~a). ~%", cv, cv, cv),
+  printf(fh, "  // f_l/f_r:   Jacobian-weighted blocks J [F, G, M0_perp, N_perp] of one velocity cell in the left/right cell. ~%"),
+  printf(fh, "  // G_l/G_r:   Output modal traces of the eight blocks on the face of direction ~a: ~%", cv),
+  printf(fh, "  //            G[c*~a + a*3 + m], a transverse mode, m Legendre mode in w. ~%", NT),
+  printf(fh, "  for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "    const double *fl = &f_l[c*~a], *fr = &f_r[c*~a]; ~%", NP, NP),
+  printf(fh, "    double *gl = &G_l[c*~a], *gr = &G_r[c*~a]; ~%", NT, NT),
+  for k : 1 thru NT do
+    printf(fh, "    gl[~a] = jdinv_l*(~a); ~%", k-1, float(expand(gl[k]))),
+  for k : 1 thru NT do
+    printf(fh, "    gr[~a] = jdinv_r*(~a); ~%", k-1, float(expand(gr[k]))),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
+
+calcPKPMRemapFluxStore(dir, fh, funcNm, cdim) := block(
+  [lb, pkC, pkV, pkP, cv, surfCVars, vv, md, tr, bSurf, NK, ipVars, ip, idx, k, a, m, fact],
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkV : copylist(lb[3]), pkP : copylist(lb[5]),
+  cv : pkC[dir], surfCVars : delete(cv, pkC), vv : pkV[1],
+  md : pkpmRemapFluxModes(surfCVars, vv), tr : md[3],
+  bSurf : basisFromVars("tenhyb", delete(cv, pkP), 1),
+  NK : length(bSurf),
+  if NK # length(tr) then error("calcPKPMRemapFluxStore: surface basis size mismatch"),
+  ipVars : append(surfCVars, [vv]),
+  fact : laxFactorizeBasis(bSurf, if cdim > 1 then surfCVars else [prjdummy], pkV),
+  printf(fh, "#include <gkyl_pkpm_remap_flux_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *wpsi, const double *proj, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  printf(fh, "  // wpsi:  Weight of the transverse node times the transverse modes at the node. ~%"),
+  printf(fh, "  // proj:  Legendre projections in w of the eight blocks at the node: proj[m*8 + c]. ~%"),
+  printf(fh, "  // flux:  Accumulated surface modes of one side of the face: flux[c*~a + k]. ~%", NK),
+  printf(fh, "  for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "    double *out = &flux[c*~a]; ~%", NK),
+  for k : 1 thru NK do (
+    ip : calcInnerProdList(ipVars, 1, tr, bSurf[k]),
+    idx : sublist_indices(ip, lambda([z], is(abs(float(z) - 1.0) < 1.0e-12))),
+    if length(idx) # 1 then error("calcPKPMRemapFluxStore: surface mode is not a face mode"),
+    a : floor((idx[1] - 1)/3), m : (idx[1] - 1) - 3*a,
+    /* The stored modes are the integrals of the flux against the normalized shapes of the
+       factorized surface basis (b_k = coef_k chi psi; laxFactorizeBasis), not the orthonormal
+       coefficients, so the store divides by coef_k. */
+    printf(fh, "    out[~a] += ~a*wpsi[~a]*proj[~a + c]; ~%", k-1, float(1/fact[3][k]), a, m*8)
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$

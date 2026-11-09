@@ -11,17 +11,28 @@
          along q(t) = q_avg + t (q_v - q_avg) the condition rho e(q(t)) - eps e_avg rho(t) >= 0
          is a quadratic in t with a positive value at t = 0, so theta_2 is its smallest
          root in (0, 1) over the vertices that violate it.
-     The cell averages are untouched (conservation). Returns 0 when nothing was done, 1 when
-     the density slopes were scaled, 2 when all slopes were scaled, 3 for both, and -1 when
-     the cell average itself is inadmissible (nothing is done then). */
+     (3) ALL slopes are scaled jointly by theta_3 so that the thermal speed is positive at the
+         faces: xi = sqrt(2 e/(3 rho)) is formed at the 2^cdim Gauss-Legendre nodes and
+         interpolated to p=1 (pkpm_vars_prim), and that interpolant, evaluated at every vertex,
+         must be >= eps xi(q_avg). Its restriction to a face is multilinear, so the vertices
+         bound it on every face, where the configuration-space flux reads it. xi is not
+         polynomial in the scaling, so theta_3 is found by bisection (40 halvings) between 0
+         (the cell average, which satisfies the condition) and 1, only in cells that fail it.
+         Steps (1)-(2) keep the state admissible at the vertices, hence by convexity at the
+         nodes, so xi is real for every scaling.
+     The cell averages are untouched (conservation). Returns -1 when the cell average itself is
+     inadmissible (nothing is done then), and otherwise the sum of 1 (the density slopes were
+     scaled), 2 (all slopes were scaled for the internal energy) and 4 (all slopes were scaled
+     for the thermal speed), 0 when nothing was done. */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
 load(stringproc)$
 fpprec : 24$
 
 calcPKPMFluidPositivity(fh, funcNm, cdim, basisFun, polyOrder) := block(
-  [varsC, bC, NC, verts, NV, k, i, fld, flds, e, sub],
+  [varsC, bC, NC, verts, NV, k, i, j, n, fld, flds, e, sub, nodes, weights, NN, nodeSub, vertC],
 
   kill(varsC, bC),
   [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
@@ -32,14 +43,23 @@ calcPKPMFluidPositivity(fh, funcNm, cdim, basisFun, polyOrder) := block(
     verts : append(makelist(endcons(-1, v), v, verts), makelist(endcons(1, v), v, verts)),
   NV : length(verts),
   flds : ["rho", "Mx", "My", "Mz", "E"],
+  /* The Gauss-Legendre nodes of pkpm_vars_prim, and the weights vertC[k][n] that evaluate at
+     vertex k the p=1 projection (by this quadrature) of values given at the nodes n. */
+  [nodes, weights] : gaussOrdWeight(2, cdim),
+  NN : length(nodes),
+  vertC : makelist(makelist(
+    sum(subst(makelist(varsC[d] = verts[k][d], d, 1, cdim), bC[j])
+        *weights[n]*subst(makelist(varsC[d] = nodes[n][d], d, 1, cdim), bC[j]), j, 1, NC),
+    n, 1, NN), k, 1, NV),
 
   printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
   printf(fh, "#include <math.h> ~%"),
   printf(fh, "GKYL_CU_DH int ~a(double eps, double* GKYL_RESTRICT fluid) ~%{ ~%", funcNm),
   printf(fh, "  // eps:   Relative floor: the vertex density and internal energy are kept above eps times the cell values. ~%"),
   printf(fh, "  // fluid: In/out fluid state [rho, rho ux, rho uy, rho uz, E]; the slopes are scaled toward the cell averages. ~%"),
-  printf(fh, "  // Returns 0 (untouched), 1 (density slopes scaled), 2 (all slopes scaled for the internal energy), ~%"),
-  printf(fh, "  // 3 (both) or -1 (inadmissible cell average: nothing done). ~%"),
+  printf(fh, "  // Returns -1 (inadmissible cell average: nothing done), or the sum of 1 (density slopes scaled), ~%"),
+  printf(fh, "  // 2 (all slopes scaled for the internal energy) and 4 (all slopes scaled for the thermal speed at the ~%"),
+  printf(fh, "  // vertices), 0 when untouched. ~%"),
   for i : 1 thru 5 do
     printf(fh, "  double *~a = &fluid[~a]; ~%", flds[i], (i-1)*NC),
   printf(fh, " ~%"),
@@ -100,6 +120,46 @@ calcPKPMFluidPositivity(fh, funcNm, cdim, basisFun, polyOrder) := block(
   for i : 1 thru 5 do
     printf(fh, "    for (int i = 1; i < ~a; ++i) ~a[i] *= theta; ~%", NC, flds[i]),
   printf(fh, "    flag |= 2; ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  // (3) Thermal speed: scale all slopes so that the p=1 interpolant of xi = sqrt(2 e/(3 rho)) from the ~%"),
+  printf(fh, "  // ~a Gauss-Legendre nodes (pkpm_vars_prim) is >= eps xi(q_avg) at every vertex. Bisection on the scaling t. ~%", NN),
+  printf(fh, "  const double xi_min = eps*sqrt(2.0*e_avg/(3.0*rho_avg)); ~%"),
+  printf(fh, "  // Deviations of the state from the cell averages at the nodes (the slopes after steps 1-2). ~%"),
+  printf(fh, "  double dq_n[5][~a]; ~%", NN),
+  for i : 1 thru 5 do (
+    for n : 1 thru NN do (
+      nodeSub : makelist(varsC[d] = nodes[n][d], d, 1, cdim),
+      e : simplode(makelist(sconcat("(", float(subst(nodeSub, bC[j])), ")*", flds[i], "[", j-1, "]"), j, 2, NC), " + "),
+      printf(fh, "  dq_n[~a][~a] = ~a; ~%", i-1, n-1, e)
+    )
+  ),
+  printf(fh, "  double lo = 0.0, hi = 1.0; ~%"),
+  printf(fh, "  int scale = 0; ~%"),
+  printf(fh, "  for (int it = 0; it <= 40; ++it) { ~%"),
+  printf(fh, "    const double t = it == 0 ? 1.0 : 0.5*(lo + hi); ~%"),
+  printf(fh, "    double xi_n[~a]; ~%", NN),
+  printf(fh, "    for (int n = 0; n < ~a; ++n) { ~%", NN),
+  printf(fh, "      const double r = rho_avg + t*dq_n[0][n], mx = Mx_avg + t*dq_n[1][n], my = My_avg + t*dq_n[2][n]; ~%"),
+  printf(fh, "      const double mz = Mz_avg + t*dq_n[3][n], en = E_avg + t*dq_n[4][n]; ~%"),
+  printf(fh, "      xi_n[n] = sqrt(fmax((2.0*en - (mx*mx + my*my + mz*mz)/r)/(3.0*r), 0.0)); ~%"),
+  printf(fh, "    } ~%"),
+  for k : 1 thru NV do (
+    e : simplode(makelist(sconcat("(", float(vertC[k][n]), ")*xi_n[", n-1, "]"), n, 1, NN), " + "),
+    if k = 1 then printf(fh, "    double g = ~a; ~%", e)
+    else printf(fh, "    g = fmin(g, ~a); ~%", e)
+  ),
+  printf(fh, "    if (it == 0) { ~%"),
+  printf(fh, "      if (g >= xi_min) break; ~%"),
+  printf(fh, "      scale = 1; ~%"),
+  printf(fh, "      continue; ~%"),
+  printf(fh, "    } ~%"),
+  printf(fh, "    if (g >= xi_min) lo = t; else hi = t; ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  if (scale) { ~%"),
+  for i : 1 thru 5 do
+    printf(fh, "    for (int i = 1; i < ~a; ++i) ~a[i] *= lo; ~%", NC, flds[i]),
+  printf(fh, "    flag |= 4; ~%"),
   printf(fh, "  } ~%"),
   printf(fh, "  return flag; ~%"),
   printf(fh, "} ~%")

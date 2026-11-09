@@ -41,7 +41,7 @@ calcPKPMVarsDiag(fh, funcNm, cdim) := block(
   printf(fh, "  // bvar:             Magnetic field unit vector [bx, by, bz]. ~%"),
   printf(fh, "  // grad_b:           Weak gradient of b, [d_i bx, d_i by, d_i bz] per direction i. ~%"),
   printf(fh, "  // u:                Flow velocity [ux, uy, uz]. ~%"),
-  printf(fh, "  // grad_u:           Weak gradient of u, [d_i ux, d_i uy, d_i uz] per direction i. ~%"),
+  printf(fh, "  // grad_u:           Gradient of u of the sources (in-cell, plus the blended face lift), [d_i ux, d_i uy, d_i uz] per direction i. ~%"),
   printf(fh, "  // theta:            T_perp/T = M0(G). ~%"),
   printf(fh, "  // alpha_0:          Pressure force a_P/xi closing the first moment. ~%"),
   printf(fh, "  // xi:               Thermal speed [xi, xi^2]. ~%"),
