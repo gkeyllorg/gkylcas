@@ -85,7 +85,7 @@ calcGKCrossPrimMomsBGK(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "  double dUparSq[~a] = {0.0}; ~%", NC), 
   printf(fh, "  binop_mul_~ad_~a_p~a(dUpar, dUpar, dUparSq); ~%", cdim, basisFun, polyOrder),
 
-  printf(fh, "  const double dUparSq_fac = (m_r-0.25*deltaTbetap1*mSum/vdimPhys);~%"),
+  printf(fh, "  const double dUparSq_fac = (m_r-0.25*deltaTbetap1*mSum);~%"),
   for i : 1 thru NC do (
     printf(fh, "  vtsq_sr[~a] = vtsq_s[~a] + deltaTbetap1/(vdimPhys*mSum)*(dTemp[~a]+dUparSq_fac*dUparSq[~a]); ~%", i-1, i-1, i-1, i-1)
   ),
