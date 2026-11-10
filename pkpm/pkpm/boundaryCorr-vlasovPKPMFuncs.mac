@@ -58,8 +58,11 @@ calcBoundaryIntegral(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
     e : apply(collectterms, param_v),
     printf(fh, "    ~a += ~a; ~%", out[i-1], e)
   ),
+  /* Write the expression, not out[i]: out accumulates over both velocity edges. */
   for i : 1 thru NC do (
-    printf(fh, "    ~a += ~a; ~%", out[NC+i-1], vBoundary[0]*out[i-1])
+    param_v : cons(expr[i], [mass]),
+    e : apply(collectterms, param_v),
+    printf(fh, "    ~a += ~a; ~%", out[NC+i-1], vBoundary[0]*e)
   ),
 
   printf(fh, "  } ~%  else if (edge == GKYL_VX_UPPER) {~%"),
@@ -71,7 +74,9 @@ calcBoundaryIntegral(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
     printf(fh, "    ~a += ~a; ~%", out[i-1], e)
   ),
   for i : 1 thru NC do (
-    printf(fh, "    ~a += ~a; ~%", out[NC+i-1], vBoundary[1]*out[i-1])
+    param_v : cons(expr[i], [mass]),
+    e : apply(collectterms, param_v),
+    printf(fh, "    ~a += ~a; ~%", out[NC+i-1], vBoundary[1]*e)
   ),
   
   printf(fh, "  }~%"),

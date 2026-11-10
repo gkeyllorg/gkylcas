@@ -1,0 +1,20 @@
+/* Generate the header with the configuration-nodal, velocity-modal conversions of the PKPM
+   collision kernels (gkyl_pkpm_coll_nodal.h). */
+load("pkpm/pkpm/pkpm-coll-nodal.mac")$
+
+/* ...... USER INPUTS........ */
+minCdim : 1$
+maxCdim : 3$
+/* ...... END OF USER INPUTS........ */
+
+fh : openw("~/max-out/gkyl_pkpm_coll_nodal.h")$
+printf(fh, "#pragma once ~%")$
+printf(fh, "// Generated (gkylcas/pkpm/pkpm/pkpm-coll-nodal.mac): conversions between the modal expansions and ~%")$
+printf(fh, "// the configuration-nodal, velocity-modal form of the collision kernels. The nodes are the ~%")$
+printf(fh, "// 2^cdim interior Gauss-Legendre points, node q having bit d set when x_d > 0. ~%")$
+printf(fh, "#include <gkyl_util.h> ~%~%")$
+for c : minCdim thru maxCdim do (
+  pkpmCollConf(fh, c),
+  pkpmCollPhase(fh, c)
+)$
+close(fh)$
