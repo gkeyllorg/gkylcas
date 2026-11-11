@@ -3,7 +3,7 @@
    where products of primitive factors are projected onto p=1, and the projections feed
    the output, never the update.
 
-   pkpm_vars_diag_<c>x_ser_p1(dxv, moms, fluid, bvar, grad_b, u, grad_u, theta, alpha_0, xi, c_h, fluid_io, pkpm_vars_io)
+   pkpm_vars_diag_<c>x_ser_p1(moms, fluid, bvar, grad_b, u, grad_u, theta, alpha_0, xi, c_h, fluid_io, pkpm_vars_io)
      with moms = [p_par, p_perp, q_par, q_perp] the coupling moments and fluid = [rho, M, E]:
      fluid_io     = [rho, M_x, M_y, M_z, P_xx + M_x u_x, P_xy + M_x u_y, P_xz + M_x u_z,
                      P_yy + M_y u_y, P_yz + M_y u_z, P_zz + M_z u_z, E]     (11 components)
@@ -18,7 +18,6 @@ load(stringproc)$
 fpprec : 24$
 
 cvars : [x, y, z]$
-dx1s : [dx10, dx11, dx12]$
 
 pkpmDiagLoad(cdim) := block([vb],
   kill(varsC, bC),
@@ -32,10 +31,9 @@ calcPKPMVarsDiag(fh, funcNm, cdim) := block(
   vb : pkpmDiagLoad(cdim), varsC : vb[1], bC : vb[2],
   NC : length(bC),
   printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
-  printf(fh, "GKYL_CU_DH void ~a(const double *dxv, const double *vlasov_pkpm_moms, const double *euler_pkpm,
+  printf(fh, "GKYL_CU_DH void ~a(const double *vlasov_pkpm_moms, const double *euler_pkpm,
   const double *bvar, const double *grad_b, const double *u, const double *grad_u, const double *theta, const double *alpha_0,
   const double *xi, const double *c_h, double* GKYL_RESTRICT fluid_io, double* GKYL_RESTRICT pkpm_vars_io) ~%{ ~%", funcNm),
-  printf(fh, "  // dxv[NDIM]:        Cell spacing. ~%"),
   printf(fh, "  // vlasov_pkpm_moms: Kinetic coupling moments [p_par, p_perp, q_par, q_perp]. ~%"),
   printf(fh, "  // euler_pkpm:       Fluid state [rho, rho ux, rho uy, rho uz, E]. ~%"),
   printf(fh, "  // bvar:             Magnetic field unit vector [bx, by, bz]. ~%"),
@@ -48,7 +46,6 @@ calcPKPMVarsDiag(fh, funcNm, cdim) := block(
   printf(fh, "  // c_h:              Heating rate closing the scalar second moment. ~%"),
   printf(fh, "  // fluid_io:         Output [rho, M_i, P_ij + M_i u_j, E] (11 components). ~%"),
   printf(fh, "  // pkpm_vars_io:     Output [u_x, u_y, u_z, T_perp/m, a_P, div b, bb:grad u, T_perp/m div b, xi, c] (10 components). ~%"),
-  for d : 1 thru cdim do printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", d-1, d-1),
   printf(fh, "  const double *rho = &euler_pkpm[~a]; ~%", 0*NC),
   printf(fh, "  const double *ppar = &vlasov_pkpm_moms[~a]; ~%", 0*NC),
   printf(fh, "  const double *pperp = &vlasov_pkpm_moms[~a]; ~%", 1*NC),
