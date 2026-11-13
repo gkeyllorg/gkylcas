@@ -1,0 +1,240 @@
+/* The PKPM Lenard Bernstein (Dougherty) operator at one configuration-space node: kernels in the
+   normalized parallel velocity alone, for the configuration-nodal, velocity-modal form of the
+   distributions (vlasov/conf_nodal/conf-nodal.mac). A kernel receives a pointer to the node's
+   velocity expansion of the first block; block b of the 8 PKPM blocks is stride values further,
+   and each block has the 3 Legendre modes of the 1V p=2 basis.
+
+   On every block h the operator is d_w[(nu w - nu u) h + nu vtsq d_w h], with zero flux at the
+   two ends of the velocity grid, plus the couplings local in w,
+     G:      2 (nu vtsq F - nu G),
+     M0_perp: -nu M0_perp,
+     N_perp:  4 nu vtsq M0_perp - 3 nu N_perp.
+   The node values nu, nu u and nu vtsq are inputs.
+
+   In a cell of centre wc and width dv, with eta in [-1, 1] and after two integrations by parts
+   of the diffusion term, the weak form for mode j is
+     (2/dv) { [a h]^ psi_j |_faces - int a h psi_j' }
+       + nu vtsq (2/dv)^2 { [psi_j h' - psi_j' h]_faces + int psi_j'' h },   a = nu w - nu u.
+   - Interior faces: [a h]^ is upwinded (the drag carries h towards w = u, so the upwind cell is
+     the one above the face where a >= 0), and h, h' are the value and slope at the face of the
+     polynomial recovered from the two cells sharing it.
+   - Ends of the grid: no drag flux and h' = 0; h is the cell's own value.
+   The kernels are those of gkyl_hyper_dg: a volume kernel (which also holds the int psi_j'' h
+   term and the couplings), a surface kernel for a cell with both neighbours, and a boundary
+   surface kernel for the cells at the two ends of the grid. */
+load(stringproc)$
+load("pkpm/pkpm/lbo-pkpm-blocks.mac")$
+fpprec : 24$
+
+/* Orthonormal Legendre modes of the velocity cell. */
+pkpmLBONodalBasis : [1/sqrt(2), sqrt(3/2)*eta, sqrt(5/8)*(3*eta^2 - 1)]$
+
+/* A C expression for sum_i coefs[i]*names[i], dropping zero coefficients. */
+pkpmLBONodalLinComb(coefs, names) := block(
+  [i, c, str, first],
+  str : "", first : true,
+  for i : 1 thru length(coefs) do (
+    c : float(coefs[i]),
+    if c # 0.0 then (
+      if first then (
+        str : sconcat(if c < 0.0 then "-" else "", string(abs(c)), "*", names[i])
+      ) else (
+        str : sconcat(str, if c < 0.0 then " - " else " + ", string(abs(c)), "*", names[i])
+      ),
+      first : false
+    )
+  ),
+  if first then str : "0.0",
+  return(str)
+)$
+
+/* Coefficients of the list of symbols syms in the expression expr (linear in them). */
+pkpmLBONodalCoefs(expr, syms) := block(
+  [ex],
+  ex : expand(expr),
+  return(makelist(coeff(ex, s), s, syms))
+)$
+
+/* Value and slope at the shared face (xi = 0) of the degree 5 polynomial with the three modes
+   of the left cell (xi in [-2, 0]) and of the right cell (xi in [0, 2]). Returns [r0, r1] as
+   expressions in hl[1..3] and hr[1..3]. */
+pkpmLBONodalRecovery() := block(
+  [cs, r, eqs, sol, j, bas],
+  bas : pkpmLBONodalBasis,
+  cs : makelist(concat(rc, m), m, 0, 5),
+  r : sum(cs[m+1]*xi^m, m, 0, 5),
+  eqs : append(
+    makelist(integrate(r*subst(eta = xi + 1, bas[j]), xi, -2, 0) = hl[j], j, 1, 3),
+    makelist(integrate(r*subst(eta = xi - 1, bas[j]), xi, 0, 2) = hr[j], j, 1, 3)),
+  sol : solve(eqs, cs)[1],
+  return([subst(sol, cs[1]), subst(sol, cs[2])])
+)$
+
+/* Declarations of the per-block pointers of the cells in names (C names of the cell pointers). */
+pkpmLBONodalBlockPtrs(fh, names, hnames) := block(
+  [i],
+  for i : 1 thru length(names) do
+    printf(fh, "    const double *~a = &~a[b*stride]; ~%", hnames[i], names[i])
+)$
+
+/* The fluxes at the face between the cells hlo (below) and hup (above): r0<sfx> = d2 times the
+   recovered value, r1<sfx> = (2/dv) a h_upwind + d2 times the recovered slope. hu and su are the
+   upwind cell's block pointer and the value of its odd mode at the face. */
+pkpmLBONodalFaceFlux(fh, sfx, hlo, hup, hu, su, af) := block(
+  [bas, r0, r1, syms, names],
+  bas : pkpmLBONodalBasis,
+  [r0, r1] : pkpmLBONodalRecovery(),
+  syms : [hl[1], hl[2], hl[3], hr[1], hr[2], hr[3]],
+  names : append(makelist(sconcat(hlo, "[", j, "]"), j, 0, 2), makelist(sconcat(hup, "[", j, "]"), j, 0, 2)),
+  printf(fh, "    const double r0~a = d2*(~a); ~%", sfx, pkpmLBONodalLinComb(pkpmLBONodalCoefs(r0, syms), names)),
+  printf(fh, "    const double r1~a = ~a*(~a*~a[0] + ~a*~a[1] + ~a*~a[2]) ~%", sfx, af,
+    float(bas[1]), hu, su, hu, float(subst(eta = 1, bas[3])), hu),
+  printf(fh, "      + d2*(~a); ~%", pkpmLBONodalLinComb(pkpmLBONodalCoefs(r1, syms), names))
+)$
+
+/* Coefficients [of r1, of r0] of the increment of mode j of the cell below a face (side = 1,
+   face at eta = 1) or above it (side = -1, face at eta = -1): side (psi_j r1 - psi_j' r0). */
+pkpmLBONodalFaceIncr(j, side) := block(
+  [bas, dbas],
+  bas : pkpmLBONodalBasis,
+  dbas : diff(bas, eta),
+  return([side*subst(eta = side, bas[j]), -side*subst(eta = side, dbas[j])])
+)$
+
+/* The upwind cell and the sign of its odd mode for a face with drag speed af. */
+pkpmLBONodalUpwind(fh, sfx, af, lo, up) := block(
+  [bas],
+  bas : pkpmLBONodalBasis,
+  printf(fh, "  const double *fu~a = ~a < 0.0 ? ~a : ~a; ~%", sfx, af, lo, up),
+  printf(fh, "  const double su~a = ~a < 0.0 ? ~a : ~a; ~%", sfx, af,
+    float(subst(eta = 1, bas[2])), float(subst(eta = -1, bas[2])))
+)$
+
+pkpmLBONodalArgs : "const double *w, const double *dxv, double nu, double nu_u, double nu_vtsq, int stride"$
+
+pkpmLBONodalComments(fh) := (
+  printf(fh, "  // w[1]:    Velocity cell centre. ~%"),
+  printf(fh, "  // dxv[1]:  Velocity cell width. ~%"),
+  printf(fh, "  // nu:      Collision frequency at the node. ~%"),
+  printf(fh, "  // nu_u:    Collision frequency times the drag velocity at the node. ~%"),
+  printf(fh, "  // nu_vtsq: Collision frequency times the thermal speed squared at the node. ~%"),
+  printf(fh, "  // stride:  Offset between the blocks [F_0, G_1, M0_perp (3), N_perp (3)] of a cell. ~%")
+)$
+
+/* The volume kernel: drag and diffusion volume terms on every block and the local couplings. */
+pkpmLBONodalVol(fh, funcNm) := block(
+  [bas, hc, h_e, a_e, drag_c, diff_c, j, names, k, d, nb],
+  bas : pkpmLBONodalBasis,
+  nb : length(pkpmLBOBlocks),
+  hc : [h[0], h[1], h[2]],
+  h_e : sum(hc[j]*bas[j], j, 1, 3),
+  /* (2/dv) a = a0 + a1 eta, with a0 = (2/dv) (nu wc - nu u) and a1 = nu. */
+  a_e : a0 + a1*eta,
+  drag_c : makelist(-integrate(a_e*h_e*diff(bas[j], eta), eta, -1, 1), j, 1, 3),
+  diff_c : makelist(d2*integrate(diff(bas[j], eta, 2)*h_e, eta, -1, 1), j, 1, 3),
+
+  printf(fh, "GKYL_CU_DH void ~a(~a, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, pkpmLBONodalArgs),
+  pkpmLBONodalComments(fh),
+  printf(fh, "  // f:       Velocity expansions of the blocks at the node. ~%"),
+  printf(fh, "  // out:     Incremented output. ~%"),
+  printf(fh, "  const double rdv = 2.0/dxv[0]; ~%"),
+  printf(fh, "  const double a0 = rdv*(nu*w[0] - nu_u), a1 = nu, d2 = nu_vtsq*rdv*rdv; ~%"),
+  printf(fh, "  for (int b = 0; b < ~a; ++b) { ~%", nb),
+  printf(fh, "    const double *h = &f[b*stride]; ~%"),
+  printf(fh, "    double *o = &out[b*stride]; ~%"),
+  names : ["a0*h[0]", "a0*h[1]", "a0*h[2]", "a1*h[0]", "a1*h[1]", "a1*h[2]", "d2*h[0]", "d2*h[1]", "d2*h[2]"],
+  for j : 1 thru 3 do (
+    d : expand(drag_c[j] + diff_c[j]),
+    if d # 0 then
+      printf(fh, "    o[~a] += ~a; ~%", j-1, pkpmLBONodalLinComb(
+        append(makelist(coeff(coeff(d, a0), hc[i]), i, 1, 3), makelist(coeff(coeff(d, a1), hc[i]), i, 1, 3),
+               makelist(coeff(coeff(d, d2), hc[i]), i, 1, 3)), names))
+  ),
+  printf(fh, "  } ~%"),
+  /* Couplings: storage order of the blocks is [F_0, G_1, M0 (3), N (3)]. */
+  printf(fh, "  const double *F_0 = &f[0], *G_1 = &f[stride]; ~%"),
+  printf(fh, "  double *out_G_1 = &out[stride]; ~%"),
+  printf(fh, "  for (int j = 0; j < 3; ++j) ~%"),
+  printf(fh, "    out_G_1[j] += 2.0*(nu_vtsq*F_0[j] - nu*G_1[j]); ~%"),
+  printf(fh, "  for (int k = 0; k < 3; ++k) { ~%"),
+  printf(fh, "    const double *M0 = &f[(2 + k)*stride], *N = &f[(5 + k)*stride]; ~%"),
+  printf(fh, "    double *out_M0 = &out[(2 + k)*stride], *out_N = &out[(5 + k)*stride]; ~%"),
+  printf(fh, "    for (int j = 0; j < 3; ++j) { ~%"),
+  printf(fh, "      out_M0[j] -= nu*M0[j]; ~%"),
+  printf(fh, "      out_N[j] += 4.0*nu_vtsq*M0[j] - 3.0*nu*N[j]; ~%"),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
+
+/* The surface kernel: the fluxes at the two faces of a cell with both neighbours. */
+pkpmLBONodalSurf(fh, funcNm) := block(
+  [j, cl, cr, nb],
+  nb : length(pkpmLBOBlocks),
+  printf(fh, "GKYL_CU_DH void ~a(~a, const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, pkpmLBONodalArgs),
+  pkpmLBONodalComments(fh),
+  printf(fh, "  // fl/fc/fr: Velocity expansions of the blocks at the node in the cell below, the cell and the cell above. ~%"),
+  printf(fh, "  // out:     Incremented output in the cell. ~%"),
+  printf(fh, "  const double rdv = 2.0/dxv[0]; ~%"),
+  printf(fh, "  const double d2 = nu_vtsq*rdv*rdv; ~%"),
+  printf(fh, "  // Drag speed (times 2/dv) at the lower and upper faces; the upwind cell is the one above a face where it is >= 0. ~%"),
+  printf(fh, "  const double af_l = rdv*(nu*(w[0] - 0.5*dxv[0]) - nu_u); ~%"),
+  printf(fh, "  const double af_r = rdv*(nu*(w[0] + 0.5*dxv[0]) - nu_u); ~%"),
+  pkpmLBONodalUpwind(fh, "_l", "af_l", "fl", "fc"),
+  pkpmLBONodalUpwind(fh, "_r", "af_r", "fc", "fr"),
+  printf(fh, "  for (int b = 0; b < ~a; ++b) { ~%", nb),
+  pkpmLBONodalBlockPtrs(fh, ["fl", "fc", "fr", "fu_l", "fu_r"], ["hl", "hc", "hr", "hu_l", "hu_r"]),
+  printf(fh, "    double *o = &out[b*stride]; ~%"),
+  pkpmLBONodalFaceFlux(fh, "_l", "hl", "hc", "hu_l", "su_l", "af_l"),
+  pkpmLBONodalFaceFlux(fh, "_r", "hc", "hr", "hu_r", "su_r", "af_r"),
+  /* The cell is above its lower face (side -1) and below its upper face (side 1). */
+  for j : 1 thru 3 do (
+    cl : pkpmLBONodalFaceIncr(j, -1),
+    cr : pkpmLBONodalFaceIncr(j, 1),
+    printf(fh, "    o[~a] += ~a; ~%", j-1, pkpmLBONodalLinComb(append(cl, cr), ["r1_l", "r0_l", "r1_r", "r0_r"]))
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
+
+/* The boundary surface kernel: the fluxes at the single interior face of a cell at an end of the
+   velocity grid, and the term - psi_j' h of the diffusion at that end, where the flux vanishes. */
+pkpmLBONodalBoundarySurf(fh, funcNm) := block(
+  [bas, dbas, j, c, side, nb],
+  bas : pkpmLBONodalBasis,
+  dbas : diff(bas, eta),
+  nb : length(pkpmLBOBlocks),
+  printf(fh, "GKYL_CU_DH void ~a(~a, int edge, const double *fedge, const double *fskin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, pkpmLBONodalArgs),
+  pkpmLBONodalComments(fh),
+  printf(fh, "  // edge:    -1 for the cell at the lower end of the velocity grid, 1 for the cell at the upper end. ~%"),
+  printf(fh, "  // fedge/fskin: Velocity expansions of the blocks at the node in the interior neighbour and in the cell (w, dxv are the cell's). ~%"),
+  printf(fh, "  // out:     Incremented output in the cell. ~%"),
+  printf(fh, "  const double rdv = 2.0/dxv[0]; ~%"),
+  printf(fh, "  const double d2 = nu_vtsq*rdv*rdv; ~%"),
+  for side : 1 thru 2 do (
+    /* side 1: lower end, interior face above the cell; side 2: upper end, face below it. */
+    if side = 1 then printf(fh, "  if (edge == -1) { ~%") else printf(fh, "  } else { ~%"),
+    printf(fh, "  const double af = rdv*(nu*(w[0] ~a 0.5*dxv[0]) - nu_u); ~%", if side = 1 then "+" else "-"),
+    if side = 1 then pkpmLBONodalUpwind(fh, "", "af", "fskin", "fedge")
+    else pkpmLBONodalUpwind(fh, "", "af", "fedge", "fskin"),
+    printf(fh, "  for (int b = 0; b < ~a; ++b) { ~%", nb),
+    pkpmLBONodalBlockPtrs(fh, ["fedge", "fskin", "fu"], ["he", "hs", "hu"]),
+    printf(fh, "    double *o = &out[b*stride]; ~%"),
+    if side = 1 then pkpmLBONodalFaceFlux(fh, "", "hs", "he", "hu", "su", "af")
+    else pkpmLBONodalFaceFlux(fh, "", "he", "hs", "hu", "su", "af"),
+    /* h at the end of the grid (eta = -1 lower, 1 upper), times d2. */
+    printf(fh, "    const double hw = d2*(~a); ~%", pkpmLBONodalLinComb(
+      subst(eta = (if side = 1 then -1 else 1), bas), ["hs[0]", "hs[1]", "hs[2]"])),
+    for j : 1 thru 3 do (
+      /* interior face: the cell is below it at the lower end (side 1), above it at the upper end;
+         end of the grid: - [psi_j h' - psi_j' h] at eta = -1 with h' = 0, or + [.] at eta = 1. */
+      c : append(pkpmLBONodalFaceIncr(j, if side = 1 then 1 else -1),
+                 [if side = 1 then subst(eta = -1, dbas[j]) else -subst(eta = 1, dbas[j])]),
+      if float(c[1]) # 0.0 or float(c[2]) # 0.0 or float(c[3]) # 0.0 then
+        printf(fh, "    o[~a] += ~a; ~%", j-1, pkpmLBONodalLinComb(c, ["r1", "r0", "hw"]))
+    ),
+    printf(fh, "  } ~%")
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$

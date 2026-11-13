@@ -1,0 +1,171 @@
+/* Conversions between modal DG expansions and the configuration-nodal, velocity-modal form
+   used by operators that act in velocity space alone (collisions) at each configuration-space
+   node. The configuration basis is p=1 and the nodes are the 2^cdim interior Gauss-Legendre
+   points x_d = +-1/sqrt(3), node q having bit d set when x_d > 0 (direction 0 fastest). The node
+   values of the p=1 basis are 2^(-cdim/2) times +-1, so the conversion is orthogonal, its inverse
+   is its transpose, and it factors into one sum/difference sweep per direction.
+
+   A phase-space basis must be the tensor product of the configuration basis and a velocity
+   basis (the hybrid basis is). Its nodal form is g[q*NV + j]: node q, velocity mode j of the NV
+   functions of the velocity factor, in the order they appear in the phase basis. Each node thus
+   holds a contiguous velocity-space expansion, and a cell holds as many values as its modal form. */
+load("core/modal-basis.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* Bits of the tensor index n in cdim directions, direction 0 first. */
+confNodalBits(n, cdim) := makelist(mod(floor(n/2^d), 2), d, 0, cdim-1)$
+
+/* 1-based index in the p=1 basis bas of the function linear in the variables with e[d] = 1 of
+   vars and constant in the others. */
+confNodalConfIndex(bas, vars, e) := block(
+  [i, d, match, found],
+  found : 0,
+  for i : 1 thru length(bas) do (
+    match : true,
+    for d : 1 thru length(vars) do (
+      if hipow(expand(bas[i]), vars[d]) # e[d] then match : false
+    ),
+    if match then found : i
+  ),
+  if found = 0 then error("confNodalConfIndex: no basis function found"),
+  return(found)
+)$
+
+/* Print "const double <nm>[<len>] = {...};" with the entries of the list vals. */
+confNodalPrintArray(fh, indent, nm, vals) := block(
+  [i],
+  printf(fh, "~aconst double ~a[~a] = {", indent, nm, length(vals)),
+  for i : 1 thru length(vals) do (
+    printf(fh, "~a~a", vals[i], if i < length(vals) then ", " else "")
+  ),
+  printf(fh, "};~%")
+)$
+
+/* One sum/difference sweep per direction over a tensor array of nv copies of 2^cdim entries.
+   forward: the modal-to-nodal sweep; otherwise its transpose. Leaves the result in t<cdim>. */
+confNodalSweeps(fh, indent, cdim, nv, forward) := block(
+  [ne, d, v, n, lo, hi, vals, a, b],
+  ne : 2^cdim,
+  for d : 0 thru cdim-1 do (
+    vals : makelist(0, i, 1, nv*ne),
+    for v : 0 thru nv-1 do (
+      for n : 0 thru ne-1 do (
+        if mod(floor(n/2^d), 2) = 0 then (
+          lo : v*ne + n,
+          hi : lo + 2^d,
+          a : sconcat("t", d, "[", lo, "]"),
+          b : sconcat("t", d, "[", hi, "]"),
+          if forward then (
+            vals[lo+1] : sconcat(a, "-", b),
+            vals[hi+1] : sconcat(a, "+", b)
+          ) else (
+            vals[lo+1] : sconcat(a, "+", b),
+            vals[hi+1] : sconcat(b, "-", a)
+          )
+        )
+      )
+    ),
+    confNodalPrintArray(fh, indent, sconcat("t", d+1), vals)
+  )
+)$
+
+/* Modal to nodal and nodal to modal for a p=1 configuration-space field. */
+confNodalConf(fhToNodal, fhToModal, nmToNodal, nmToModal, cdim) := block(
+  [varsC, bC, ne, modeMap, n, scale],
+  [varsC, bC] : loadBasis("Ser", cdim, 1),
+  ne : 2^cdim,
+  scale : float(1/sqrt(2)^cdim),
+  modeMap : makelist(confNodalConfIndex(bC, varsC, confNodalBits(n, cdim)) - 1, n, 0, ne-1),
+
+  printf(fhToNodal, "GKYL_CU_DH void ~a(const double *fmodal, double* GKYL_RESTRICT fnodal) ~%{ ~%", nmToNodal),
+  printf(fhToNodal, "  // fmodal: p=1 configuration-space expansion (~a coefficients). ~%", ne),
+  printf(fhToNodal, "  // fnodal: its values at the ~a interior Gauss-Legendre nodes. ~%", ne),
+  confNodalPrintArray(fhToNodal, "  ", "t0", makelist(sconcat("fmodal[", modeMap[n], "]"), n, 1, ne)),
+  confNodalSweeps(fhToNodal, "  ", cdim, 1, true),
+  for n : 0 thru ne-1 do (
+    printf(fhToNodal, "  fnodal[~a] = ~a*t~a[~a]; ~%", n, scale, cdim, n)
+  ),
+  printf(fhToNodal, "} ~%"),
+
+  printf(fhToModal, "GKYL_CU_DH void ~a(const double *fnodal, double* GKYL_RESTRICT fmodal) ~%{ ~%", nmToModal),
+  printf(fhToModal, "  // fnodal: values at the ~a interior Gauss-Legendre nodes. ~%", ne),
+  printf(fhToModal, "  // fmodal: the p=1 configuration-space expansion with those values. ~%"),
+  confNodalPrintArray(fhToModal, "  ", "t0", makelist(sconcat("fnodal[", n, "]"), n, 0, ne-1)),
+  confNodalSweeps(fhToModal, "  ", cdim, 1, false),
+  for n : 0 thru ne-1 do (
+    printf(fhToModal, "  fmodal[~a] = ~a*t~a[~a]; ~%", modeMap[n+1], scale, cdim, n)
+  ),
+  printf(fhToModal, "} ~%")
+)$
+
+/* Modal to nodal, and the accumulation of a nodal increment onto a modal expansion, for one
+   phase-space expansion in the basis basisFun (cdim configuration and vdim velocity
+   dimensions, configuration p=1). */
+confNodalPhase(fhToNodal, fhToModal, nmToNodal, nmToModal, basisFun, cdim, vdim) := block(
+  [varsC, bC, varsP, bP, NP, ne, nv, bV, j, n, k, i, e, pt, pt2, found, modeMap, scale, isConst, vals, q],
+  [varsC, bC, varsP, bP] : loadPhaseBasis(basisFun, cdim, vdim, 1),
+  NP : length(bP),
+  ne : 2^cdim,
+  scale : float(1/sqrt(2)^cdim),
+
+  /* The velocity factor: the phase basis functions without configuration dependence, over the
+     constant configuration function, in their order in the phase basis. */
+  bV : [],
+  for k : 1 thru NP do (
+    isConst : true,
+    for i : 1 thru length(varsC) do (
+      if hipow(expand(bP[k]), varsC[i]) # 0 then isConst : false
+    ),
+    if isConst then bV : endcons(fullratsimp(bP[k]/bC[1]), bV)
+  ),
+  nv : length(bV),
+  if nv*ne # NP then error("confNodalPhase: the basis is not a tensor product"),
+
+  /* modeMap[j*ne + n + 1]: index of the modal coefficient of velocity mode j and configuration
+     tensor index n, found by matching bP[k] = bC[i] bV[j] at two points. */
+  pt : makelist(varsP[i] = 0.37 - 0.11*i, i, 1, length(varsP)),
+  pt2 : makelist(varsP[i] = -0.53 + 0.17*i, i, 1, length(varsP)),
+  modeMap : makelist(0, k, 1, nv*ne),
+  for j : 1 thru nv do (
+    for n : 0 thru ne-1 do (
+      e : confNodalBits(n, cdim),
+      i : confNodalConfIndex(bC, varsC, e),
+      found : 0,
+      for k : 1 thru NP do (
+        if found = 0 and abs(float(subst(pt, bP[k] - bC[i]*bV[j]))) < 1.0e-12
+          and abs(float(subst(pt2, bP[k] - bC[i]*bV[j]))) < 1.0e-12 then found : k
+      ),
+      if found = 0 then error("confNodalPhase: the basis is not a tensor product"),
+      modeMap[(j-1)*ne + n + 1] : found - 1
+    )
+  ),
+
+  printf(fhToNodal, "GKYL_CU_DH void ~a(const double *fmodal, double* GKYL_RESTRICT fnodal) ~%{ ~%", nmToNodal),
+  printf(fhToNodal, "  // fmodal: phase-space expansion (~a coefficients). ~%", NP),
+  printf(fhToNodal, "  // fnodal: its ~a velocity modes at each of the ~a configuration-space nodes, fnodal[q*~a + j]. ~%", nv, ne, nv),
+  confNodalPrintArray(fhToNodal, "  ", "t0", makelist(sconcat("fmodal[", modeMap[k], "]"), k, 1, nv*ne)),
+  confNodalSweeps(fhToNodal, "  ", cdim, nv, true),
+  for q : 0 thru ne-1 do (
+    for j : 0 thru nv-1 do (
+      printf(fhToNodal, "  fnodal[~a] = ~a*t~a[~a]; ~%", q*nv + j, scale, cdim, j*ne + q)
+    )
+  ),
+  printf(fhToNodal, "} ~%"),
+
+  printf(fhToModal, "GKYL_CU_DH void ~a(const double *fnodal, double* GKYL_RESTRICT fmodal) ~%{ ~%", nmToModal),
+  printf(fhToModal, "  // fnodal: ~a velocity modes at each of the ~a configuration-space nodes, fnodal[q*~a + j]. ~%", nv, ne, nv),
+  printf(fhToModal, "  // fmodal: phase-space expansion (~a coefficients) to increment with that of fnodal. ~%", NP),
+  vals : [],
+  for j : 0 thru nv-1 do (
+    for q : 0 thru ne-1 do (
+      vals : endcons(sconcat("fnodal[", q*nv + j, "]"), vals)
+    )
+  ),
+  confNodalPrintArray(fhToModal, "  ", "t0", vals),
+  confNodalSweeps(fhToModal, "  ", cdim, nv, false),
+  for k : 1 thru nv*ne do (
+    printf(fhToModal, "  fmodal[~a] += ~a*t~a[~a]; ~%", modeMap[k], scale, cdim, k-1)
+  ),
+  printf(fhToModal, "} ~%")
+)$

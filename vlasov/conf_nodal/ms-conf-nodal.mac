@@ -1,0 +1,49 @@
+/* Generate the kernels converting between modal expansions and the configuration-nodal,
+   velocity-modal form (gkyl_dg_conf_nodal_kernels.h and one file per kernel). */
+load("vlasov/conf_nodal/conf-nodal.mac")$
+
+/* ...... USER INPUTS........ */
+minCdim : 1$
+maxCdim : 3$
+/* Velocity dimensions of the hybrid phase bases (p=1 in configuration space). */
+minVdim : 1$
+maxVdim : 1$
+/* ...... END OF USER INPUTS........ */
+
+fhh : openw("~/max-out/gkyl_dg_conf_nodal_kernels.h")$
+printf(fhh, "#pragma once ~%~%")$
+printf(fhh, "// Generated (gkylcas/vlasov/conf_nodal/conf-nodal.mac): conversions between modal expansions and ~%")$
+printf(fhh, "// the configuration-nodal, velocity-modal form. The nodes are the 2^cdim interior Gauss-Legendre ~%")$
+printf(fhh, "// points of a p=1 configuration-space cell, node q having bit d set when x_d > 0. ~%")$
+printf(fhh, "#include <gkyl_util.h> ~%~%")$
+printf(fhh, "EXTERN_C_BEG ~%~%")$
+
+for c : minCdim thru maxCdim do (
+  nmA : sconcat("dg_conf_nodal_conf_to_nodal_", c, "x_ser_p1"),
+  nmB : sconcat("dg_conf_nodal_conf_to_modal_", c, "x_ser_p1"),
+  disp(nmA),
+  fhA : openw(sconcat("~/max-out/", nmA, ".c")),
+  fhB : openw(sconcat("~/max-out/", nmB, ".c")),
+  printf(fhA, "#include <gkyl_dg_conf_nodal_kernels.h> ~%"),
+  printf(fhB, "#include <gkyl_dg_conf_nodal_kernels.h> ~%"),
+  confNodalConf(fhA, fhB, nmA, nmB, c),
+  close(fhA), close(fhB),
+  printf(fhh, "GKYL_CU_DH void ~a(const double *fmodal, double* GKYL_RESTRICT fnodal); ~%", nmA),
+  printf(fhh, "GKYL_CU_DH void ~a(const double *fnodal, double* GKYL_RESTRICT fmodal); ~%", nmB),
+  for v : minVdim thru maxVdim do (
+    nmA : sconcat("dg_conf_nodal_phase_to_nodal_", c, "x", v, "v_hyb_p1"),
+    nmB : sconcat("dg_conf_nodal_phase_to_modal_accumulate_", c, "x", v, "v_hyb_p1"),
+    disp(nmA),
+    fhA : openw(sconcat("~/max-out/", nmA, ".c")),
+    fhB : openw(sconcat("~/max-out/", nmB, ".c")),
+    printf(fhA, "#include <gkyl_dg_conf_nodal_kernels.h> ~%"),
+    printf(fhB, "#include <gkyl_dg_conf_nodal_kernels.h> ~%"),
+    confNodalPhase(fhA, fhB, nmA, nmB, "hyb", c, v),
+    close(fhA), close(fhB),
+    printf(fhh, "GKYL_CU_DH void ~a(const double *fmodal, double* GKYL_RESTRICT fnodal); ~%", nmA),
+    printf(fhh, "GKYL_CU_DH void ~a(const double *fnodal, double* GKYL_RESTRICT fmodal); ~%", nmB)
+  ),
+  printf(fhh, "~%")
+)$
+printf(fhh, "EXTERN_C_END ~%")$
+close(fhh)$
