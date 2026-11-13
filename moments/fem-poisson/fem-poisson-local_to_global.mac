@@ -133,10 +133,12 @@ generate_fem_poisson_local_to_global(fh, funcNm, dim, basisFun, pMax) := block(
               numNodesFac[dI] : numNodesFac[dI]+assoc(tmpLoc,locToNumStoredNodes),
               if (dim=3) and (dI=1) then (
                 numNodesFac[dI] : (numCells[dim-2]-1)*numNodesFac[dI],
+                /* Complete the upper-y row, keeping x at its preceding-plane location. */
                 tmpLoc[dim-1]   : 1,
+                tmpLoc[dim]     : 0,
                 tmpNum          : assoc(tmpLoc,locToNumStoredNodes),
                 numNodesFac[dI] : (numCells[dim-1]-1)*tmpNum+numNodesFac[dI],
-                tmpLoc[dim-2]   : 1,
+                tmpLoc[dim]     : 1,
                 numNodesFac[dI] : numNodesFac[dI]+assoc(tmpLoc,locToNumStoredNodes)
               )
             ),
