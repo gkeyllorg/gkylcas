@@ -8,15 +8,17 @@ load(stringproc)$
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 3$
 minDim_Ser : 2$
 maxDim_Ser : 3$
 
 /* Tensor product basis. */
+/* Tensor kernels are only generated in 2x: the 3x p=2 cross-term kernels are
+   ~1.8 MB each and take over a minute each to compile. */
 minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
-minDim_Tensor : 1$
-maxDim_Tensor : 0$
+maxPolyOrder_Tensor : 3$
+minDim_Tensor : 2$
+maxDim_Tensor : 2$
 
 /* ...... END OF USER INPUTS........ */
 
@@ -28,7 +30,7 @@ maxDim       : [maxDim_Ser, maxDim_Tensor]$
 
 for bInd : 1 thru length(bName) do (
   for c : minDim[bInd] thru maxDim[bInd] do (
-    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do if not (polyOrder > 2 and c = 3) then (
       fname : sconcat("~/max-out/dg_diffusion_gen_vol_",c,"x_", bName[bInd], "_p", polyOrder, ".c"),
       print("Generating:", fname),
       fh : openw(fname),

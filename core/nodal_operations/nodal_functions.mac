@@ -62,6 +62,8 @@ calcBasisNodToModWithNodesHyb(basisType, cdim, vdim, nodes) := block(
   [varsC,bC,basis,vars,vSub,basisNodToMod],
   if basisType = "hyb" then (
     [varsC,bC,vars,basis] : loadPhaseBasis("ser", cdim, vdim, 1)
+  ) elseif basisType = "tenhyb" then (
+    [varsC,bC,vars,basis] : loadTensorHybridBasis(basisType, cdim, vdim)
   ) elseif basisType = "gkhyb" then (
     [varsC,bC,vars,basis,vSub] : loadGkBasis("ser", cdim, vdim, 1)
   ) elseif basisType = "gkhyb_vel" then (
@@ -220,6 +222,14 @@ getVarsNodalBasisWithNodesHyb(basisType, cdim, vdim, varsIn, nodes) := block(
     basis : basisC[1],  vars : varsC
   ) else (
     if basisType="hyb" then (
+      if cdim=0 then (
+        load(sconcat("core/basis-precalc/basisTensor", vdim, "x", ".lisp")),
+        basis : subst([x=vx,y=vy,z=vz],basisC[2]),  vars : subst([x=vx,y=vy,z=vz],varsC)
+      ) else (
+        load(sconcat("core/basis-precalc/basisTensorHybrid", cdim, "x", vdim, "v", ".lisp")),
+        basis : basisP[1],  vars : varsP
+      )
+    ) elseif basisType="tenhyb" then (
       if cdim=0 then (
         load(sconcat("core/basis-precalc/basisTensor", vdim, "x", ".lisp")),
         basis : subst([x=vx,y=vy,z=vz],basisC[2]),  vars : subst([x=vx,y=vy,z=vz],varsC)

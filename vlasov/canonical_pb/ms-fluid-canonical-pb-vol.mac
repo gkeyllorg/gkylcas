@@ -41,7 +41,7 @@ for bInd : 1 thru length(bName) do (
       disp(printf(false,"Creating volume file: ~a",fname)),
 
       fh : openw(fname),
-      printf(fh, "#include <gkyl_canonical_pb_kernels.h> ~%"),
+      printf(fh, "#include <gkyl_canonical_fluid_kernels.h> ~%"),
 
       funcName : sconcat("canonical_pb_vol_", c, "x_", bName[bInd], "_p", polyOrder),
       buildFluidCanonicalPBVolKernel(fh, funcName, c, bName[bInd], polyOrder), 
@@ -51,7 +51,7 @@ for bInd : 1 thru length(bName) do (
       disp(printf(false,"Creating volume file: ~a",fname)),
 
       fh : openw(fname),
-      printf(fh, "#include <gkyl_canonical_pb_kernels.h> ~%"),
+      printf(fh, "#include <gkyl_canonical_fluid_kernels.h> ~%"),
 
       funcName : sconcat("canonical_pb_two_fluid_vol_", c, "x_", bName[bInd], "_p", polyOrder),
       buildTwoFluidCanonicalPBVolKernel(fh, funcName, c, bName[bInd], polyOrder), 

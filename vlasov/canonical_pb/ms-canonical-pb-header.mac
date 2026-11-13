@@ -30,47 +30,26 @@ maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 clabels : ["x","y","z"]$
 vlabels : ["vx","vy","vz"]$
 
-printPrototypes() := block([],
+/* The kinetic canonical-PB kernels are deleted: GKYL_MODEL_CANONICAL_PB now
+   routes through the unified hamil_phase Vlasov solver. Only the
+   moment-manipulation (vars) kernels remain, owned by ker/mom_vlasov. */
+printVarsPrototypes() := block([],
   for bInd : 1 thru length(bName) do (
     for c : minCdim[bInd] thru maxCdim[bInd] do (
       for v : c thru maxVdim[bInd] do (
         maxPolyOrderB : maxPolyOrder[bInd],
         if (c=3) then maxPolyOrderB : 1, /* Only declare p=1 kernels for 3x3v */
         for polyOrder : 1 thru maxPolyOrderB do (
-          if not(c = 3 and bName[bInd] = "ser") and not(c = 2 and v = 3 and bName[bInd] = "tensor" and polyOrder = 2) then ( /* SKIP hybrid in 3d */
-
-            printf(fh, "GKYL_CU_DH double canonical_pb_vol_~ax~av_~a_p~a(const double *w, const double *dxv, const double *hamil,  
-              const double *fin, double* GKYL_RESTRICT out); ~%", c, v, bName[bInd], polyOrder),
-
-            /* Only make one contravariant to covaraint bulk momentum kernel header line */
+          if not(c = 3 and bName[bInd] = "ser") and not(c = 2 and v = 3 and bName[bInd] = "tensor" and polyOrder = 2) then (
+            /* RULE: hamil_phase (canonical-PB) at c+v>=5 is p=1 only. */
+            if not(c+v>=5 and polyOrder>1) then (
             funcNm : sconcat("canonical_pb_vars_m1i_contra_to_cov_",  c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-            printf(fh, "GKYL_CU_DH void ~a(const double *h_ij, const double *v_j, const double *nv_i, double* GKYL_RESTRICT v_j_cov, double* GKYL_RESTRICT nv_i_cov);~%", funcNm, polyOrder),
+            printf(fhv, "GKYL_CU_DH void ~a(const double *h_ij, const double *v_j, const double *nv_i, double* GKYL_RESTRICT v_j_cov, double* GKYL_RESTRICT nv_i_cov);~%", funcNm, polyOrder),
 
-            /* Only make one pressure kernel header line */
             funcNm : sconcat("canonical_pb_vars_pressure_",  c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-            printf(fh, "GKYL_CU_DH void ~a(const double *h_ij_inv, const double *MEnergy, const double *v_j, 
-            const double *nv_i, double* GKYL_RESTRICT d_Jv_P);~%", funcNm, polyOrder),
-            
-            for surfDir : 1 thru c+v do ( /* Iterate over each phase space coordinate */
-              if surfDir<=c then (dirlabel : clabels[surfDir]) else (dirlabel : vlabels[surfDir-c]),
-              printf(fh, "GKYL_CU_DH int canonical_pb_alpha_surf~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *hamil, 
-                double* GKYL_RESTRICT alpha_surf, double* GKYL_RESTRICT sgn_alpha_surf); ~%", dirlabel, c, v, bName[bInd], polyOrder),
-              if (surfDir < c+1) then ( /* Only for configuration space */
-                printf(fh, "GKYL_CU_DH int canonical_pb_alpha_edge_surf~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *hamil,
-                  double* GKYL_RESTRICT alpha_surf, double* GKYL_RESTRICT sgn_alpha_surf); ~%", dirlabel, c, v, bName[bInd], polyOrder)
-              ),
-              printf(fh, "GKYL_CU_DH double canonical_pb_surf~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *hamil, 
-              const double *alpha_surf_l, const double *alpha_surf_r, 
-              const double *sgn_alpha_surf_l, const double *sgn_alpha_surf_r, 
-              const int *const_sgn_alpha_l, const int *const_sgn_alpha_r, 
-              const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out); ~%", dirlabel, c, v, bName[bInd], polyOrder),
-              printf(fh, "GKYL_CU_DH double canonical_pb_boundary_surf~a_~ax~av_~a_p~a(const double *w, const double *dxv, const double *hamil,
-              const double *alpha_surf_edge, const double *alpha_surf_skin, 
-              const double *sgn_alpha_surf_edge, const double *sgn_alpha_surf_skin, 
-              const int *const_sgn_alpha_edge, const int *const_sgn_alpha_skin, 
-              const int edge, const double *fedge, const double *fskin, double* GKYL_RESTRICT out); ~%", dirlabel, c, v, bName[bInd], polyOrder)
-            ), 
-            printf(fh, "~%")
+            printf(fhv, "GKYL_CU_DH void ~a(const double *h_ij_inv, const double *MEnergy, const double *v_j, 
+            const double *nv_i, double* GKYL_RESTRICT d_Jv_P);~%", funcNm, polyOrder)
+            )
           )
         )
       )
@@ -112,16 +91,22 @@ printFluidPrototypes() := block([],
   printf(fh, "GKYL_CU_DH void canonical_pb_fluid_default_source(const double *dxv, double alpha, const double *phi, const double *n0, const double *f, double* GKYL_RESTRICT out); ~%")  
 )$
 
-fh : openw("~/max-out/gkyl_canonical_pb_kernels.h")$
-printf(fh, "#pragma once~%")$
-printf(fh, "~%")$
-printf(fh, "#include <math.h>~%")$
-printf(fh, "#include <gkyl_util.h>~%")$
-printf(fh, "~%")$
-printf(fh, "EXTERN_C_BEG~%")$
-printf(fh, "~%")$
-printPrototypes()$
+fh : openw("~/max-out/gkyl_canonical_fluid_kernels.h")$
+fhv : openw("~/max-out/gkyl_canonical_pb_vars_kernels.h")$
+for h in [fh, fhv] do (
+  printf(h, "#pragma once~%"),
+  printf(h, "~%"),
+  printf(h, "#include <math.h>~%"),
+  printf(h, "#include <gkyl_util.h>~%"),
+  printf(h, "~%"),
+  printf(h, "EXTERN_C_BEG~%"),
+  printf(h, "~%")
+)$
+printVarsPrototypes()$
 printFluidPrototypes()$
-printf(fh, "~%")$
-printf(fh, "EXTERN_C_END~%")$
+for h in [fh, fhv] do (
+  printf(h, "~%"),
+  printf(h, "EXTERN_C_END~%")
+)$
 close(fh)$
+close(fhv)$

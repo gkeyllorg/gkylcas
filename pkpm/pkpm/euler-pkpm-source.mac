@@ -1,7 +1,6 @@
 /* This script generates the kernels for the source terms in the
    fluid equations of the parallel-kinetic-perpendicular-moment (pkpm) model,
-   For p_perp fluid equation, momentum sources are rho*E + rho*u x B 
-   Perpendicular pressure source is nu*rho*vth^2 - nu*p_perp + p_perp*div(u) - p_perp bb : grad(u) */
+   For momentum fluid equation, sources are rho*E + rho*u x B  */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
@@ -24,7 +23,7 @@ calcEulerPKPMSource(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "#include <gkyl_euler_pkpm_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a_p~a(const double *qmem, const double *vlasov_pkpm_moms, const double *euler_pkpm, double* out) ~%{ ~%", funcNm, polyOrder),
   printf(fh, "  // qmem:             q/m*EM fields.~%"),
-  printf(fh, "  // vlasov_pkpm_moms: [rho, p_parallel, q_parallel], Moments computed from kinetic equation in pkpm model.~%"),
+  printf(fh, "  // vlasov_pkpm_moms: [rho, p_parallel, p_perp], Moments computed from kinetic equation in pkpm model.~%"),
   printf(fh, "  // euler_pkpm:       Input fluid variables.~%"),
   printf(fh, "  // out:              Output increment"),
   printf(fh, "~%"),

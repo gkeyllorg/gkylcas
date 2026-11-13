@@ -66,15 +66,16 @@ calcPKPMIntVars(fh, funcNm, cdim, basisFun, polyOrder) := block(
   int_p_perp_c : calcInnerProdList(varsC, 1, [1], p_perp_e), 
 
   printf(fh, "  // Order of integrated variables is (rho, rhoux, rhouy, rhouz, rho ux^2, rho uy^2, rho uz^2, p_parallel, p_perp) ~%"),
-  printf(fh, "  int_pkpm_vars[0] += ~a; ~%", float(expand(int_rho_c[1]))),
-  printf(fh, "  int_pkpm_vars[1] += ~a; ~%", float(expand(int_rhoux_c[1]))),
-  printf(fh, "  int_pkpm_vars[2] += ~a; ~%", float(expand(int_rhouy_c[1]))),
-  printf(fh, "  int_pkpm_vars[3] += ~a; ~%", float(expand(int_rhouz_c[1]))),
-  printf(fh, "  int_pkpm_vars[4] += ~a; ~%", float(expand(int_rhoux2_c[1]))),
-  printf(fh, "  int_pkpm_vars[5] += ~a; ~%", float(expand(int_rhouy2_c[1]))),
-  printf(fh, "  int_pkpm_vars[6] += ~a; ~%", float(expand(int_rhouz2_c[1]))),
-  printf(fh, "  int_pkpm_vars[7] += ~a; ~%", float(expand(int_p_par_c[1]))),
-  printf(fh, "  int_pkpm_vars[8] += ~a; ~%", float(expand(int_p_perp_c[1]))),
+  printf(fh, "  // Note: there is a factor of 1/2^cdim to properly handle the basis function normalization when computing integrated moments ~%"),
+  printf(fh, "  int_pkpm_vars[0] += ~a; ~%", float(expand(int_rho_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_pkpm_vars[1] += ~a; ~%", float(expand(int_rhoux_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_pkpm_vars[2] += ~a; ~%", float(expand(int_rhouy_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_pkpm_vars[3] += ~a; ~%", float(expand(int_rhouz_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_pkpm_vars[4] += ~a; ~%", float(expand(int_rhoux2_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_pkpm_vars[5] += ~a; ~%", float(expand(int_rhouy2_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_pkpm_vars[6] += ~a; ~%", float(expand(int_rhouz2_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_pkpm_vars[7] += ~a; ~%", float(expand(int_p_par_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_pkpm_vars[8] += ~a; ~%", float(expand(int_p_perp_c[1]))*float(1/(2^cdim))),
 
   printf(fh, "} ~%")
 )$

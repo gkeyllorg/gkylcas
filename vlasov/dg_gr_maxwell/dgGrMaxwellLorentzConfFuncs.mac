@@ -1,0 +1,243 @@
+/* Function which divides out the configuration space Jacobian at configuration quadrature points
+   and converts the resulting nodal expansion back to a modal representations. 
+*/
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("vlasov/dg_gr_maxwell/dg-gr-maxwell-basis.mac");
+load(stringproc)$
+fpprec : 24$
+
+confForceEBTerms(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,
+   nodes_conf,num_nodes_conf,basisNodalConf,
+   Jfields_e,Jfields_n,Jfields_ne,f_c],
+
+  /* Nodal basis */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+  [bVol, basisNodalConf, volNodes] : loadConfVolBasis(cdim, basisFun, polyOrder, varsC),
+  NVol : length(bVol), 
+  num_nodes_conf : length(volNodes),
+  numNodes : length(volNodes),
+  NC : length(bC),
+
+  /* Remove J from the first eight components */
+  num_field_components : 8,
+
+  printf(fh, "#include <gkyl_dg_gr_maxwell_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *dx, const double *jacob_pos, const double *lapse_nodal, const double *shift_nodal,
+  const double *h_ij_nodal, const double *h_ij_inv_nodal, const double *J_c, const double *fields, const double *vierb_cov_nodal, 
+    const double *vierb_con_nodal, double* GKYL_RESTRICT E_conf_for_force, double* GKYL_RESTRICT B_conf_for_force) ~%{ ~%", funcNm, polyOrder),
+
+  /* Grab wave speeds for PHM */
+  printf(fh, "  const double chi = meq->chi, gamma = meq->gamma; ~%"),
+  printf(fh, "  const double jacob_pos_tot_inv = 1.0/(~a); ~%",
+    simplode(makelist(sconcat("jacob_pos[", (polyOrder+1)*(d-1), "]"), d, 1, cdim), "*")),
+
+ for d : 1 thru cdim do (
+    printf(fh, "  double dx~a = 2.0/dx[~a]; ~%", d-1, d-1)
+  ),
+
+  printf(fh, "  ~%"),
+
+  /* 0. Save memory for nodal expansions */
+  printf(fh, "  double JDx_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JDy_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JDz_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JBx_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JBy_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JBz_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Ex_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Ey_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Ez_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Bx_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double By_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Bz_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double E_conf_for_force_n[~a] = {0.0};~%", 3*numNodes),
+  printf(fh, "  double B_conf_for_force_n[~a] = {0.0};~%", 3*numNodes),
+  printf(fh, "  ~%"), 
+
+  /* 1. Grab the expansions of the isolated D and B field (contravaraint components modally) */
+  printf(fh, "  const double *JDx = &fields[~a]; ~%", 0*NC),
+  printf(fh, "  const double *JDy = &fields[~a]; ~%", 1*NC),
+  printf(fh, "  const double *JDz = &fields[~a]; ~%", 2*NC),
+  printf(fh, "  const double *JBx = &fields[~a]; ~%", 3*NC),
+  printf(fh, "  const double *JBy = &fields[~a]; ~%", 4*NC),
+  printf(fh, "  const double *JBz = &fields[~a]; ~%", 5*NC),
+  printf(fh, "  ~%"), 
+
+  /* Expand in maxima */
+  JDxl : doExpand1(JDx,bC),
+  JDyl : doExpand1(JDy,bC),
+  JDzl : doExpand1(JDz,bC),
+  JBxl : doExpand1(JBx,bC),
+  JByl : doExpand1(JBy,bC),
+  JBzl : doExpand1(JBz,bC),
+
+
+  /* 2. Project the D and B (contravariant components) nodally */
+  /* Maybe replace with n2m to save kernel space */
+  JDx_n : float(evAtNodes(JDxl,volNodes,varsC)), 
+  JDy_n : float(evAtNodes(JDyl,volNodes,varsC)), 
+  JDz_n : float(evAtNodes(JDzl,volNodes,varsC)), 
+  JBx_n : float(evAtNodes(JBxl,volNodes,varsC)), 
+  JBy_n : float(evAtNodes(JByl,volNodes,varsC)), 
+  JBz_n : float(evAtNodes(JBzl,volNodes,varsC)), 
+  for i : 1 thru numNodes do (
+    printf(fh, "  JDx_con_n[~a] = ~a;~%", i-1, JDx_n[i]),
+    printf(fh, "  JDy_con_n[~a] = ~a;~%", i-1, JDy_n[i]),
+    printf(fh, "  JDz_con_n[~a] = ~a;~%", i-1, JDz_n[i]),
+    printf(fh, "  JBx_con_n[~a] = ~a;~%", i-1, JBx_n[i]),
+    printf(fh, "  JBy_con_n[~a] = ~a;~%", i-1, JBy_n[i]),
+    printf(fh, "  JBz_con_n[~a] = ~a;~%", i-1, JBz_n[i]),
+    printf(fh, "  ~%")
+  ),
+
+  /* 3a. Grab pointers to the metric and shift components */
+  printf(fh, "  const double *h_xx_nodal = &h_ij_nodal[~a]; ~%", 0*numNodes),
+  printf(fh, "  const double *h_xy_nodal = &h_ij_nodal[~a]; ~%", 1*numNodes),
+  printf(fh, "  const double *h_xz_nodal = &h_ij_nodal[~a]; ~%", 2*numNodes),
+  printf(fh, "  const double *h_yy_nodal = &h_ij_nodal[~a]; ~%", 3*numNodes),
+  printf(fh, "  const double *h_yz_nodal = &h_ij_nodal[~a]; ~%", 4*numNodes),
+  printf(fh, "  const double *h_zz_nodal = &h_ij_nodal[~a]; ~%", 5*numNodes),
+  printf(fh, "  const double *h_xx_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 0*numNodes),
+  printf(fh, "  const double *h_xy_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 1*numNodes),
+  printf(fh, "  const double *h_xz_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 2*numNodes),
+  printf(fh, "  const double *h_yy_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 3*numNodes),
+  printf(fh, "  const double *h_yz_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 4*numNodes),
+  printf(fh, "  const double *h_zz_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 5*numNodes),
+  if (vdim = 1) then (
+    printf(fh, "  const double *vierb_xx_cov_nodal = &vierb_cov_nodal[~a]; ~%", 0*numNodes),
+    printf(fh, "  const double vierb_xy_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_xz_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_yx_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  double vierb_yy_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_yz_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_zx_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_zy_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  double vierb_zz_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double *vierb_xx_con_nodal = &vierb_con_nodal[~a]; ~%", 0*numNodes),
+    printf(fh, "  const double vierb_xy_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_xz_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_yx_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  double vierb_yy_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_yz_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_zx_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_zy_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  double vierb_zz_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  for (int i=0; i<~a; ++i) {~%", numNodes),
+    printf(fh, "    vierb_yy_cov_nodal[i] = 1.0;~%"),
+    printf(fh, "    vierb_zz_cov_nodal[i] = 1.0;~%"),
+    printf(fh, "    vierb_yy_con_nodal[i] = 1.0;~%"),
+    printf(fh, "    vierb_zz_con_nodal[i] = 1.0;~%"),
+    printf(fh, "  }~%"),
+    printf(fh, "  ~%")
+  ),
+  if (vdim = 2) then (
+    printf(fh, "  const double *vierb_xx_cov_nodal = &vierb_cov_nodal[~a]; ~%", 0*numNodes),
+    printf(fh, "  const double *vierb_xy_cov_nodal = &vierb_cov_nodal[~a]; ~%", 1*numNodes),
+    printf(fh, "  const double vierb_xz_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double *vierb_yx_cov_nodal = &vierb_cov_nodal[~a]; ~%", 2*numNodes),
+    printf(fh, "  const double *vierb_yy_cov_nodal = &vierb_cov_nodal[~a]; ~%", 3*numNodes),
+    printf(fh, "  const double vierb_yz_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_zx_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_zy_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  double vierb_zz_cov_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double *vierb_xx_con_nodal = &vierb_con_nodal[~a]; ~%", 0*numNodes),
+    printf(fh, "  const double *vierb_xy_con_nodal = &vierb_con_nodal[~a]; ~%", 1*numNodes),
+    printf(fh, "  const double vierb_xz_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double *vierb_yx_con_nodal = &vierb_con_nodal[~a]; ~%", 2*numNodes),
+    printf(fh, "  const double *vierb_yy_con_nodal = &vierb_con_nodal[~a]; ~%", 3*numNodes),
+    printf(fh, "  const double vierb_yz_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_zx_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  const double vierb_zy_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  double vierb_zz_con_nodal[~a] = {0.0}; ~%", numNodes),
+    printf(fh, "  for (int i=0; i<~a; ++i) {~%", numNodes),
+    printf(fh, "    vierb_zz_cov_nodal[i] = 1.0;~%"),
+    printf(fh, "    vierb_zz_con_nodal[i] = 1.0;~%"),
+    printf(fh, "  }~%"),
+    printf(fh, "  ~%")
+  ),
+  if (vdim = 3) then (
+    printf(fh, "  const double *vierb_xx_cov_nodal = &vierb_cov_nodal[~a]; ~%", 0*numNodes),
+    printf(fh, "  const double *vierb_xy_cov_nodal = &vierb_cov_nodal[~a]; ~%", 1*numNodes),
+    printf(fh, "  const double *vierb_xz_cov_nodal = &vierb_cov_nodal[~a]; ~%", 2*numNodes),
+    printf(fh, "  const double *vierb_yx_cov_nodal = &vierb_cov_nodal[~a]; ~%", 3*numNodes),
+    printf(fh, "  const double *vierb_yy_cov_nodal = &vierb_cov_nodal[~a]; ~%", 4*numNodes),
+    printf(fh, "  const double *vierb_yz_cov_nodal = &vierb_cov_nodal[~a]; ~%", 5*numNodes),
+    printf(fh, "  const double *vierb_zx_cov_nodal = &vierb_cov_nodal[~a]; ~%", 6*numNodes),
+    printf(fh, "  const double *vierb_zy_cov_nodal = &vierb_cov_nodal[~a]; ~%", 7*numNodes),
+    printf(fh, "  const double *vierb_zz_cov_nodal = &vierb_cov_nodal[~a]; ~%", 8*numNodes),
+    printf(fh, "  const double *vierb_xx_con_nodal = &vierb_con_nodal[~a]; ~%", 0*numNodes),
+    printf(fh, "  const double *vierb_xy_con_nodal = &vierb_con_nodal[~a]; ~%", 1*numNodes),
+    printf(fh, "  const double *vierb_xz_con_nodal = &vierb_con_nodal[~a]; ~%", 2*numNodes),
+    printf(fh, "  const double *vierb_yx_con_nodal = &vierb_con_nodal[~a]; ~%", 3*numNodes),
+    printf(fh, "  const double *vierb_yy_con_nodal = &vierb_con_nodal[~a]; ~%", 4*numNodes),
+    printf(fh, "  const double *vierb_yz_con_nodal = &vierb_con_nodal[~a]; ~%", 5*numNodes),
+    printf(fh, "  const double *vierb_zx_con_nodal = &vierb_con_nodal[~a]; ~%", 6*numNodes),
+    printf(fh, "  const double *vierb_zy_con_nodal = &vierb_con_nodal[~a]; ~%", 7*numNodes),
+    printf(fh, "  const double *vierb_zz_con_nodal = &vierb_con_nodal[~a]; ~%", 8*numNodes)
+  ),
+  printf(fh, "  const double *shift_nodal_x = &shift_nodal[~a]; ~%", 0*numNodes),
+  printf(fh, "  const double *shift_nodal_y = &shift_nodal[~a]; ~%", 1*numNodes),
+  printf(fh, "  const double *shift_nodal_z = &shift_nodal[~a]; ~%", 2*numNodes),
+  printf(fh, "  ~%"), 
+
+  /* 3b. Compute the vacuum consitutive relations to get 
+   E (covariant components) at nodes 
+   2.  E_i = \alpha h_{ij} D^j + J_c \epsilon_{ijk} \beta^j B^k */
+  printf(fh, "  for (int i=0; i<~a; ++i) {~%", numNodes),
+  printf(fh, "    Ex_n[i] = lapse_nodal[i]*( h_xx_nodal[i]*JDx_con_n[i] + h_xy_nodal[i]*JDy_con_n[i] + h_xz_nodal[i]*JDz_con_n[i] ) / J_c[i] + ( shift_nodal_y[i]*JBz_con_n[i] - shift_nodal_z[i]*JBy_con_n[i]); ~%"),
+  printf(fh, "    Ey_n[i] = lapse_nodal[i]*( h_xy_nodal[i]*JDx_con_n[i] + h_yy_nodal[i]*JDy_con_n[i] + h_yz_nodal[i]*JDz_con_n[i] ) / J_c[i] + ( - shift_nodal_x[i]*JBz_con_n[i] + shift_nodal_z[i]*JBx_con_n[i]); ~%"),
+  printf(fh, "    Ez_n[i] = lapse_nodal[i]*( h_xz_nodal[i]*JDx_con_n[i] + h_yz_nodal[i]*JDy_con_n[i] + h_zz_nodal[i]*JDz_con_n[i] ) / J_c[i] + ( shift_nodal_x[i]*JBy_con_n[i] - shift_nodal_y[i]*JBx_con_n[i]); ~%"),
+  printf(fh, "    Bx_n[i] = JBx_con_n[i] / J_c[i]; ~%"),
+  printf(fh, "    By_n[i] = JBy_con_n[i] / J_c[i]; ~%"),
+  printf(fh, "    Bz_n[i] = JBz_con_n[i] / J_c[i]; ~%"),
+  /* The stored fields also carry the TOTAL (cell-constant) position-map
+     Jacobian; divide it out so the particle push sees physical E and B. */
+  printf(fh, "    Ex_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    Ey_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    Ez_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    Bx_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    By_n[i] *= jacob_pos_tot_inv; ~%"),
+  printf(fh, "    Bz_n[i] *= jacob_pos_tot_inv; ~%"), 
+  printf(fh, "  }~%"),
+  printf(fh, "  ~%"), 
+
+  /* 3c. Compute the configuration space force objects at nodes */
+  printf(fh, "  for (int i=0; i<~a; ++i) {~%", numNodes),
+  /* The electric field correction terms: E_c = e^k_c E_k */
+  printf(fh, "    E_conf_for_force_n[i + 0*~a] = vierb_xx_con_nodal[i]*Ex_n[i] + vierb_yx_con_nodal[i]*Ey_n[i]  + vierb_zx_con_nodal[i]*Ez_n[i];~%", numNodes),
+  printf(fh, "    E_conf_for_force_n[i + 1*~a] = vierb_xy_con_nodal[i]*Ex_n[i] + vierb_yy_con_nodal[i]*Ey_n[i]  + vierb_zy_con_nodal[i]*Ez_n[i];~%", numNodes),
+  printf(fh, "    E_conf_for_force_n[i + 2*~a] = vierb_xz_con_nodal[i]*Ex_n[i] + vierb_yz_con_nodal[i]*Ey_n[i]  + vierb_zz_con_nodal[i]*Ez_n[i];~%", numNodes),
+  /* The magnetic field correction terms: B_{b} = B^i e_i^b */
+  printf(fh, "    B_conf_for_force_n[i + 0*~a] = vierb_xx_cov_nodal[i]*Bx_n[i] + vierb_yx_cov_nodal[i]*By_n[i] + vierb_zx_cov_nodal[i]*Bz_n[i];~%", numNodes),
+  printf(fh, "    B_conf_for_force_n[i + 1*~a] = vierb_xy_cov_nodal[i]*Bx_n[i] + vierb_yy_cov_nodal[i]*By_n[i] + vierb_zy_cov_nodal[i]*Bz_n[i];~%", numNodes),
+  printf(fh, "    B_conf_for_force_n[i + 2*~a] = vierb_xz_cov_nodal[i]*Bx_n[i] + vierb_yz_cov_nodal[i]*By_n[i] + vierb_zz_cov_nodal[i]*Bz_n[i];~%", numNodes),
+  printf(fh, "  }~%"),
+  printf(fh, "  ~%"),
+
+
+  /* 4. Compute modal expansions of force terms and write them to output. */
+  printf(fh, "  double *E_conf_for_force_comp;~%"),
+  printf(fh, "  double *B_conf_for_force_comp;~%"),
+  for m : 1 thru 3 do (
+    E_conf_for_force_nodal_list : makelist(E_conf_for_force_n[i + (m-1)*numNodes], i, 0, numNodes-1),
+    E_conf_for_force_ne : doExpand(E_conf_for_force_nodal_list, basisNodalConf),
+    E_conf_for_force_c : calcInnerProdList(varsC, 1, bC, E_conf_for_force_ne),
+    printf(fh, "  E_conf_for_force_comp = &E_conf_for_force[~a];~%", (m-1)*NC),
+    writeCExprs1(E_conf_for_force_comp, E_conf_for_force_c),
+    printf(fh, "~%")
+  ),
+  for m : 1 thru 3 do (
+    B_conf_for_force_nodal_list : makelist(B_conf_for_force_n[i + (m-1)*numNodes], i, 0, numNodes-1),
+    B_conf_for_force_ne : doExpand(B_conf_for_force_nodal_list, basisNodalConf),
+    B_conf_for_force_c : calcInnerProdList(varsC, 1, bC, B_conf_for_force_ne),
+    printf(fh, "  B_conf_for_force_comp = &B_conf_for_force[~a];~%", (m-1)*NC),
+    writeCExprs1(B_conf_for_force_comp, B_conf_for_force_c),
+    printf(fh, "~%")
+  ),
+  printf(fh, "} ~%")
+)$

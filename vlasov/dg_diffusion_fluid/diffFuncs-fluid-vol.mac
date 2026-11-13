@@ -58,9 +58,8 @@ genDGdiffFluidKernelVol(fh, funcNm, dim, basisType, polyOrder, diffOrder) := blo
   /* Combinations of directions in which to apply diffusion. */
   diffDirCombos : getDirCombos(vars),
 
-  diffCoeffType : [true, false],
-  /* Let's not generate inhomogeneous hyperdiff for now. */
-  if (diffOrder>2) then (diffCoeffType : [true]),
+  /* Only generate kernels for a constant diffusion coefficient. */
+  diffCoeffType : [true],
 
   /* Loop over const/var diffusion coefficient. */
   for cI in diffCoeffType do (

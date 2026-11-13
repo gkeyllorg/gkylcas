@@ -96,10 +96,11 @@ calcSelfPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   ),
   writeCExprs1s(cMr,makelist(boundary_corrections[i],i,0,udim*NC-1)),
   writeCExprs1s(cEr,makelist(boundary_corrections[i+udim*NC],i,0,NC-1)),
-  /* Use original M2 expansion. */
+  /* Use original M2 expansion. Note we multiply by 2 because the M2 moment 
+     is the 1/2 v^2 moment. */
   expr : float(expand(makelist(moms[i+NC*(udim+1)],i,0,NC-1))),
   for i : 1 thru length(expr) do (
-    printf(fh,"    gkyl_mat_set(rhs,~a,0,~a); ~%", i-1+udim*NC, expr[i])
+    printf(fh,"    gkyl_mat_set(rhs,~a,0,~a); ~%", i-1+udim*NC, 2.0*expr[i])
   ),
   printf(fh, "  } else { ~%"),
   /* Use the cell average of m0 and m1. */
@@ -118,10 +119,11 @@ calcSelfPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
     )
   ),
   writeCExprs1s(cEr,append([boundary_corrections[udim*NC]],makelist(0.0,i,1,NC-1))),
-  /* Use cell average of 2nd moment. */
+  /* Use cell average of 2nd moment. Note we multiply by 2 because the M2 moment 
+     is the 1/2 v^2 moment. */
   expr : float(expand(append([moms[(udim+1)*NC]],makelist(0.0,i,1,NC-1)))),
   for i : 1 thru length(expr) do (
-    printf(fh,"    gkyl_mat_set(rhs,~a,0,~a); ~%", i-1+udim*NC, expr[i])
+    printf(fh,"    gkyl_mat_set(rhs,~a,0,~a); ~%", i-1+udim*NC, 2.0*expr[i])
   ),
   printf(fh, "  }~%"),
   printf(fh, " ~%"),

@@ -1,0 +1,321 @@
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
+load("vlasov/dg_gr_maxwell/dg-gr-maxwell-basis.mac");
+load(stringproc)$
+fpprec : 24$
+
+/* Define variables and fluxes */
+dxInv : [dx0, dx1, dx2]$
+/* Constant per-direction inverse position-map Jacobians (C^0 linear map). */
+jacobPosInvSym : [jacob_pos_x_inv, jacob_pos_y_inv, jacob_pos_z_inv]$
+lhs : [outJDx, outJDy, outJDz, outJBx, outJBy, outJBz, outJphi, outJpsi]$
+
+calcDgGrMaxwellVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [bC,nbasis,Exl,Eyl,Ezl,Bxl,Byl,Bzl,phil,psil,fluxl,
+   volTerms,vt,varsC,basisC,basisConstant,d,m],
+
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Volume nodal information. */
+  [bVol, basisNodalConf, volNodes] : loadConfVolBasis(cdim, basisFun, polyOrder, varsC),
+  NVol : length(bVol), 
+  numNodes : length(volNodes),
+  nbasis : length(bC),
+  
+  /* Include both headers since the regular maxwell creates the input func */
+  printf(fh, "#include <gkyl_dg_gr_maxwell_kernels.h> ~%"),
+
+  printf(fh, "GKYL_CU_DH void ~a_p~a(const gkyl_dg_gr_maxwell_inp *meq, const double *w, const double *dx, const double *jacob_pos, const double *lapse_nodal, const double *shift_nodal,
+  const double *h_ij_nodal, const double *h_ij_inv_nodal, const double *J_c, const double *fields, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
+
+  /* Grab wave speeds for PHM */
+  printf(fh, "  const double chi = meq->chi, gamma = meq->gamma; ~%"),
+
+  for d : 1 thru cdim do (
+    printf(fh, "  double dx~a = 2.0/dx[~a]; ~%", d-1, d-1)
+  ),
+
+  printf(fh, "  ~%"),
+
+  /* 0. Save memory for nodal expansions */
+  printf(fh, "  double JDx_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JDy_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JDz_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JBx_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JBy_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double JBz_con_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Jphi_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Jpsi_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Ex_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Ey_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Ez_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Hx_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Hy_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double Hz_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FD11_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FD12_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FD13_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FD21_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FD22_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FD23_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FD31_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FD32_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FD33_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FB11_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FB12_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FB13_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FB21_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FB22_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FB23_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FB31_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FB32_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FB33_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FPhi1_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FPhi2_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FPhi3_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FPsi1_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FPsi2_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double FPsi3_n[~a] = {0.0};~%", numNodes),
+  printf(fh, "  ~%"), 
+
+  /* 1. Grab the expansions of the isolated D and B field (contravaraint components modally) */
+  printf(fh, "  const double *JDx = &fields[~a]; ~%", 0*nbasis),
+  printf(fh, "  const double *JDy = &fields[~a]; ~%", 1*nbasis),
+  printf(fh, "  const double *JDz = &fields[~a]; ~%", 2*nbasis),
+  printf(fh, "  const double *JBx = &fields[~a]; ~%", 3*nbasis),
+  printf(fh, "  const double *JBy = &fields[~a]; ~%", 4*nbasis),
+  printf(fh, "  const double *JBz = &fields[~a]; ~%", 5*nbasis),
+  printf(fh, "  const double *Jphi = &fields[~a]; ~%", 6*nbasis),
+  printf(fh, "  const double *Jpsi = &fields[~a]; ~%", 7*nbasis),
+  printf(fh, "  ~%"), 
+
+  printf(fh, "  double *outJDx = &out[~a]; ~%", 0*nbasis),
+  printf(fh, "  double *outJDy = &out[~a]; ~%", 1*nbasis),
+  printf(fh, "  double *outJDz = &out[~a]; ~%", 2*nbasis),
+  printf(fh, "  double *outJBx = &out[~a]; ~%", 3*nbasis),
+  printf(fh, "  double *outJBy = &out[~a]; ~%", 4*nbasis),
+  printf(fh, "  double *outJBz = &out[~a]; ~%", 5*nbasis),
+  printf(fh, "  double *outJphi = &out[~a]; ~%", 6*nbasis),
+  printf(fh, "  double *outJpsi = &out[~a]; ~%", 7*nbasis),
+  printf(fh, "  ~%"), 
+
+  /* Expand in maxima */
+  JDxl : doExpand1(JDx,bC),
+  JDyl : doExpand1(JDy,bC),
+  JDzl : doExpand1(JDz,bC),
+  JBxl : doExpand1(JBx,bC),
+  JByl : doExpand1(JBy,bC),
+  JBzl : doExpand1(JBz,bC),
+  Jphi_l : doExpand1(Jphi,bC),
+  Jpsi_l : doExpand1(Jpsi,bC),
+
+
+  /* 2. Project the D and B (contravariant components) nodally */
+  /* Maybe replace with n2m to save kernel space */
+  JDx_n : float(evAtNodes(JDxl,volNodes,varsC)), 
+  JDy_n : float(evAtNodes(JDyl,volNodes,varsC)), 
+  JDz_n : float(evAtNodes(JDzl,volNodes,varsC)), 
+  JBx_n : float(evAtNodes(JBxl,volNodes,varsC)), 
+  JBy_n : float(evAtNodes(JByl,volNodes,varsC)), 
+  JBz_n : float(evAtNodes(JBzl,volNodes,varsC)), 
+  Jphi_n : float(evAtNodes(Jphi_l,volNodes,varsC)), 
+  Jpsi_n : float(evAtNodes(Jpsi_l,volNodes,varsC)),
+  for i : 1 thru numNodes do (
+    printf(fh, "  JDx_con_n[~a] = ~a;~%", i-1, JDx_n[i]),
+    printf(fh, "  JDy_con_n[~a] = ~a;~%", i-1, JDy_n[i]),
+    printf(fh, "  JDz_con_n[~a] = ~a;~%", i-1, JDz_n[i]),
+    printf(fh, "  JBx_con_n[~a] = ~a;~%", i-1, JBx_n[i]),
+    printf(fh, "  JBy_con_n[~a] = ~a;~%", i-1, JBy_n[i]),
+    printf(fh, "  JBz_con_n[~a] = ~a;~%", i-1, JBz_n[i]),
+    printf(fh, "  Jphi_n[~a] = ~a;~%", i-1, Jphi_n[i]),
+    printf(fh, "  Jpsi_n[~a] = ~a;~%", i-1, Jpsi_n[i]),
+    printf(fh, "  ~%")
+  ),
+
+  /* 3a. Grab pointers to the metric and shift components */
+  printf(fh, "  const double *h_xx_nodal = &h_ij_nodal[~a]; ~%", 0*numNodes),
+  printf(fh, "  const double *h_xy_nodal = &h_ij_nodal[~a]; ~%", 1*numNodes),
+  printf(fh, "  const double *h_xz_nodal = &h_ij_nodal[~a]; ~%", 2*numNodes),
+  printf(fh, "  const double *h_yy_nodal = &h_ij_nodal[~a]; ~%", 3*numNodes),
+  printf(fh, "  const double *h_yz_nodal = &h_ij_nodal[~a]; ~%", 4*numNodes),
+  printf(fh, "  const double *h_zz_nodal = &h_ij_nodal[~a]; ~%", 5*numNodes),
+  printf(fh, "  const double *h_xx_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 0*numNodes),
+  printf(fh, "  const double *h_xy_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 1*numNodes),
+  printf(fh, "  const double *h_xz_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 2*numNodes),
+  printf(fh, "  const double *h_yy_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 3*numNodes),
+  printf(fh, "  const double *h_yz_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 4*numNodes),
+  printf(fh, "  const double *h_zz_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 5*numNodes),
+  printf(fh, "  const double *shift_nodal_x = &shift_nodal[~a]; ~%", 0*numNodes),
+  printf(fh, "  const double *shift_nodal_y = &shift_nodal[~a]; ~%", 1*numNodes),
+  printf(fh, "  const double *shift_nodal_z = &shift_nodal[~a]; ~%", 2*numNodes),
+  printf(fh, "  ~%"), 
+
+  /* 3b. Compute the vacuum consitutive relations to get 
+   E and H (covariant components) at nodes 
+   1.  H_i = \alpha h_{ij} B^j - J_c \epsilon_{ijk} \beta^j D^k 
+   2.  E_i = \alpha h_{ij} D^j + J_c \epsilon_{ijk} \beta^j B^k */
+  printf(fh, "  for (int i=0; i<~a; ++i) {~%", numNodes),
+  printf(fh, "    Hx_n[i] = lapse_nodal[i]*( h_xx_nodal[i]*JBx_con_n[i] + h_xy_nodal[i]*JBy_con_n[i] + h_xz_nodal[i]*JBz_con_n[i] ) / J_c[i] - ( shift_nodal_y[i]*JDz_con_n[i] - shift_nodal_z[i]*JDy_con_n[i]); ~%"),
+  printf(fh, "    Hy_n[i] = lapse_nodal[i]*( h_xy_nodal[i]*JBx_con_n[i] + h_yy_nodal[i]*JBy_con_n[i] + h_yz_nodal[i]*JBz_con_n[i] ) / J_c[i] - ( - shift_nodal_x[i]*JDz_con_n[i] + shift_nodal_z[i]*JDx_con_n[i]); ~%"),
+  printf(fh, "    Hz_n[i] = lapse_nodal[i]*( h_xz_nodal[i]*JBx_con_n[i] + h_yz_nodal[i]*JBy_con_n[i] + h_zz_nodal[i]*JBz_con_n[i] ) / J_c[i] - ( shift_nodal_x[i]*JDy_con_n[i] - shift_nodal_y[i]*JDx_con_n[i]); ~%"),
+  printf(fh, "    Ex_n[i] = lapse_nodal[i]*( h_xx_nodal[i]*JDx_con_n[i] + h_xy_nodal[i]*JDy_con_n[i] + h_xz_nodal[i]*JDz_con_n[i] ) / J_c[i] + ( shift_nodal_y[i]*JBz_con_n[i] - shift_nodal_z[i]*JBy_con_n[i]); ~%"),
+  printf(fh, "    Ey_n[i] = lapse_nodal[i]*( h_xy_nodal[i]*JDx_con_n[i] + h_yy_nodal[i]*JDy_con_n[i] + h_yz_nodal[i]*JDz_con_n[i] ) / J_c[i] + ( - shift_nodal_x[i]*JBz_con_n[i] + shift_nodal_z[i]*JBx_con_n[i]); ~%"),
+  printf(fh, "    Ez_n[i] = lapse_nodal[i]*( h_xz_nodal[i]*JDx_con_n[i] + h_yz_nodal[i]*JDy_con_n[i] + h_zz_nodal[i]*JDz_con_n[i] ) / J_c[i] + ( shift_nodal_x[i]*JBy_con_n[i] - shift_nodal_y[i]*JBx_con_n[i]); ~%"),
+  printf(fh, "    FD11_n[i] = chi*h_xx_inv_nodal[i]*Jphi_n[i]; ~%"),
+  printf(fh, "    FD12_n[i] = chi*h_xy_inv_nodal[i]*Jphi_n[i]; ~%"),
+  printf(fh, "    FD13_n[i] = chi*h_xz_inv_nodal[i]*Jphi_n[i]; ~%"),
+  printf(fh, "    FD21_n[i] = chi*h_xy_inv_nodal[i]*Jphi_n[i]; ~%"),
+  printf(fh, "    FD22_n[i] = chi*h_yy_inv_nodal[i]*Jphi_n[i]; ~%"),
+  printf(fh, "    FD23_n[i] = chi*h_yz_inv_nodal[i]*Jphi_n[i]; ~%"),
+  printf(fh, "    FD31_n[i] = chi*h_xz_inv_nodal[i]*Jphi_n[i]; ~%"),
+  printf(fh, "    FD32_n[i] = chi*h_yz_inv_nodal[i]*Jphi_n[i]; ~%"),
+  printf(fh, "    FD33_n[i] = chi*h_zz_inv_nodal[i]*Jphi_n[i]; ~%"),
+  printf(fh, "    FB11_n[i] = gamma*h_xx_inv_nodal[i]*Jpsi_n[i]; ~%"),
+  printf(fh, "    FB12_n[i] = gamma*h_xy_inv_nodal[i]*Jpsi_n[i]; ~%"),
+  printf(fh, "    FB13_n[i] = gamma*h_xz_inv_nodal[i]*Jpsi_n[i]; ~%"),
+  printf(fh, "    FB21_n[i] = gamma*h_xy_inv_nodal[i]*Jpsi_n[i]; ~%"),
+  printf(fh, "    FB22_n[i] = gamma*h_yy_inv_nodal[i]*Jpsi_n[i]; ~%"),
+  printf(fh, "    FB23_n[i] = gamma*h_yz_inv_nodal[i]*Jpsi_n[i]; ~%"),
+  printf(fh, "    FB31_n[i] = gamma*h_xz_inv_nodal[i]*Jpsi_n[i]; ~%"),
+  printf(fh, "    FB32_n[i] = gamma*h_yz_inv_nodal[i]*Jpsi_n[i]; ~%"),
+  printf(fh, "    FB33_n[i] = gamma*h_zz_inv_nodal[i]*Jpsi_n[i]; ~%"),
+  printf(fh, "    FPhi1_n[i] = chi*JDx_con_n[i]; ~%"),
+  printf(fh, "    FPhi2_n[i] = chi*JDy_con_n[i]; ~%"),
+  printf(fh, "    FPhi3_n[i] = chi*JDz_con_n[i]; ~%"),
+  printf(fh, "    FPsi1_n[i] = gamma*JBx_con_n[i]; ~%"),
+  printf(fh, "    FPsi2_n[i] = gamma*JBy_con_n[i]; ~%"),
+  printf(fh, "    FPsi3_n[i] = gamma*JBz_con_n[i]; ~%"),
+  printf(fh, "  }~%"),
+  printf(fh, "  ~%"), 
+
+  /* 4. Compute modal expansions of E_i and H_i */
+  Ex_nodal_list : makelist(Ex_n[i], i, 0, numNodes-1), 
+  Ey_nodal_list : makelist(Ey_n[i], i, 0, numNodes-1), 
+  Ez_nodal_list : makelist(Ez_n[i], i, 0, numNodes-1), 
+  Hx_nodal_list : makelist(Hx_n[i], i, 0, numNodes-1), 
+  Hy_nodal_list : makelist(Hy_n[i], i, 0, numNodes-1), 
+  Hz_nodal_list : makelist(Hz_n[i], i, 0, numNodes-1), 
+  FD11_list : makelist(FD11_n[i], i, 0, numNodes-1),
+  FD12_list : makelist(FD12_n[i], i, 0, numNodes-1),
+  FD13_list : makelist(FD13_n[i], i, 0, numNodes-1),
+  FD21_list : makelist(FD21_n[i], i, 0, numNodes-1),
+  FD22_list : makelist(FD22_n[i], i, 0, numNodes-1),
+  FD23_list : makelist(FD23_n[i], i, 0, numNodes-1),
+  FD31_list : makelist(FD31_n[i], i, 0, numNodes-1),
+  FD32_list : makelist(FD32_n[i], i, 0, numNodes-1),
+  FD33_list : makelist(FD33_n[i], i, 0, numNodes-1),
+  FB11_list : makelist(FB11_n[i], i, 0, numNodes-1),
+  FB12_list : makelist(FB12_n[i], i, 0, numNodes-1),
+  FB13_list : makelist(FB13_n[i], i, 0, numNodes-1),
+  FB21_list : makelist(FB21_n[i], i, 0, numNodes-1),
+  FB22_list : makelist(FB22_n[i], i, 0, numNodes-1),
+  FB23_list : makelist(FB23_n[i], i, 0, numNodes-1),
+  FB31_list : makelist(FB31_n[i], i, 0, numNodes-1),
+  FB32_list : makelist(FB32_n[i], i, 0, numNodes-1),
+  FB33_list : makelist(FB33_n[i], i, 0, numNodes-1),
+  FPhi1_list : makelist(FPhi1_n[i], i, 0, numNodes-1),
+  FPhi2_list : makelist(FPhi2_n[i], i, 0, numNodes-1),
+  FPhi3_list : makelist(FPhi3_n[i], i, 0, numNodes-1),
+  FPsi1_list : makelist(FPsi1_n[i], i, 0, numNodes-1),
+  FPsi2_list : makelist(FPsi2_n[i], i, 0, numNodes-1),
+  FPsi3_list : makelist(FPsi3_n[i], i, 0, numNodes-1),
+  Ex_e : 0, 
+  Ey_e : 0, 
+  Ez_e : 0, 
+  Hx_e : 0, 
+  Hy_e : 0, 
+  Hz_e : 0, 
+  FD11_e : 0, 
+  FD12_e : 0, 
+  FD13_e : 0, 
+  FD21_e : 0, 
+  FD22_e : 0, 
+  FD23_e : 0, 
+  FD31_e : 0, 
+  FD32_e : 0, 
+  FD33_e : 0, 
+  FB11_e : 0, 
+  FB12_e : 0, 
+  FB13_e : 0, 
+  FB21_e : 0, 
+  FB22_e : 0, 
+  FB23_e : 0, 
+  FB31_e : 0, 
+  FB32_e : 0, 
+  FB33_e : 0, 
+  FPhi1_e : 0, 
+  FPhi2_e : 0, 
+  FPhi3_e : 0, 
+  FPsi1_e : 0, 
+  FPsi2_e : 0, 
+  FPsi3_e : 0, 
+
+  for i : 1 thru numNodes do (
+    Ex_e : ratsimp(Ex_e + Ex_nodal_list[i]*basisNodalConf[i]),
+    Ey_e : ratsimp(Ey_e + Ey_nodal_list[i]*basisNodalConf[i]),
+    Ez_e : ratsimp(Ez_e + Ez_nodal_list[i]*basisNodalConf[i]),
+    Hx_e : ratsimp(Hx_e + Hx_nodal_list[i]*basisNodalConf[i]),
+    Hy_e : ratsimp(Hy_e + Hy_nodal_list[i]*basisNodalConf[i]),
+    Hz_e : ratsimp(Hz_e + Hz_nodal_list[i]*basisNodalConf[i]),
+    FD11_e : ratsimp(FD11_e + FD11_list[i]*basisNodalConf[i]),
+    FD12_e : ratsimp(FD12_e + FD12_list[i]*basisNodalConf[i]),
+    FD13_e : ratsimp(FD13_e + FD13_list[i]*basisNodalConf[i]),
+    FD21_e : ratsimp(FD21_e + FD21_list[i]*basisNodalConf[i]),
+    FD22_e : ratsimp(FD22_e + FD22_list[i]*basisNodalConf[i]),
+    FD23_e : ratsimp(FD23_e + FD23_list[i]*basisNodalConf[i]),
+    FD31_e : ratsimp(FD31_e + FD31_list[i]*basisNodalConf[i]),
+    FD32_e : ratsimp(FD32_e + FD32_list[i]*basisNodalConf[i]),
+    FD33_e : ratsimp(FD33_e + FD33_list[i]*basisNodalConf[i]),
+    FB11_e : ratsimp(FB11_e + FB11_list[i]*basisNodalConf[i]),
+    FB12_e : ratsimp(FB12_e + FB12_list[i]*basisNodalConf[i]),
+    FB13_e : ratsimp(FB13_e + FB13_list[i]*basisNodalConf[i]),
+    FB21_e : ratsimp(FB21_e + FB21_list[i]*basisNodalConf[i]),
+    FB22_e : ratsimp(FB22_e + FB22_list[i]*basisNodalConf[i]),
+    FB23_e : ratsimp(FB23_e + FB23_list[i]*basisNodalConf[i]),
+    FB31_e : ratsimp(FB31_e + FB31_list[i]*basisNodalConf[i]),
+    FB32_e : ratsimp(FB32_e + FB32_list[i]*basisNodalConf[i]),
+    FB33_e : ratsimp(FB33_e + FB33_list[i]*basisNodalConf[i]),
+    FPhi1_e : ratsimp(FPhi1_e + FPhi1_list[i]*basisNodalConf[i]),
+    FPhi2_e : ratsimp(FPhi2_e + FPhi2_list[i]*basisNodalConf[i]),
+    FPhi3_e : ratsimp(FPhi3_e + FPhi3_list[i]*basisNodalConf[i]),
+    FPsi1_e : ratsimp(FPsi1_e + FPsi1_list[i]*basisNodalConf[i]),
+    FPsi2_e : ratsimp(FPsi2_e + FPsi2_list[i]*basisNodalConf[i]),
+    FPsi3_e : ratsimp(FPsi3_e + FPsi3_list[i]*basisNodalConf[i])
+  ),
+
+  /* 5. Flux - e^{ijk}H_k and e^{ijk}E_k terms 
+    Fluxes arranged as rows: i = {1,2,3}, columns: j = JD^i {1,2,3}, JB^i {1,2,3}, Jphi {1}, J {1}
+    So eight total columns */
+  flux_vacuum : [
+    [  0,  Hz, -Hy,   0, -Ez,  Ey, 0, 0],
+    [-Hz,   0,  Hx,  Ez,   0, -Ex, 0, 0],
+    [ Hy, -Hx,   0, -Ey,  Ex,   0, 0, 0]
+  ],
+  /* perfectly hyperbolic maxwell terms*/
+  flux_perfectly_hyperbolic : [
+    [  FD11, FD12, FD13,   FB11, FB12, FB13,  FPhi1,  FPsi1],
+    [  FD21, FD22, FD23,   FB21, FB22, FB23,  FPhi2,  FPsi2],
+    [  FD31, FD32, FD33,   FB31, FB32, FB33,  FPhi3,  FPsi3]
+  ],
+  flux : flux_vacuum + flux_perfectly_hyperbolic, 
+
+  /* 6. Compute the projection of the components onto the modal basis:
+    \prac{\phi}{x^j} F^{\xi j} */
+  fluxl : subst([Ex=Ex_e, Ey=Ey_e, Ez=Ez_e, Hx=Hx_e, Hy=Hy_e, Hz=Hz_e, FD11=FD11_e, 
+    FD12=FD12_e, FD13=FD13_e, FD21=FD21_e, FD22=FD22_e, FD23=FD23_e, FD31=FD31_e, 
+    FD32=FD32_e, FD33=FD33_e, FB11=FB11_e, FB12=FB12_e, FB13=FB13_e, FB21=FB21_e, 
+    FB22=FB22_e, FB23=FB23_e, FB31=FB31_e, FB32=FB32_e, FB33=FB33_e, FPhi1=FPhi1_e, 
+    FPhi2=FPhi2_e, FPhi3=FPhi3_e, FPsi1=FPsi1_e, FPsi2=FPsi2_e, FPsi3=FPsi3_e], flux),
+  /* Each d/dxi_d test-function derivative picks up the inverse position-map
+     (mesh) Jacobian of its own direction (cell constant for the C^0 map). */
+  for d : 1 thru cdim do
+    printf(fh, "  const double jacob_pos_~a_inv = 1.0/jacob_pos[~a]; ~%", ["x","y","z"][d], (polyOrder+1)*(d-1)),
+  volTerms : sum(makelist(dxInv[d]*jacobPosInvSym[d]*calcInnerProdList(varsC, 1, diff(bC,varsC[d]), fluxl[d][i]), i, 1, 8), d, 1, cdim),
+  for m : 1 thru 8 do (
+    vt : volTerms[m],
+    writeCIncrExprs1(lhs[m], vt),
+    printf(fh, "~%")
+  ),
+  printf(fh, "} ~%")
+)$

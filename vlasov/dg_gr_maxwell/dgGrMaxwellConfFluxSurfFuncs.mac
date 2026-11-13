@@ -1,0 +1,729 @@
+/* Functions which compute the components of the surface flux in configuration space. 
+   The procedure we utilize a set of functions that compute the characteristics
+   alpha at surface quadrature points of the needed order.
+
+   We then evaluate the Lax-Friedrichs flux at each quadrature point, and then convert 
+   that back to a modal expansion of the configuration-space flux for use in the final 
+   update in hyper_dg. 
+*/
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("vlasov/dg_gr_maxwell/dg-gr-maxwell-basis.mac");
+load(stringproc)$
+fpprec : 24$
+
+clabels : ["x","y","z"]$
+dx1 : [dx10, dx11, dx12]$
+cidx(cdim) := makelist(i,i,0,cdim-1)$
+
+
+/* Phase-space Hamiltonian forces at velocity-space surface quadrature points. */
+calcConfSurfFlux(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsV,bV,varsP,bP,cid,hamil,cv,surfVars,surfCVars,bSurf,NSurf,
+   nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
+   surfNodes,numNodes,max_lambda_l, NC, vid, nbasis],
+
+  printf(fh, "#include <gkyl_dg_gr_maxwell_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const gkyl_dg_gr_maxwell_inp *meq, const double *w, const double *dxv, 
+      const int theta_pole, const double *jacob_pos_l, const double *jacob_pos_r,
+      const double *lapse_nodal, const double *shift_nodal, const double *h_ij_nodal, 
+      const double *h_ij_inv_nodal, const double *J_c, const double *field_con_l, const double *field_con_r, 
+      const double *field_no_J_con_l, const double *field_no_J_con_r, 
+      double* GKYL_RESTRICT flux_l, double* GKYL_RESTRICT flux_r, double* GKYL_RESTRICT max_alpha_quad) ~%{ ~%", funcNm),
+
+  /* Grab wave speeds for PHM */
+  printf(fh, "  const double chi = meq->chi, gamma = meq->gamma; ~%"),
+  /* Per-side inverse position-map (mesh) Jacobian in the surface direction:
+     the stored fields carry a cell-constant J_pos that jumps at the interface,
+     so each side's flux is un-weighted by its OWN cell's normal-direction
+     factor (the transverse factors are continuous and stay on the flux). */
+  printf(fh, "  const double jacob_pos_l_inv = 1.0/jacob_pos_l[~a]; ~%", (polyOrder+1)*(dir-1)),
+  printf(fh, "  const double jacob_pos_r_inv = 1.0/jacob_pos_r[~a]; ~%", (polyOrder+1)*(dir-1)),
+
+  /* Surface contribution is defined as integral(phi^- Fhat) over the surface. */
+  /* cv = variable in direction of surface update. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+  cv : varsC[dir],
+  surfCVars : delete(cv,varsC), /* Remaining configuration space variables at cv surface. */
+  [bSurf, nodes_conf, basisNodalConf, surfNodes] : loadConfSurfBasis(cdim, basisFun, polyOrder, surfCVars),
+  NSurf : length(bSurf), 
+  num_nodes_conf : length(nodes_conf), 
+  numNodes : length(surfNodes),
+  nbasis : length(bC),
+
+  /* Flux calculations */
+
+  /* 0a. Grab pointers to the metric and shift components */
+  printf(fh, "  const double *h_xx_nodal = &h_ij_nodal[~a]; ~%", 0*numNodes),
+  printf(fh, "  const double *h_xy_nodal = &h_ij_nodal[~a]; ~%", 1*numNodes),
+  printf(fh, "  const double *h_xz_nodal = &h_ij_nodal[~a]; ~%", 2*numNodes),
+  printf(fh, "  const double *h_yy_nodal = &h_ij_nodal[~a]; ~%", 3*numNodes),
+  printf(fh, "  const double *h_yz_nodal = &h_ij_nodal[~a]; ~%", 4*numNodes),
+  printf(fh, "  const double *h_zz_nodal = &h_ij_nodal[~a]; ~%", 5*numNodes),
+  printf(fh, "  const double *h_xx_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 0*numNodes),
+  printf(fh, "  const double *h_xy_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 1*numNodes),
+  printf(fh, "  const double *h_xz_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 2*numNodes),
+  printf(fh, "  const double *h_yy_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 3*numNodes),
+  printf(fh, "  const double *h_yz_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 4*numNodes),
+  printf(fh, "  const double *h_zz_inv_nodal = &h_ij_inv_nodal[~a]; ~%", 5*numNodes),
+  printf(fh, "  const double *shift_nodal_x = &shift_nodal[~a]; ~%", 0*numNodes),
+  printf(fh, "  const double *shift_nodal_y = &shift_nodal[~a]; ~%", 1*numNodes),
+  printf(fh, "  const double *shift_nodal_z = &shift_nodal[~a]; ~%", 2*numNodes),
+  printf(fh, "  ~%"), 
+
+  /* 0b. Save memory for nodal expansions */
+  /* Save the left and right states as memory */
+  /* Should max out at (p+1)^2 * 2 * */
+  for s in ["l","r"] do (
+    printf(fh, "  double JDx_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double JDy_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double JDz_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double JBx_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double JBy_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double JBz_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Jphi_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Jpsi_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Dx_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Dy_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Dz_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Bx_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double By_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Bz_con_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double phi_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double psi_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Ex_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Ey_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Ez_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Hx_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Hy_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double Hz_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FD11_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FD12_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FD13_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FD21_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FD22_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FD23_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FD31_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FD32_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FD33_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FB11_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FB12_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FB13_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FB21_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FB22_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FB23_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FB31_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FB32_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FB33_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FPhi1_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FPhi2_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FPhi3_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FPsi1_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FPsi2_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  double FPsi3_~a_n[~a] = {0.0};~%", s, numNodes),
+    printf(fh, "  ~%")
+  ),
+
+  /* Inline helper for computing left and right cases */
+  emit_side_flux(side) := block(
+    [fields_name,
+    Dxsym, Dysym, Dzsym, Bxsym, Bysym, Bzsym,
+    Dx_e, Dy_e, Dz_e, Bx_e, By_e, Bz_e,
+    Dx_n, Dy_n, Dz_n, Bx_n, By_n, Bz_n,
+    Ex_arr, Ey_arr, Ez_arr, Hx_arr, Hy_arr, Hz_arr,
+    FD11_arr, FD12_arr, FD13_arr, FD21_arr, FD22_arr, FD23_arr, FD31_arr, FD32_arr, FD33_arr,
+    FB11_arr, FB12_arr, FB13_arr, FB21_arr, FB22_arr, FB23_arr, FB31_arr, FB32_arr, FB33_arr,
+    FPhi1_arr, FPhi2_arr, FPhi3_arr, FPsi1_arr, FPsi2_arr, FPsi3_arr,
+    Ex_nodal_list, Ey_nodal_list, Ez_nodal_list,
+    Hx_nodal_list, Hy_nodal_list, Hz_nodal_list,
+    FD11_nodal_list, FD12_nodal_list, FD13_nodal_list,
+    FD21_nodal_list, FD22_nodal_list, FD23_nodal_list,
+    FD31_nodal_list, FD32_nodal_list, FD33_nodal_list,
+    FB11_nodal_list, FB12_nodal_list, FB13_nodal_list,
+    FB21_nodal_list, FB22_nodal_list, FB23_nodal_list,
+    FB31_nodal_list, FB32_nodal_list, FB33_nodal_list,
+    FPhi1_nodal_list, FPhi2_nodal_list, FPhi3_nodal_list,
+    FPsi1_nodal_list, FPsi2_nodal_list, FPsi3_nodal_list,
+    Ex_e2, Ey_e2, Ez_e2, Hx_e2, Hy_e2, Hz_e2, side_eval,
+    flux, flux_n, flux_dir],
+
+    fields_name : sconcat("field_con_", side),
+
+    JDxsym : parse_string(sconcat("JDx", side)),
+    JDysym : parse_string(sconcat("JDy", side)),
+    JDzsym : parse_string(sconcat("JDz", side)),
+    JBxsym : parse_string(sconcat("JBx", side)),
+    JBysym : parse_string(sconcat("JBy", side)),
+    JBzsym : parse_string(sconcat("JBz", side)),
+    Jphisym : parse_string(sconcat("Jphi", side)),
+    JpsiSm : parse_string(sconcat("Jpsi", side)),
+
+    /* 1. Grab modal field blocks for this side */
+    printf(fh, "  const double *JDx_~a = &~a[~a]; ~%", side, fields_name, 0*nbasis),
+    printf(fh, "  const double *JDy_~a = &~a[~a]; ~%", side, fields_name, 1*nbasis),
+    printf(fh, "  const double *JDz_~a = &~a[~a]; ~%", side, fields_name, 2*nbasis),
+    printf(fh, "  const double *JBx_~a = &~a[~a]; ~%", side, fields_name, 3*nbasis),
+    printf(fh, "  const double *JBy_~a = &~a[~a]; ~%", side, fields_name, 4*nbasis),
+    printf(fh, "  const double *JBz_~a = &~a[~a]; ~%", side, fields_name, 5*nbasis),
+    printf(fh, "  const double *Jphi_~a = &~a[~a]; ~%", side, fields_name, 6*nbasis),
+    printf(fh, "  const double *Jpsi_~a = &~a[~a]; ~%", side, fields_name, 7*nbasis),
+    printf(fh, "  ~%"),
+
+    /* bind symbolic names used by doExpand1 */
+    JDxsym : doExpand1(parse_string(sconcat("JDx_", side)), bC),
+    JDysym : doExpand1(parse_string(sconcat("JDy_", side)), bC),
+    JDzsym : doExpand1(parse_string(sconcat("JDz_", side)), bC),
+    JBxsym : doExpand1(parse_string(sconcat("JBx_", side)), bC),
+    JBysym : doExpand1(parse_string(sconcat("JBy_", side)), bC),
+    JBzsym : doExpand1(parse_string(sconcat("JBz_", side)), bC),
+    Jphisym : doExpand1(parse_string(sconcat("Jphi_", side)), bC),
+    Jpsisym : doExpand1(parse_string(sconcat("Jpsi_", side)), bC),
+
+    /* Surface data come from the left cell at cv=+1 and the right cell at cv=-1. */
+    side_eval : if side = "l" then 1 else -1,
+
+    /* 2. Nodal projection */
+    JDx_n : float(evAtNodes(subst(cv=side_eval,JDxsym), surfNodes, surfCVars)),
+    JDy_n : float(evAtNodes(subst(cv=side_eval,JDysym), surfNodes, surfCVars)),
+    JDz_n : float(evAtNodes(subst(cv=side_eval,JDzsym), surfNodes, surfCVars)),
+    JBx_n : float(evAtNodes(subst(cv=side_eval,JBxsym), surfNodes, surfCVars)),
+    JBy_n : float(evAtNodes(subst(cv=side_eval,JBysym), surfNodes, surfCVars)),
+    JBz_n : float(evAtNodes(subst(cv=side_eval,JBzsym), surfNodes, surfCVars)),
+    Jphi_n : float(evAtNodes(subst(cv=side_eval,Jphisym), surfNodes, surfCVars)),
+    Jpsi_n : float(evAtNodes(subst(cv=side_eval,Jpsisym), surfNodes, surfCVars)),
+
+    for i : 1 thru numNodes do (
+      printf(fh, "  JDx_con_~a_n[~a] = ~a;~%", side, i-1, JDx_n[i]),
+      printf(fh, "  JDy_con_~a_n[~a] = ~a;~%", side, i-1, JDy_n[i]),
+      printf(fh, "  JDz_con_~a_n[~a] = ~a;~%", side, i-1, JDz_n[i]),
+      printf(fh, "  JBx_con_~a_n[~a] = ~a;~%", side, i-1, JBx_n[i]),
+      printf(fh, "  JBy_con_~a_n[~a] = ~a;~%", side, i-1, JBy_n[i]),
+      printf(fh, "  JBz_con_~a_n[~a] = ~a;~%", side, i-1, JBz_n[i]),
+      printf(fh, "  Jphi_~a_n[~a] = ~a;~%", side, i-1, Jphi_n[i]),
+      printf(fh, "  Jpsi_~a_n[~a] = ~a;~%", side, i-1, Jpsi_n[i]),
+      printf(fh, "  ~%")
+    ),
+
+
+    fields_name_prim : sconcat("field_no_J_con_", side),
+
+    Dxsym : parse_string(sconcat("Dx", side)),
+    Dysym : parse_string(sconcat("Dy", side)),
+    Dzsym : parse_string(sconcat("Dz", side)),
+    Bxsym : parse_string(sconcat("Bx", side)),
+    Bysym : parse_string(sconcat("By", side)),
+    Bzsym : parse_string(sconcat("Bz", side)),
+    Phisym : parse_string(sconcat("phi", side)),
+    Psisym : parse_string(sconcat("psi", side)),
+
+    /* 1. Grab modal field blocks for this side */
+    printf(fh, "  const double *Dx_~a = &~a[~a]; ~%", side, fields_name_prim, 0*nbasis),
+    printf(fh, "  const double *Dy_~a = &~a[~a]; ~%", side, fields_name_prim, 1*nbasis),
+    printf(fh, "  const double *Dz_~a = &~a[~a]; ~%", side, fields_name_prim, 2*nbasis),
+    printf(fh, "  const double *Bx_~a = &~a[~a]; ~%", side, fields_name_prim, 3*nbasis),
+    printf(fh, "  const double *By_~a = &~a[~a]; ~%", side, fields_name_prim, 4*nbasis),
+    printf(fh, "  const double *Bz_~a = &~a[~a]; ~%", side, fields_name_prim, 5*nbasis),
+    printf(fh, "  const double *phi_~a = &~a[~a]; ~%", side, fields_name_prim, 6*nbasis),
+    printf(fh, "  const double *psi_~a = &~a[~a]; ~%", side, fields_name_prim, 7*nbasis),
+    printf(fh, "  ~%"),
+
+    /* bind symbolic names used by doExpand1 */
+    Dxsym : doExpand1(parse_string(sconcat("Dx_", side)), bC),
+    Dysym : doExpand1(parse_string(sconcat("Dy_", side)), bC),
+    Dzsym : doExpand1(parse_string(sconcat("Dz_", side)), bC),
+    Bxsym : doExpand1(parse_string(sconcat("Bx_", side)), bC),
+    Bysym : doExpand1(parse_string(sconcat("By_", side)), bC),
+    Bzsym : doExpand1(parse_string(sconcat("Bz_", side)), bC),
+    Phisym : doExpand1(parse_string(sconcat("phi_", side)), bC),
+    Psisym : doExpand1(parse_string(sconcat("psi_", side)), bC),
+
+    /* Surface data come from the left cell at cv=+1 and the right cell at cv=-1. */
+    side_eval : if side = "l" then 1 else -1,
+
+    /* 2. Nodal projection */
+    Dx_n : float(evAtNodes(subst(cv=side_eval,Dxsym), surfNodes, surfCVars)),
+    Dy_n : float(evAtNodes(subst(cv=side_eval,Dysym), surfNodes, surfCVars)),
+    Dz_n : float(evAtNodes(subst(cv=side_eval,Dzsym), surfNodes, surfCVars)),
+    Bx_n : float(evAtNodes(subst(cv=side_eval,Bxsym), surfNodes, surfCVars)),
+    By_n : float(evAtNodes(subst(cv=side_eval,Bysym), surfNodes, surfCVars)),
+    Bz_n : float(evAtNodes(subst(cv=side_eval,Bzsym), surfNodes, surfCVars)),
+    phi_n : float(evAtNodes(subst(cv=side_eval,Phisym), surfNodes, surfCVars)),
+    psi_n : float(evAtNodes(subst(cv=side_eval,Psisym), surfNodes, surfCVars)),
+
+    for i : 1 thru numNodes do (
+      printf(fh, "  Dx_con_~a_n[~a] = ~a;~%", side, i-1, Dx_n[i]),
+      printf(fh, "  Dy_con_~a_n[~a] = ~a;~%", side, i-1, Dy_n[i]),
+      printf(fh, "  Dz_con_~a_n[~a] = ~a;~%", side, i-1, Dz_n[i]),
+      printf(fh, "  Bx_con_~a_n[~a] = ~a;~%", side, i-1, Bx_n[i]),
+      printf(fh, "  By_con_~a_n[~a] = ~a;~%", side, i-1, By_n[i]),
+      printf(fh, "  Bz_con_~a_n[~a] = ~a;~%", side, i-1, Bz_n[i]),
+      printf(fh, "  phi_~a_n[~a] = ~a;~%", side, i-1, phi_n[i]),
+      printf(fh, "  psi_~a_n[~a] = ~a;~%", side, i-1, psi_n[i]),
+      printf(fh, "  ~%")
+    ),
+
+    /* (Extra) Boundary Step for theta Poles */
+    printf(fh, "  // If at a theta pole, zero out B^(theta), and D^(theta) ~%"),
+    printf(fh, "  if ( theta_pole ) { ~%"),
+    for i : 1 thru numNodes do (
+      /* printf(fh, "    phi_~a_n[~a] = ~a;~%", side, i-1, 0.0),
+      printf(fh, "    psi_~a_n[~a] = ~a;~%", side, i-1, 0.0), */
+      printf(fh, "    Dy_con_~a_n[~a] = ~a;~%", side, i-1, 0.0),
+      printf(fh, "    By_con_~a_n[~a] = ~a;~%", side, i-1, 0.0)
+    ),
+    printf(fh, "  } ~%"),
+    printf(fh, "  ~%"),
+
+    /* 3. Constitutive relations */
+    printf(fh, "  // Away from the theta pole use conservative variables, otherwise use primative ~%"),
+    printf(fh, "  if ( theta_pole == 0 ) { ~%"),
+    printf(fh, "    for (int i=0; i<~a; ++i) {~%", numNodes),
+    printf(fh, "      Hx_~a_n[i] = lapse_nodal[i]*( h_xx_nodal[i]*JBx_con_~a_n[i] + h_xy_nodal[i]*JBy_con_~a_n[i] + h_xz_nodal[i]*JBz_con_~a_n[i] ) / J_c[i] - ( shift_nodal_y[i]*JDz_con_~a_n[i] - shift_nodal_z[i]*JDy_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Hy_~a_n[i] = lapse_nodal[i]*( h_xy_nodal[i]*JBx_con_~a_n[i] + h_yy_nodal[i]*JBy_con_~a_n[i] + h_yz_nodal[i]*JBz_con_~a_n[i] ) / J_c[i] - ( - shift_nodal_x[i]*JDz_con_~a_n[i] + shift_nodal_z[i]*JDx_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Hz_~a_n[i] = lapse_nodal[i]*( h_xz_nodal[i]*JBx_con_~a_n[i] + h_yz_nodal[i]*JBy_con_~a_n[i] + h_zz_nodal[i]*JBz_con_~a_n[i] ) / J_c[i] - ( shift_nodal_x[i]*JDy_con_~a_n[i] - shift_nodal_y[i]*JDx_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Ex_~a_n[i] = lapse_nodal[i]*( h_xx_nodal[i]*JDx_con_~a_n[i] + h_xy_nodal[i]*JDy_con_~a_n[i] + h_xz_nodal[i]*JDz_con_~a_n[i] ) / J_c[i] + ( shift_nodal_y[i]*JBz_con_~a_n[i] - shift_nodal_z[i]*JBy_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Ey_~a_n[i] = lapse_nodal[i]*( h_xy_nodal[i]*JDx_con_~a_n[i] + h_yy_nodal[i]*JDy_con_~a_n[i] + h_yz_nodal[i]*JDz_con_~a_n[i] ) / J_c[i] + ( - shift_nodal_x[i]*JBz_con_~a_n[i] + shift_nodal_z[i]*JBx_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Ez_~a_n[i] = lapse_nodal[i]*( h_xz_nodal[i]*JDx_con_~a_n[i] + h_yz_nodal[i]*JDy_con_~a_n[i] + h_zz_nodal[i]*JDz_con_~a_n[i] ) / J_c[i] + ( shift_nodal_x[i]*JBy_con_~a_n[i] - shift_nodal_y[i]*JBx_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      FD11_~a_n[i] = chi*h_xx_inv_nodal[i]*Jphi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FD12_~a_n[i] = chi*h_xy_inv_nodal[i]*Jphi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FD13_~a_n[i] = chi*h_xz_inv_nodal[i]*Jphi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FD21_~a_n[i] = chi*h_xy_inv_nodal[i]*Jphi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FD22_~a_n[i] = chi*h_yy_inv_nodal[i]*Jphi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FD23_~a_n[i] = chi*h_yz_inv_nodal[i]*Jphi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FD31_~a_n[i] = chi*h_xz_inv_nodal[i]*Jphi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FD32_~a_n[i] = chi*h_yz_inv_nodal[i]*Jphi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FD33_~a_n[i] = chi*h_zz_inv_nodal[i]*Jphi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FB11_~a_n[i] = gamma*h_xx_inv_nodal[i]*Jpsi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FB12_~a_n[i] = gamma*h_xy_inv_nodal[i]*Jpsi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FB13_~a_n[i] = gamma*h_xz_inv_nodal[i]*Jpsi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FB21_~a_n[i] = gamma*h_xy_inv_nodal[i]*Jpsi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FB22_~a_n[i] = gamma*h_yy_inv_nodal[i]*Jpsi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FB23_~a_n[i] = gamma*h_yz_inv_nodal[i]*Jpsi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FB31_~a_n[i] = gamma*h_xz_inv_nodal[i]*Jpsi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FB32_~a_n[i] = gamma*h_yz_inv_nodal[i]*Jpsi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FB33_~a_n[i] = gamma*h_zz_inv_nodal[i]*Jpsi_~a_n[i]; ~%", side, side),
+    printf(fh, "      FPhi1_~a_n[i] = chi*JDx_con_~a_n[i]; ~%", side, side, side),
+    printf(fh, "      FPhi2_~a_n[i] = chi*JDy_con_~a_n[i]; ~%", side, side, side),
+    printf(fh, "      FPhi3_~a_n[i] = chi*JDz_con_~a_n[i]; ~%", side, side, side),
+    printf(fh, "      FPsi1_~a_n[i] = gamma*JBx_con_~a_n[i]; ~%", side, side, side),
+    printf(fh, "      FPsi2_~a_n[i] = gamma*JBy_con_~a_n[i]; ~%", side, side, side),
+    printf(fh, "      FPsi3_~a_n[i] = gamma*JBz_con_~a_n[i]; ~%", side, side, side),
+    printf(fh, "    }~%"),
+    printf(fh, "  }~%"),
+    printf(fh, "  else {~%"),
+    printf(fh, "    for (int i=0; i<~a; ++i) {~%", numNodes),
+    printf(fh, "      Hx_~a_n[i] = lapse_nodal[i]*( h_xx_nodal[i]*Bx_con_~a_n[i] + h_xy_nodal[i]*By_con_~a_n[i] + h_xz_nodal[i]*Bz_con_~a_n[i] ) - J_c[i]*( shift_nodal_y[i]*Dz_con_~a_n[i] - shift_nodal_z[i]*Dy_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Hy_~a_n[i] = lapse_nodal[i]*( h_xy_nodal[i]*Bx_con_~a_n[i] + h_yy_nodal[i]*By_con_~a_n[i] + h_yz_nodal[i]*Bz_con_~a_n[i] ) - J_c[i]*( - shift_nodal_x[i]*Dz_con_~a_n[i] + shift_nodal_z[i]*Dx_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Hz_~a_n[i] = lapse_nodal[i]*( h_xz_nodal[i]*Bx_con_~a_n[i] + h_yz_nodal[i]*By_con_~a_n[i] + h_zz_nodal[i]*Bz_con_~a_n[i] ) - J_c[i]*( shift_nodal_x[i]*Dy_con_~a_n[i] - shift_nodal_y[i]*Dx_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Ex_~a_n[i] = lapse_nodal[i]*( h_xx_nodal[i]*Dx_con_~a_n[i] + h_xy_nodal[i]*Dy_con_~a_n[i] + h_xz_nodal[i]*Dz_con_~a_n[i] ) + J_c[i]*( shift_nodal_y[i]*Bz_con_~a_n[i] - shift_nodal_z[i]*By_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Ey_~a_n[i] = lapse_nodal[i]*( h_xy_nodal[i]*Dx_con_~a_n[i] + h_yy_nodal[i]*Dy_con_~a_n[i] + h_yz_nodal[i]*Dz_con_~a_n[i] ) + J_c[i]*( - shift_nodal_x[i]*Bz_con_~a_n[i] + shift_nodal_z[i]*Bx_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    printf(fh, "      Ez_~a_n[i] = lapse_nodal[i]*( h_xz_nodal[i]*Dx_con_~a_n[i] + h_yz_nodal[i]*Dy_con_~a_n[i] + h_zz_nodal[i]*Dz_con_~a_n[i] ) + J_c[i]*( shift_nodal_x[i]*By_con_~a_n[i] - shift_nodal_y[i]*Bx_con_~a_n[i]); ~%",
+      side, side, side, side, side, side),
+    /* These terms are set to zero since they goes as h^{ij} ~ func/Jc^2 * J_c which is un-defined as J_c goes to zero 
+     However, there might be terms such that func = Jc and this is not zero. For KS:
+      J_c h^{rr}       ~ sin(theta) -> 0
+      J_c h^{r phi}    ~ sin(theta) -> 0
+      J_c h^{theta theta} ~ sin(theta) -> 0
+      J_c h^{phi phi}  ~ 1/sin(theta) -> undefined/diverges,
+     So I've just set these terms to zero as all are zero or undefined. 
+     Commented out since we might as well not even print them to reduce file usage  */
+    /* printf(fh, "      FD11_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FD12_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FD13_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FD21_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FD22_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FD23_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FD31_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FD32_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FD33_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FB11_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FB12_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FB13_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FB21_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FB22_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FB23_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FB31_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FB32_~a_n[i] = 0.0; ~%", side),
+    printf(fh, "      FB33_~a_n[i] = 0.0; ~%", side), */
+    /* These terms are zero too, but more clearly as J_c -> 0*/
+    /* printf(fh, "      FPhi1_~a_n[i] = J_c[i]*(chi*lapse_nodal[i]*Dx_con_~a_n[i] - shift_nodal_x[i]*phi_~a_n[i]); ~%", side, side, side),
+    printf(fh, "      FPhi2_~a_n[i] = J_c[i]*(chi*lapse_nodal[i]*Dy_con_~a_n[i] - shift_nodal_y[i]*phi_~a_n[i]); ~%", side, side, side),
+    printf(fh, "      FPhi3_~a_n[i] = J_c[i]*(chi*lapse_nodal[i]*Dz_con_~a_n[i] - shift_nodal_z[i]*phi_~a_n[i]); ~%", side, side, side),
+    printf(fh, "      FPsi1_~a_n[i] = J_c[i]*(gamma*lapse_nodal[i]*Bx_con_~a_n[i] - shift_nodal_x[i]*psi_~a_n[i]); ~%", side, side, side),
+    printf(fh, "      FPsi2_~a_n[i] = J_c[i]*(gamma*lapse_nodal[i]*By_con_~a_n[i] - shift_nodal_y[i]*psi_~a_n[i]); ~%", side, side, side),
+    printf(fh, "      FPsi3_~a_n[i] = J_c[i]*(gamma*lapse_nodal[i]*Bz_con_~a_n[i] - shift_nodal_z[i]*psi_~a_n[i]); ~%", side, side, side), */
+    printf(fh, "    }~%"),
+    printf(fh, "  }~%"),
+    printf(fh, "  ~%"),
+
+    /* 4. Symbolic nodal lists */
+    Ex_arr : parse_string(sconcat("Ex_", side, "_n")),
+    Ey_arr : parse_string(sconcat("Ey_", side, "_n")),
+    Ez_arr : parse_string(sconcat("Ez_", side, "_n")),
+    Hx_arr : parse_string(sconcat("Hx_", side, "_n")),
+    Hy_arr : parse_string(sconcat("Hy_", side, "_n")),
+    Hz_arr : parse_string(sconcat("Hz_", side, "_n")),
+    FD11_arr : parse_string(sconcat("FD11_", side, "_n")),
+    FD12_arr : parse_string(sconcat("FD12_", side, "_n")),
+    FD13_arr : parse_string(sconcat("FD13_", side, "_n")),
+    FD21_arr : parse_string(sconcat("FD21_", side, "_n")),
+    FD22_arr : parse_string(sconcat("FD22_", side, "_n")),
+    FD23_arr : parse_string(sconcat("FD23_", side, "_n")),
+    FD31_arr : parse_string(sconcat("FD31_", side, "_n")),
+    FD32_arr : parse_string(sconcat("FD32_", side, "_n")),
+    FD33_arr : parse_string(sconcat("FD33_", side, "_n")),
+    FB11_arr : parse_string(sconcat("FB11_", side, "_n")),
+    FB12_arr : parse_string(sconcat("FB12_", side, "_n")),
+    FB13_arr : parse_string(sconcat("FB13_", side, "_n")),
+    FB21_arr : parse_string(sconcat("FB21_", side, "_n")),
+    FB22_arr : parse_string(sconcat("FB22_", side, "_n")),
+    FB23_arr : parse_string(sconcat("FB23_", side, "_n")),
+    FB31_arr : parse_string(sconcat("FB31_", side, "_n")),
+    FB32_arr : parse_string(sconcat("FB32_", side, "_n")),
+    FB33_arr : parse_string(sconcat("FB33_", side, "_n")),
+    FPhi1_arr : parse_string(sconcat("FPhi1_", side, "_n")),
+    FPhi2_arr : parse_string(sconcat("FPhi2_", side, "_n")),
+    FPhi3_arr : parse_string(sconcat("FPhi3_", side, "_n")),
+    FPsi1_arr : parse_string(sconcat("FPsi1_", side, "_n")),
+    FPsi2_arr : parse_string(sconcat("FPsi2_", side, "_n")),
+    FPsi3_arr : parse_string(sconcat("FPsi3_", side, "_n")),
+
+    Ex_nodal_list : makelist(Ex_arr[i], i, 0, numNodes-1),
+    Ey_nodal_list : makelist(Ey_arr[i], i, 0, numNodes-1),
+    Ez_nodal_list : makelist(Ez_arr[i], i, 0, numNodes-1),
+    Hx_nodal_list : makelist(Hx_arr[i], i, 0, numNodes-1),
+    Hy_nodal_list : makelist(Hy_arr[i], i, 0, numNodes-1),
+    Hz_nodal_list : makelist(Hz_arr[i], i, 0, numNodes-1),
+    FD11_nodal_list : makelist(FD11_arr[i], i, 0, numNodes-1),
+    FD12_nodal_list : makelist(FD12_arr[i], i, 0, numNodes-1),
+    FD13_nodal_list : makelist(FD13_arr[i], i, 0, numNodes-1),
+    FD21_nodal_list : makelist(FD21_arr[i], i, 0, numNodes-1),
+    FD22_nodal_list : makelist(FD22_arr[i], i, 0, numNodes-1),
+    FD23_nodal_list : makelist(FD23_arr[i], i, 0, numNodes-1),
+    FD31_nodal_list : makelist(FD31_arr[i], i, 0, numNodes-1),
+    FD32_nodal_list : makelist(FD32_arr[i], i, 0, numNodes-1),
+    FD33_nodal_list : makelist(FD33_arr[i], i, 0, numNodes-1),
+    FB11_nodal_list : makelist(FB11_arr[i], i, 0, numNodes-1),
+    FB12_nodal_list : makelist(FB12_arr[i], i, 0, numNodes-1),
+    FB13_nodal_list : makelist(FB13_arr[i], i, 0, numNodes-1),
+    FB21_nodal_list : makelist(FB21_arr[i], i, 0, numNodes-1),
+    FB22_nodal_list : makelist(FB22_arr[i], i, 0, numNodes-1),
+    FB23_nodal_list : makelist(FB23_arr[i], i, 0, numNodes-1),
+    FB31_nodal_list : makelist(FB31_arr[i], i, 0, numNodes-1),
+    FB32_nodal_list : makelist(FB32_arr[i], i, 0, numNodes-1),
+    FB33_nodal_list : makelist(FB33_arr[i], i, 0, numNodes-1),
+    FPhi1_nodal_list : makelist(FPhi1_arr[i], i, 0, numNodes-1),
+    FPhi2_nodal_list : makelist(FPhi2_arr[i], i, 0, numNodes-1),
+    FPhi3_nodal_list : makelist(FPhi3_arr[i], i, 0, numNodes-1),
+    FPsi1_nodal_list : makelist(FPsi1_arr[i], i, 0, numNodes-1),
+    FPsi2_nodal_list : makelist(FPsi2_arr[i], i, 0, numNodes-1),
+    FPsi3_nodal_list : makelist(FPsi3_arr[i], i, 0, numNodes-1),
+
+    /* 5. Flux - e^{ijk}H_k and e^{ijk}E_k terms 
+      Fluxes arranged as rows: i = {1,2,3}, columns: j = JD^i {1,2,3}, JB^i {1,2,3}, Jphi {1}, J {1}
+      So eight total columns */
+    flux_vacuum : [
+      [  0,  Hz, -Hy,   0, -Ez,  Ey, 0, 0],
+      [-Hz,   0,  Hx,  Ez,   0, -Ex, 0, 0],
+      [ Hy, -Hx,   0, -Ey,  Ex,   0, 0, 0]
+    ],
+    /* perfectly hyperbolic maxwell terms*/
+    flux_perfectly_hyperbolic : [
+      [  FD11, FD12, FD13,   FB11, FB12, FB13,  FPhi1,  FPsi1],
+      [  FD21, FD22, FD23,   FB21, FB22, FB23,  FPhi2,  FPsi2],
+      [  FD31, FD32, FD33,   FB31, FB32, FB33,  FPhi3,  FPsi3]
+    ],
+    flux : flux_vacuum + flux_perfectly_hyperbolic, 
+    flux_dir : flux[dir],
+
+    /* Subsitute in the nodal values in the same order as ev on nodes and return */
+    return(
+      makelist(
+        makelist(
+          float(subst([
+            Ex = Ex_nodal_list[j],
+            Ey = Ey_nodal_list[j],
+            Ez = Ez_nodal_list[j],
+            Hx = Hx_nodal_list[j],
+            Hy = Hy_nodal_list[j],
+            Hz = Hz_nodal_list[j],
+            FD11 = FD11_nodal_list[j],
+            FD12 = FD12_nodal_list[j],
+            FD13 = FD13_nodal_list[j],
+            FD21 = FD21_nodal_list[j],
+            FD22 = FD22_nodal_list[j],
+            FD23 = FD23_nodal_list[j],
+            FD31 = FD31_nodal_list[j],
+            FD32 = FD32_nodal_list[j],
+            FD33 = FD33_nodal_list[j],
+            FB11 = FB11_nodal_list[j],
+            FB12 = FB12_nodal_list[j],
+            FB13 = FB13_nodal_list[j],
+            FB21 = FB21_nodal_list[j],
+            FB22 = FB22_nodal_list[j],
+            FB23 = FB23_nodal_list[j],
+            FB31 = FB31_nodal_list[j],
+            FB32 = FB32_nodal_list[j],
+            FB33 = FB33_nodal_list[j],
+            FPhi1 = FPhi1_nodal_list[j],
+            FPhi2 = FPhi2_nodal_list[j],
+            FPhi3 = FPhi3_nodal_list[j],
+            FPsi1 = FPsi1_nodal_list[j],
+            FPsi2 = FPsi2_nodal_list[j],
+            FPsi3 = FPsi3_nodal_list[j]
+          ], flux_dir[i])),
+          j, 1, numNodes
+        ),
+        i, 1, length(flux_dir)
+      )
+    )
+  ),
+
+  /* Left and right fluxes */
+  flux_n_l : emit_side_flux("l"),
+  flux_n_r : emit_side_flux("r"),
+
+  /* 6. Save the fluxes */
+  num_field_components : 8, 
+  printf(fh, "  double *flux_l_quad; ~%"),
+  printf(fh, "  double *flux_r_quad; ~%"),
+  for i : 1 thru num_field_components do (
+    printf(fh, "  flux_l_quad = &flux_l[~a]; ~%", (i-1)*numNodes),
+    printf(fh, "  flux_r_quad = &flux_r[~a]; ~%", (i-1)*numNodes),
+    for j : 1 thru numNodes do (
+      printf(fh, "  flux_l_quad[~a] = jacob_pos_l_inv*(~a); ~%", j-1, flux_n_l[i][j]),
+      printf(fh, "  flux_r_quad[~a] = jacob_pos_r_inv*(~a); ~%", j-1, flux_n_r[i][j])
+    )
+  ), 
+  printf(fh, "  ~%"),
+
+  /* For reference: */    
+  /* volTerms : sum(makelist(dxInv[d]*calcInnerProdList(varsC, 1, diff(bC,varsC[d]), fluxl[d][i]), i, 1, 6), d, 1, cdim), */
+
+
+  /* Characteristic Computation */
+
+  /* 1. Compute the speeds (eigenvalues) at nodal points
+    - First Eigenvalue: Repeated 0 
+    - Other two eigenvalue pairs are -\beta^i +\- \alpha Jsurf_i / Jc
+    - Six eigenvalues total for the system.
+    - Select the direction of eigenvalues using dir 
+    - Maxed over all eigenvalue magnitudes in a specific direction:
+      max|\lambda^i| = max(0,|-\beta^i + \alpha Jsurf_i / Jc|,|\beta^i - \alpha Jsurf_i / Jc|)
+      all eigenvalues have multiplicity 2 */
+  printf(fh, "  double lambda_1[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double lambda_2[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double lambda_3[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double lambda_4[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double lambda_5[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double lambda_6[~a] = {0.0};~%", numNodes),
+  printf(fh, "  for (int i=0; i<~a; ++i) {~%", numNodes),
+  printf(fh, "    if (theta_pole == 0) {~%"),
+  if dir = 1 then (
+    printf(fh, "    lambda_1[i] =   chi * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_2[i] = - chi * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_3[i] =   gamma * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_4[i] = - gamma * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_5[i] = -shift_nodal_x[i] + lapse_nodal[i] * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_6[i] = -shift_nodal_x[i] - lapse_nodal[i] * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_1[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_2[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_3[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_4[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_5[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_6[i] ));~%"),
+    printf(fh, "    }~%"),
+    /* Add the asymptotic limit at the pole of \lambda * J_c */
+    printf(fh, "    else {"),
+    printf(fh, "      lambda_1[i] =   chi * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] );~%"),
+    printf(fh, "      lambda_2[i] = - chi * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] );~%"),
+    printf(fh, "      lambda_3[i] =   gamma * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] );~%"),
+    printf(fh, "      lambda_4[i] = - gamma * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] );~%"),
+    printf(fh, "      lambda_5[i] =   lapse_nodal[i] * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] );~%"),
+    printf(fh, "      lambda_6[i] = - lapse_nodal[i] * sqrt( h_yy_nodal[i] * h_zz_nodal[i] - h_yz_nodal[i] * h_yz_nodal[i] );~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_1[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_2[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_3[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_4[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_5[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_6[i] ));~%"),
+    printf(fh, "  }~%")
+  )
+  else if dir = 2 then (
+    printf(fh, "    lambda_1[i] =   chi * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_2[i] = - chi * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_3[i] =   gamma * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_4[i] = - gamma * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_5[i] = -shift_nodal_y[i] + lapse_nodal[i] * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_6[i] = -shift_nodal_y[i] - lapse_nodal[i] * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_1[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_2[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_3[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_4[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_5[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_6[i] ));~%"),
+    printf(fh, "    }~%"),
+    /* Add the asymptotic limit at the pole of \lambda * J_c */
+    printf(fh, "    else {"),
+    printf(fh, "      lambda_1[i] =   chi * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] );~%"),
+    printf(fh, "      lambda_2[i] = - chi * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] );~%"),
+    printf(fh, "      lambda_3[i] =   gamma * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] );~%"),
+    printf(fh, "      lambda_4[i] = - gamma * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] );~%"),
+    printf(fh, "      lambda_5[i] =   lapse_nodal[i] * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] );~%"),
+    printf(fh, "      lambda_6[i] = - lapse_nodal[i] * sqrt( h_xx_nodal[i] * h_zz_nodal[i] - h_xz_nodal[i] * h_xz_nodal[i] );~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_1[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_2[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_3[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_4[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_5[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_6[i] ));~%"),
+    printf(fh, "  }~%")
+  )
+  else if dir = 3 then (
+    printf(fh, "    lambda_1[i] =   chi * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_2[i] = - chi * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_3[i] =   gamma * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_4[i] = - gamma * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_5[i] = -shift_nodal_z[i] + lapse_nodal[i] * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    lambda_6[i] = -shift_nodal_z[i] - lapse_nodal[i] * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] )/J_c[i];~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_1[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_2[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_3[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_4[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_5[i] ));~%"),
+    printf(fh, "    max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_6[i] ));~%"),
+    printf(fh, "    }~%"),
+    /* Add the asymptotic limit at the pole of \lambda * J_c */
+    printf(fh, "    else {"),
+    printf(fh, "      lambda_1[i] =   chi * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] );~%"),
+    printf(fh, "      lambda_2[i] = - chi * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] );~%"),
+    printf(fh, "      lambda_3[i] =   gamma * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] );~%"),
+    printf(fh, "      lambda_4[i] = - gamma * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] );~%"),
+    printf(fh, "      lambda_5[i] =   lapse_nodal[i] * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] );~%"),
+    printf(fh, "      lambda_6[i] = - lapse_nodal[i] * sqrt( h_xx_nodal[i] * h_yy_nodal[i] - h_xy_nodal[i] * h_xy_nodal[i] );~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_1[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_2[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_3[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_4[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_5[i] ));~%"),
+    printf(fh, "      max_alpha_quad[i] = fmax(max_alpha_quad[i], fabs( lambda_6[i] ));~%"),
+    printf(fh, "  }~%")
+  ),
+  printf(fh, "  }~%"),
+
+  printf(fh, "~%"),
+  printf(fh, "} ~%")
+)$ 
+
+/* Nodal Lax-Friedrichs to modal configuration-space flux. */
+calcNodalLaxConfFlux(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsV,bV,varsP,bP,cid,
+   surfVars,surfCVars,bSurf,NSurf,
+   nodes_conf,basisNodalConf,num_nodes_conf,nodes_vel,basisNodalVel,num_nodes_vel,
+   surfNodes,numNodes,jacob_edge,jacob_vi_surf,jacob_surf_tot,
+   f_l_e,f_r_e,f_l_n,f_r_n,lax_list,lax_e,Ghat_c,nbasis],
+
+
+  printf(fh, "#include <gkyl_dg_gr_maxwell_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *dxv, const int theta_pole,
+      const double *jacob_pos_l, const double *jacob_pos_r,
+      const double *J_c, const double *flux_l, const double *flux_r, const double *max_alpha_quad, 
+      const double *field_con_l, const double *field_con_r, const double *field_no_J_con_l, const double *field_no_J_con_r,
+       double* GKYL_RESTRICT conf_flux_surf) ~%{ ~%", funcNm),
+
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder), 
+  cid : cidx(cdim),
+  printf(fh, "  double dx1~a = 2.0/dxv[~a]; ~%", dir-1, cid[dir]),
+  /* Per-side inverse position-map Jacobian in the surface direction: un-weights
+     each side's stored fields in the Lax dissipation; the CFL rate carries the
+     current (r) cell's factor, since this cell owns the flux and accumulates
+     the estimate. */
+  printf(fh, "  const double jacob_pos_l_inv = 1.0/jacob_pos_l[~a]; ~%", (polyOrder+1)*(dir-1)),
+  printf(fh, "  const double jacob_pos_r_inv = 1.0/jacob_pos_r[~a]; ~%", (polyOrder+1)*(dir-1)),
+  printf(fh, "~%"),
+
+  cv : varsC[dir], 
+  surfCVars : delete(cv,varsC), 
+  [bSurf, nodes_conf, basisNodalConf, surfNodes] : loadConfSurfBasis(cdim, basisFun, polyOrder, surfCVars),
+  NSurf : length(bSurf), 
+  num_nodes_conf : length(nodes_conf), 
+  numNodes : length(surfNodes),
+  nbasis : length(bC),
+
+  /* Extra "8" shift is for 6 field + 2 auxiliary fields in size */
+  printf(fh, "  double *out = &conf_flux_surf[~a]; ~%", 8*(dir-1)*numNodes),
+  printf(fh, "  double alpha_max = 0.0; ~%"), 
+  printf(fh, "  const double *em_l; ~%"),
+  printf(fh, "  const double *em_r; ~%"),
+  printf(fh, "  const double *em_no_J_l; ~%"),
+  printf(fh, "  const double *em_no_J_r; ~%"),
+  printf(fh, "  const double *flux_l_quad; ~%"),
+  printf(fh, "  const double *flux_r_quad; ~%"),
+
+  /* Fill all 8 em components in this kernel */
+  num_field_components : 8, 
+  printf(fh, "  for (int i=0; i<~a; ++i) {~%", num_field_components),
+  /* Grab the specific set of fields, offset by i*numnodes, 
+   so now we can just do regular iterative over the number of nodes for each field type */
+  printf(fh, "    em_l = &field_con_l[i*~a]; ~%", nbasis),
+  printf(fh, "    em_r = &field_con_r[i*~a]; ~%", nbasis),
+  printf(fh, "    em_no_J_l = &field_no_J_con_l[i*~a]; ~%", nbasis),
+  printf(fh, "    em_no_J_r = &field_no_J_con_r[i*~a]; ~%", nbasis),
+  printf(fh, "    flux_l_quad = &flux_l[i*~a]; ~%", numNodes),
+  printf(fh, "    flux_r_quad = &flux_r[i*~a]; ~%", numNodes),
+  /* Create expansions of fluxes on the volume basis. */
+  em_l_e : doExpand1(em_l, bC),
+  em_r_e : doExpand1(em_r, bC),
+  em_no_J_l_e : doExpand1(em_no_J_l, bC),
+  em_no_J_r_e : doExpand1(em_no_J_r, bC),
+  /* Project onto the right and left surfaces. */
+  em_l_n : float(evAtNodes(subst(cv=1,em_l_e),surfNodes,surfCVars)), 
+  em_r_n : float(evAtNodes(subst(cv=-1,em_r_e),surfNodes,surfCVars)),
+  em_no_J_l_n : float(evAtNodes(subst(cv=1,em_no_J_l_e),surfNodes,surfCVars)), 
+  em_no_J_r_n : float(evAtNodes(subst(cv=-1,em_no_J_r_e),surfNodes,surfCVars)),
+  printf(fh, "    double Q_l_quad = 0.0; ~%"), 
+  printf(fh, "    double Q_r_quad = 0.0; ~%"),
+  printf(fh, "    double U_l_quad = 0.0; ~%"), 
+  printf(fh, "    double U_r_quad = 0.0; ~%"),
+  printf(fh, "    // At the pole max_alpha_quad includes Jc multiplication already to get the correct asymptotic limit from pre-computed values ~%"),
+  for j : 1 thru numNodes do (
+    printf(fh, "    alpha_max = fmax(alpha_max, fabs(max_alpha_quad[~a])); ~%", j-1), 
+    printf(fh, "    Q_l_quad = jacob_pos_l_inv*(~a); ~%", em_l_n[j]), 
+    printf(fh, "    Q_r_quad = jacob_pos_r_inv*(~a); ~%", em_r_n[j]), 
+    printf(fh, "    U_l_quad = jacob_pos_l_inv*(~a); ~%", em_no_J_l_n[j]), 
+    printf(fh, "    U_r_quad = jacob_pos_r_inv*(~a); ~%", em_no_J_r_n[j]), 
+    /* Jc needs to be multiplied back in to convert between primitive and conserved variables */
+    /* max_alpha_quad at theta_pole includes Jc multiplication already to get the correct asymptotic limit */
+    printf(fh, "    if (theta_pole) { ~%"), 
+    printf(fh, "      out[~a+i*~a] = 0.5*((flux_r_quad[~a] + flux_l_quad[~a]) - fabs(max_alpha_quad[~a])*(U_r_quad - U_l_quad)); ~%", j-1, numNodes, j-1, j-1, j-1, j-1, j-1),
+    printf(fh, "    }~%"),
+    printf(fh, "    else {~%"),
+    printf(fh, "      out[~a+i*~a] = 0.5*((flux_r_quad[~a] + flux_l_quad[~a]) - fabs(max_alpha_quad[~a])*(Q_r_quad - Q_l_quad)); ~%", j-1, numNodes, j-1, j-1, j-1, j-1, j-1),
+    printf(fh, "    }~%")
+  ), 
+  printf(fh, "  }~%"),
+  printf(fh, "  ~%"),
+
+  /* Estimate stable time step from the maximum quadrature point evaluation;
+     the physical cell width in this direction is J_pos*dx, so use the
+     larger inverse Jacobian of the two cells sharing this interface
+     (the smaller physical cell is the most restrictive). */
+  printf(fh, "  return ~a*~a*fmax(jacob_pos_l_inv,jacob_pos_r_inv)*alpha_max;~%", float(0.5*(2*polyOrder+1)), dx1[dir]),
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+)$ 

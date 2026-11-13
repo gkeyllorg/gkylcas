@@ -9,13 +9,13 @@ fpprec : 24$
 
 /* Serendipity basis. */
 minPolyOrder_Ser : 1$
-maxPolyOrder_Ser : 2$
+maxPolyOrder_Ser : 3$
 minCdim_Ser : 1$
 maxCdim_Ser : 3$
 
 /* Tensor product basis. */
 minPolyOrder_Tensor : 1$
-maxPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 3$
 minCdim_Tensor : 1$
 maxCdim_Tensor : 3$
 
@@ -23,6 +23,7 @@ maxCdim_Tensor : 3$
 minCdim_hyb : 1$
 maxCdim_hyb : 3$
 vDims_hyb : [[1,2,3], [1,2,3], [1,2,3]]$  /* Vdim for each of Cdim. */
+
 
 /* GK hybrid basis. */
 minCdim_gkhyb : 1$
@@ -94,6 +95,8 @@ genSurfQuadEvKernelHyb(cdim, vdim, basisName) := block(
 
   if basisName = "hyb" then (
     [varsC,bC,varsP,bP] : loadPhaseBasis(basisName, cdim, vdim, 1)
+  ) elseif basisName = "tenhyb" then (
+    [varsC,bC,varsP,bP] : loadTensorHybridBasis(basisName, cdim, vdim)
   ) elseif basisName = "gkhyb" then (
     [varsC,bC,varsP,bP,vsub] : loadGkBasis(basisName, cdim, vdim, 1)
   ),
@@ -109,6 +112,8 @@ genSurfQuadEvKernelHyb(cdim, vdim, basisName) := block(
     /* Surface nodes given by tensor product of Gauss-Legendre quadrature points */
     if basisName = "hyb" then (
       surfNodes : gaussOrdHyb(1+1, surf_cdim, surf_vdim)
+    ) elseif basisName = "tenhyb" then (
+      surfNodes : gaussOrdTenHyb(2, 4, surf_cdim, surf_vdim)
     ) elseif basisName = "gkhyb" then (
       varsV : listify(setdifference(setify(varsP),setify(varsC))), 
       surfcvars : delete(xv, varsC),
@@ -162,7 +167,7 @@ for bInd : 1 thru length(bName) do (
       disp(printf(false,sconcat("Creating configuration space surface quadrature evaluation ",bName[bInd]," ~ax_p~a"),c,polyOrder)),
       genSurfQuadEvKernel(c, bName[bInd], polyOrder),
 
-      if not (c+3=6 and polyOrder=2) then (  /* Don't do 3x3v p2. */
+      if not ((c+3=6 and polyOrder=2) or (polyOrder>2)) then (  /* Don't do 3x3v p2 or any p3 kernels. */
         disp(printf(false,sconcat("Creating phase space surface quadrature evaluation ",bName[bInd]," ~ax3v_p~a"),c,polyOrder)),
         genSurfQuadEvKernel(c+3, bName[bInd], polyOrder)
       )

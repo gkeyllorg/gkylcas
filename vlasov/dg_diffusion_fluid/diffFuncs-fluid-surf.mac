@@ -8,9 +8,8 @@ genDGdiffFluidKernelSurf(fh, funcNm, dim, basisType, polyOrder, dir, diffOrder) 
 
   printf(fh, "#include <gkyl_dg_diffusion_fluid_kernels.h>~%~%"),
 
-  diffCoeffType : [true, false],
-  /* Let's not generate inhomogeneous hyperdiff for now. */
-  if (diffOrder>2) then (diffCoeffType : [true]),
+  /* Only generate kernels for a constant diffusion coefficient. */
+  diffCoeffType : [true],
 
   for constCoeff in diffCoeffType do (
       

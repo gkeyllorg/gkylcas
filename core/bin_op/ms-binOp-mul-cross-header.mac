@@ -73,14 +73,13 @@ for bInd : 1 thru length(bName) do (
   printf(fh, "EXTERN_C_BEG ~%"),
   printf(fh, "~%"),
 
-  minPolyOrderB : minPolyOrder[bInd],
-  maxPolyOrderB : maxPolyOrder[bInd],
-
   for c : minCdim[bInd] thru maxCdim[bInd] do (
     for v : minVdim[bInd] thru maxVdim[bInd] do (
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
       if (c+v>4 and maxPolyOrderB > 2) then maxPolyOrderB : 2,
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-
+      if (v=1) then maxPolyOrderB : 3,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         printPrototype(decorator, c, v, bName[bInd], polyOrder)
       )

@@ -38,7 +38,7 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (c=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x3v */
       for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
-        if not(c = 3 and bName[bInd] = "ser") and not(c = 2 and v = 3 and bName[bInd] = "tensor" and polyOrder = 2) then ( /* SKIP hybrid in 3d */
+        if not(c = 3 and bName[bInd] = "ser") and not(c = 2 and v = 3 and bName[bInd] = "tensor" and polyOrder = 2) and not(c+v>=5 and polyOrder>1) then ( /* RULE: c+v>=5 is p=1 only */ /* SKIP hybrid in 3d */
 
           disp(printf(false,sconcat("Creating canonical_pb vars funcs ",bName[bInd]," ~ax~avp~a"),c,v,polyOrder)),
           fname : sconcat("~/max-out/canonical_pb_vars_pressure_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),

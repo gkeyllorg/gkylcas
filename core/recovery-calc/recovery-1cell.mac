@@ -248,7 +248,7 @@ calcRecov1CellFull(basisNm, recDir, dirs, polyOrder, C, numMomentMatch, dxlo, dx
       )
   ),
 
-  return(expand(subst(projSubList, rSub)))
+  return(recovAssertDetermined(expand(subst(projSubList, rSub)), "1cell"))
 ) $
 
 calcRecov1CellGenNonuniform(basisNm, recDir, dirs, polyOrder, C, dxlo, dxce, dxup, lo, ce, up) :=

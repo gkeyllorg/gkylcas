@@ -6,7 +6,7 @@ load("vlasov/lbo_vlasov/vmBoundaryCorr.mac")$
 /* ...... USER INPUTS........ */
 
 /* Serendipity basis. */
-minPolyOrder_Ser : 1$
+minPolyOrder_Ser : 2$ /* pure ser p=1 unsupported for the LBO */
 maxPolyOrder_Ser : 2$
 minCdim_Ser : 1$
 minVdim_Ser : 1$    /* but see v loop below. */
@@ -14,12 +14,12 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor order basis. */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$    /* BoundaryEval fails for polyOrder>2 for some reason. */
+minPolyOrder_Tensor : 1$ /* tensor p=1 IS the tensor hybrid */
+maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* but see v loop below. */
-maxCdim_Tensor : 0$
-maxVdim_Tensor : 0$
+maxCdim_Tensor : 3$
+maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
 
@@ -33,21 +33,26 @@ maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 
 for bInd : 1 thru length(bName) do (
   for c : minCdim[bInd] thru maxCdim[bInd] do (
-    for v : max(c,minVdim[bInd]) thru maxVdim[bInd] do (
+    minVdim : c, 
+    if (c < 3) then minVdim : 1, 
+    for v : minVdim thru maxVdim[bInd] do (
 
       minPolyOrderB : minPolyOrder[bInd],
       maxPolyOrderB : maxPolyOrder[bInd],
+      if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      /* 2x3v tensor p=2 is generated as part of the optional 2x3v tensor p=2
+         kernel set (BUILD_VLASOV_TEN_2X3V_P2 in gkeyll). */
 
-      for polyOrder : minPolyOrderB thru maxPolyOrderB do (  
-	/* Create a separate file w/ boundary corrections. */
-	disp(printf(false,sconcat("Creating VmLBO boundary corrections ~ax~av ", bName[bInd], " p~a"),c,v,polyOrder)),
-	fname : sconcat("~/max-out/mom_bcorr_lbo_vlasov_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
-	fh : openw(fname),
-	printf(fh, "#include <gkyl_mom_bcorr_lbo_vlasov_kernels.h> ~%"),
-	funcName : sconcat("mom_bcorr_lbo_vlasov_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
-	calcBoundaryIntegral(fh, funcName, c, v, bName[bInd], polyOrder),
-	close(fh)
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        /* Create a separate file w/ boundary corrections. */
+        disp(printf(false,sconcat("Creating VmLBO boundary corrections ~ax~av ", bName[bInd], " p~a"),c,v,polyOrder)),
+        fname : sconcat("~/max-out/mom_bcorr_lbo_vlasov_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        printf(fh, "#include <gkyl_mom_bcorr_lbo_vlasov_kernels.h> ~%"),
+        funcName : sconcat("mom_bcorr_lbo_vlasov_", c, "x", v, "v_", bName[bInd], "_p", polyOrder),
+        calcBoundaryIntegral(fh, funcName, c, v, bName[bInd], polyOrder),
+        close(fh)
       )
     )
   )

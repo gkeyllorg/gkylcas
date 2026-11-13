@@ -1,0 +1,65 @@
+load("vlasov/dg_gr_maxwell/dgGrMaxwellConfFluxSurfFuncs.mac")$
+load(stringproc)$
+/* This script calls the functions which calculate the
+   components of the modal DG expansion of the configuration space 
+   flux, first accumulating different forces into an array
+   storing the maximum eigenvalue in alpha at quadrature
+   points, and then constructing a nodal Lax-Friedrichs flux
+   and converting that back to a modal expansion. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+clabels : ["x","y","z"]$
+
+/* Nodal Lax-Friedrichs flux. */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      disp(printf(false,sconcat("Creating configuration flux (Lax) ",bName[bInd]," ~ax_p~a"),c, polyOrder)),
+      for dir : 1 thru c do (
+        fname : sconcat("~/max-out/","lax_flux_", clabels[dir], "_", c, "x_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        funcName : sconcat("lax_flux_",clabels[dir],"_", c, "x_", bName[bInd], "_p", polyOrder),
+        calcNodalLaxConfFlux(dir, fh, funcName, c, bName[bInd], polyOrder), 
+        close(fh)  
+      )  
+    )       
+  )
+),
+
+
+/* Create the alpha_quad kernels */
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      disp(printf(false,sconcat("Creating configuration alpha_quad ",bName[bInd]," ~ax_p~a"),c,polyOrder)),
+      for dir : 1 thru c do (
+        fname : sconcat("~/max-out/dg_gr_maxwell_","alpha_quad_", clabels[dir], "_", c, "x_", bName[bInd], "_p", polyOrder, ".c"),
+        fh : openw(fname),
+        funcName : sconcat("dg_gr_maxwell_","alpha_quad_",clabels[dir],"_", c, "x_", bName[bInd], "_p", polyOrder),
+        calcConfSurfFlux(dir, fh, funcName, c, bName[bInd], polyOrder), 
+        close(fh)
+      )
+    )
+  )
+);

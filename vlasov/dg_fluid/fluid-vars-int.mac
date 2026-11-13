@@ -55,12 +55,13 @@ calcEulerIntVars(fh, funcNm, cdim, basisFun, polyOrder) := block(
   int_p_c : calcInnerProdList(varsC, 1, [1], p_e), 
 
   printf(fh, "  // Order of integrated variables is (rho, rhoux, rhouy, rhouz, rhou^2, p) ~%"),
-  printf(fh, "  int_fluid_vars[0] += ~a; ~%", float(expand(int_rho_c[1]))),
-  printf(fh, "  int_fluid_vars[1] += ~a; ~%", float(expand(int_rhoux_c[1]))),
-  printf(fh, "  int_fluid_vars[2] += ~a; ~%", float(expand(int_rhouy_c[1]))),
-  printf(fh, "  int_fluid_vars[3] += ~a; ~%", float(expand(int_rhouz_c[1]))),
-  printf(fh, "  int_fluid_vars[4] += ~a; ~%", float(expand(int_rhou2_c[1]))),
-  printf(fh, "  int_fluid_vars[5] += ~a; ~%", float(expand(int_p_c[1]))),
+  printf(fh, "  // Note: there is a factor of 1/2^cdim to properly handle the basis function normalization when computing integrated moments ~%"),
+  printf(fh, "  int_fluid_vars[0] += ~a; ~%", float(expand(int_rho_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_fluid_vars[1] += ~a; ~%", float(expand(int_rhoux_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_fluid_vars[2] += ~a; ~%", float(expand(int_rhouy_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_fluid_vars[3] += ~a; ~%", float(expand(int_rhouz_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_fluid_vars[4] += ~a; ~%", float(expand(int_rhou2_c[1]))*float(1/(2^cdim))),
+  printf(fh, "  int_fluid_vars[5] += ~a; ~%", float(expand(int_p_c[1]))*float(1/(2^cdim))),
 
   printf(fh, "} ~%")
 )$

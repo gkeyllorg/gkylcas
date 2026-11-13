@@ -7,10 +7,10 @@ gaussOrd1D(n) := block([p, v, ords, sords],
     sords : [-1/sqrt(3),1/sqrt(3)]
   ) else if (n = 3) then (
     sords : [-sqrt(3/5),0,sqrt(3/5)]
-  ) else if (n = 4) then (
+  /* ) else if (n = 4) then (
     sords : [-sqrt(3/7 + 2/7*sqrt(6/5)),-sqrt(3/7 - 2/7*sqrt(6/5)),sqrt(3/7 - 2/7*sqrt(6/5)),sqrt(3/7 + 2/7*sqrt(6/5))]
   ) else if (n = 5) then (
-    sords : [-1/3*sqrt(5+2*sqrt(10/7)),-1/3*sqrt(5-2*sqrt(10/7)),0,1/3*sqrt(5-2*sqrt(10/7)),1/3*sqrt(5+2*sqrt(10/7))]
+    sords : [-1/3*sqrt(5+2*sqrt(10/7)),-1/3*sqrt(5-2*sqrt(10/7)),0,1/3*sqrt(5-2*sqrt(10/7)),1/3*sqrt(5+2*sqrt(10/7))] */
   ) else (
     p : expand(legendre_p(n, x)),
     /* NOTE: Best to use realroots() function here instead and set precision to 1e-50 */
@@ -247,6 +247,57 @@ gaussOrdHyb(n,cdim,vdim) := block(
 
   nc : n,   /* Number of quad points in configuration space. */
   nv : n+1, /* Number of quad points in velocity space. */
+  ord1Dc : gaussOrd1D(nc),
+  ord1Dv : gaussOrd1D(nv),
+
+  ordc : copylist(ord1Dc),
+  ordv : copylist(ord1Dv),
+    
+  if cdim=0 then (
+    ord : gaussOrd(nv,vdim)
+  ) elseif vdim=0 then (
+    ord : gaussOrd(nc,cdim)
+  ) else (
+    /* MF: this may seem more complicated than it needs to be, but I
+           kept it this way to ensure nodes are ordered in the same
+           way as those returned by gaussOrdWeightHyb. */ 
+    
+    /* In order to use cartesian_product below we need to make
+      the weights distinct. Use a distinct label.
+      Unfortunately this doesn't guarantee the weights are ordered
+      so they match the ordinates. Try labeling the ordinates too. */
+    labOrd1Dc : makelist([string(i),ord1Dc[i]],i,1,length(ord1Dc)),        
+    labOrd1Dv : makelist([string(i),ord1Dv[i]],i,1,length(ord1Dv)),        
+        
+    labOrdc : copylist(labOrd1Dc),
+    labOrdv : copylist(labOrd1Dv),
+    
+    labOrd1Dc : setify(labOrd1Dc),
+    for d : 2 thru cdim do (
+      labOrdc : listify(cartesian_product(setify(labOrdc),labOrd1Dc))
+    ),
+
+    labOrd1Dv : setify(labOrd1Dv),
+    for d : 2 thru vdim do (
+      labOrdv : listify(cartesian_product(setify(labOrdv),labOrd1Dv))
+    ),
+
+    labOrd : listify(cartesian_product(setify(labOrdc),setify(labOrdv))),
+
+    ord : makelist(0,i,1,length(labOrd)),
+    for i : 1 thru length(labOrd) do (
+      flatOrd : makelist(flatten(labOrd[i])[2*j],j,1,length(flatten(labOrd[i]))/2),
+      ord[i]  : copylist(flatOrd)
+    )
+  ),
+  return(ord)
+)$
+
+/* Like gaussOrdWeightHyb but only return ordinates. */
+gaussOrdTenHyb(nc,nv,cdim,vdim) := block(
+  [ord1Dc,ord1Dv,ordc,ordv,ord,labOrd1Dc,labOrdc,labOrd1Dv,labOrdv,
+   labOrd,d,i,flatOrd],
+
   ord1Dc : gaussOrd1D(nc),
   ord1Dv : gaussOrd1D(nv),
 

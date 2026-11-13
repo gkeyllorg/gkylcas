@@ -1,0 +1,233 @@
+/* Function which divides out the velocity space Jacobian at velocity quadrature points
+   and converts the resulting nodal expansion back to a modal representations. 
+*/
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("vlasov/vlasov/vlasov-basis.mac");
+load(stringproc)$
+fpprec : 24$
+
+divideJvel(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
+  [varsC,bC,varsV,bV,varsP,bP,NP,pVelJv,iN,jN,
+   nodes_vel,num_nodes_vel,basisNodal_vel,
+   Jf_e,Jf_n,Jf_ne,f_c],
+
+  [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
+  NP : length(bP),
+  nodes_conf : gaussOrd(polyOrder+1, cdim),
+  num_nodes_conf : length(nodes_conf),
+  basisNodal_conf  : getVarsNodalBasisWithNodes("Tensor", cdim, polyOrder, varsC, nodes_conf),
+
+  /* Velocity-space nodes use the VELOCITY poly order: the tensor p=1 hybrid
+     is p=2 in velocity space, so its Jacobian lives at 3 Gauss-Legendre
+     points per velocity dimension (matching jacob_vel_gauss storage), not
+     the p+1 = 2 of the configuration-space order. */
+  pVelJv : vlasovPVel(basisFun, polyOrder),
+  nodes_vel : gaussOrd(pVelJv+1, vdim),
+  num_nodes_vel : length(nodes_vel),
+  basisNodal_vel  : getVarsNodalBasisWithNodes("Tensor", vdim, pVelJv, varsV, nodes_vel),
+
+  /* Mixed-order phase nodes and cardinal basis: tensor product of the
+     configuration-space and velocity-space nodal sets, velocity fastest
+     (matching the nodal index (j-1) + num_nodes_vel*(i-1) below and the
+     per-velocity-node jacob_vel_gauss indexing). */
+  nodes_phase : [],
+  basisNodal_phase : [],
+  for iN : 1 thru num_nodes_conf do (
+    for jN : 1 thru num_nodes_vel do (
+      nodes_phase : endcons(append(nodes_conf[iN], nodes_vel[jN]), nodes_phase),
+      basisNodal_phase : endcons(basisNodal_conf[iN]*basisNodal_vel[jN], basisNodal_phase)
+    )
+  ),
+  num_nodes_phase : length(nodes_phase),
+
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *jacob_vel_gauss, const double *Jf, double* GKYL_RESTRICT f_no_J) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  Jf_e : doExpand1(Jf, bP),
+  if (rep = "cubic") then (
+    /* C^1 cubic map (tensor basis): divide nodally at the Gauss-Legendre
+       quadrature points where the Jacobian is known and convert the
+       resulting nodal expansion back to a modal expansion. */
+    printf(fh, "  double f_no_J_nodal[~a] = {0.0};~%", NP),
+    printf(fh, "~%"),
+    Jf_n : evAtNodes(Jf_e, nodes_phase, varsP),
+    for i : 1 thru num_nodes_conf do (
+      for j : 1 thru num_nodes_vel do (
+        printf(fh, "  f_no_J_nodal[~a] = 1.0/jacob_vel_gauss[~a]*(~a);~%", j-1 + num_nodes_vel*(i-1), j-1, float(expand(Jf_n[j + num_nodes_vel*(i-1)])))
+      )
+    ),
+    printf(fh, "~%"),
+    Jf_ne : doExpand1(f_no_J_nodal, basisNodal_phase),
+    f_c : calcInnerProdList(varsP, 1, bP, Jf_ne)
+  )
+  else (
+    /* C^0 linear map (Serendipity basis): the velocity-space Jacobian is
+       piecewise constant in the cell, so the division is exact
+       coefficient-by-coefficient. */
+    printf(fh, "  // jacob_vel_gauss: Total velocity-space Jacobian at Gauss-Legendre quadrature points.~%"),
+    printf(fh, "  //                  Piecewise constant in the cell for the C^0 linear map of the~%"),
+    printf(fh, "  //                  Serendipity basis, so the division is exact coefficient-by-coefficient.~%"),
+    printf(fh, "  // Jf:              Input distribution function (J*f).~%"),
+    printf(fh, "  // f_no_J:          Output distribution function (f).~%"),
+    printf(fh, " ~%"),
+    printf(fh, "  const double jacob_vel_inv = 1.0/jacob_vel_gauss[0]; ~%"),
+    f_c : makelist(jacob_vel_inv*Jf[i], i, 0, NP-1)
+  ),
+  writeCExprs1(f_no_J, f_c),
+
+  printf(fh, "} ~%")
+)$
+
+rescaleJvel(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
+  [varsC,bC,varsV,bV,varsP,bP,NP,pVelJv,iN,jN,
+   nodes_vel,num_nodes_vel,basisNodal_vel,
+   f_no_J_e,f_no_J_n,Jf_ne,f_c],
+
+  [varsC,bC,varsV,bV,varsP,bP] :  loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
+  NP : length(bP), 
+  nodes_conf : gaussOrd(polyOrder+1, cdim),
+  num_nodes_conf : length(nodes_conf),
+  basisNodal_conf  : getVarsNodalBasisWithNodes("Tensor", cdim, polyOrder, varsC, nodes_conf),
+
+  /* Velocity-space nodes use the VELOCITY poly order: the tensor p=1 hybrid
+     is p=2 in velocity space, so its Jacobian lives at 3 Gauss-Legendre
+     points per velocity dimension (matching jacob_vel_gauss storage), not
+     the p+1 = 2 of the configuration-space order. */
+  pVelJv : vlasovPVel(basisFun, polyOrder),
+  nodes_vel : gaussOrd(pVelJv+1, vdim),
+  num_nodes_vel : length(nodes_vel),
+  basisNodal_vel  : getVarsNodalBasisWithNodes("Tensor", vdim, pVelJv, varsV, nodes_vel),
+
+  /* Mixed-order phase nodes and cardinal basis: tensor product of the
+     configuration-space and velocity-space nodal sets, velocity fastest
+     (matching the nodal index (j-1) + num_nodes_vel*(i-1) below and the
+     per-velocity-node jacob_vel_gauss indexing). */
+  nodes_phase : [],
+  basisNodal_phase : [],
+  for iN : 1 thru num_nodes_conf do (
+    for jN : 1 thru num_nodes_vel do (
+      nodes_phase : endcons(append(nodes_conf[iN], nodes_vel[jN]), nodes_phase),
+      basisNodal_phase : endcons(basisNodal_conf[iN]*basisNodal_vel[jN], basisNodal_phase)
+    )
+  ),
+  num_nodes_phase : length(nodes_phase),
+
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *jacob_vel_gauss, const double *f_no_J, double* GKYL_RESTRICT Jf) ~%{ ~%", funcNm, cdim, vdim, basisFun, polyOrder),
+  f_no_J_e : doExpand1(f_no_J, bP),
+  if (rep = "cubic") then (
+    /* C^1 cubic map (tensor basis): multiply nodally at the Gauss-Legendre
+       quadrature points where the Jacobian is known and convert the
+       resulting nodal expansion back to a modal expansion. */
+    printf(fh, "  double Jf_nodal[~a] = {0.0};~%", NP),
+    printf(fh, "~%"),
+    f_no_J_n : evAtNodes(f_no_J_e, nodes_phase, varsP),
+    for i : 1 thru num_nodes_conf do (
+      for j : 1 thru num_nodes_vel do (
+        printf(fh, "  Jf_nodal[~a] = jacob_vel_gauss[~a]*(~a);~%", j-1 + num_nodes_vel*(i-1), j-1, float(expand(f_no_J_n[j + num_nodes_vel*(i-1)])))
+      )
+    ),
+    printf(fh, "~%"),
+    Jf_ne : doExpand1(Jf_nodal, basisNodal_phase),
+    f_c : calcInnerProdList(varsP, 1, bP, Jf_ne)
+  )
+  else (
+    /* C^0 linear map (Serendipity basis): the velocity-space Jacobian is
+       piecewise constant in the cell, so the rescaling is exact
+       coefficient-by-coefficient. */
+    printf(fh, "  // jacob_vel_gauss: Total velocity-space Jacobian at Gauss-Legendre quadrature points.~%"),
+    printf(fh, "  //                  Piecewise constant in the cell for the C^0 linear map of the~%"),
+    printf(fh, "  //                  Serendipity basis, so the rescaling is exact coefficient-by-coefficient.~%"),
+    printf(fh, "  // f_no_J:          Input distribution function (f).~%"),
+    printf(fh, "  // Jf:              Output distribution function (J*f).~%"),
+    printf(fh, " ~%"),
+    f_c : makelist(jacob_vel_gauss[0]*f_no_J[i], i, 0, NP-1)
+  ),
+  writeCExprs1(Jf, f_c),
+
+  printf(fh, "} ~%")
+)$
+/* Velocity-space Jacobian division (op = "divide": f_no_J = Jf/J) or multiplication (op =
+   "rescale": Jf = J f_no_J) for the tensor p=1 hybrid basis, factored by direction. J is known at
+   the (pv+1)^vdim velocity Gauss-Legendre nodes and does not depend on the configuration-space
+   coordinates, so every configuration-space mode of the conf x velocity product basis is a
+   spectator: per configuration-space mode the velocity coefficients are evaluated at the nodes,
+   divided (multiplied) by J there and projected back, one velocity direction at a time with the 1D
+   tables (sum factorization). Same result as the phase-space nodal division of divideJvel and
+   rescaleJvel to round off. */
+jvelFactored(fh, funcNm, cdim, vdim, basisFun, polyOrder, op) := block(
+  [varsC, bC, varsV, bV, varsP, bP, NC, NV, NP, pv, nq, NQV, x1, w1, vars1, phi1, E, Et, degV,
+   coefV, cIdx, mIdx, coefL, nodesV, nodeOf, flat, inNm, outNm, jNm, cur, nxt, dst, k, c, d, i, j,
+   q, t, tup, isLast, sweep],
+
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC), NV : length(bV), NP : length(bP),
+  pv : vlasovPVel(basisFun, polyOrder), nq : pv + 1, NQV : nq^vdim,
+
+  /* Phase and velocity modes as products (hybFactorBasis) and the 1D tables E[i][p] = phi_p(x_i)
+     (modal to nodal) and Et[p][i] = w_i phi_p(x_i) (nodal to modal). */
+  [cIdx, mIdx, coefL, degV, coefV, vars1, phi1] : hybFactorBasis(bP, bC, bV, varsV, pv),
+  [x1, w1] : gaussOrdWeight1D(nq),
+  E : makelist(makelist(subst(vars1[1] = x1[i], phi1[q]), q, 1, nq), i, 1, nq),
+  Et : makelist(makelist(w1[i]*E[i][q], i, 1, nq), q, 1, nq),
+
+  /* Flat index of a 0-based tuple (first direction slowest), and the flat 1D-index tuple of each
+     velocity node in jacob_vel_gauss order (gaussOrd). */
+  flat : lambda([tp], sum(tp[d]*nq^(vdim-d), d, 1, vdim)),
+  nodesV : gaussOrd(nq, vdim),
+  nodeOf : makelist(0, j, 1, NQV),
+  for j : 1 thru NQV do (
+    tup : makelist(sublist_indices(x1, lambda([s], is(abs(float(s - nodesV[j][d])) < 1.0e-12)))[1] - 1, d, 1, vdim),
+    nodeOf[flat(tup)+1] : j-1
+  ),
+
+  if op = "divide" then (inNm : Jf, outNm : f_no_J) else (inNm : f_no_J, outNm : Jf),
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *jacob_vel_gauss, const double *~a, double* GKYL_RESTRICT ~a) ~%{ ~%", funcNm, inNm, outNm),
+  printf(fh, "  // Velocity-space Jacobian at the velocity Gauss-Legendre nodes; each configuration-space mode~%"),
+  printf(fh, "  // is ~a, evaluated at the nodes and projected back one velocity direction at a time.~%",
+    if op = "divide" then "divided by it" else "multiplied by it"),
+  if op = "divide" then (
+    printf(fh, "  double jinv[~a]; ~%", NQV),
+    for j : 0 thru NQV-1 do printf(fh, "  jinv[~a] = 1.0/jacob_vel_gauss[~a]; ~%", j, j),
+    jNm : jinv
+  ) else jNm : jacob_vel_gauss,
+  if vdim = 1 then printf(fh, "  double ta[~a]; ~%", NQV)
+  else printf(fh, "  double ta[~a], tb[~a]; ~%", NQV, NQV),
+
+  /* One sweep along direction d: nxt[tp] = sum_q T[tp_d][q] cur[tp with tp_d -> q]. */
+  sweep : lambda([T, cur, d],
+    makelist(block([tp : makelist(mod(floor((i-1)/nq^(vdim-dd)), nq), dd, 1, vdim)],
+      sum(T[tp[d]+1][q+1]*cur[flat(makelist(if dd = d then q else tp[dd], dd, 1, vdim))+1], q, 0, nq-1)),
+      i, 1, NQV)),
+
+  for c : 1 thru NC do (
+    printf(fh, "~%  // Configuration-space mode ~a. ~%", c-1),
+    /* Modal velocity coefficients of this configuration-space mode on the degree grid. */
+    cur : makelist(0, i, 1, NQV),
+    for k : 1 thru NP do if cIdx[k] = c then
+      cur[flat(degV[mIdx[k]])+1] : coefL[k]*coefV[mIdx[k]]*arraymake(inNm, [k-1]),
+    /* Forward sweeps (modal to nodal), then the nodal product and the backward sweeps (nodal to
+       modal); the product is folded into the first backward sweep and the last backward sweep
+       writes the output coefficients. */
+    for t : 1 thru 2*vdim do (
+      if t = vdim + 1 then
+        cur : makelist(cur[i]*arraymake(jNm, [nodeOf[i]]), i, 1, NQV),
+      nxt : if t <= vdim then sweep(E, cur, t) else sweep(Et, cur, t - vdim),
+      isLast : is(t = 2*vdim),
+      if isLast then (
+        for k : 1 thru NP do if cIdx[k] = c then
+          printf(fh, "  ~a[~a] = ~a; ~%", outNm, k-1,
+            float(expand(nxt[flat(degV[mIdx[k]])+1]/(coefL[k]*coefV[mIdx[k]]))))
+      ) else (
+        dst : if mod(t, 2) = 1 then ta else tb,
+        for i : 1 thru NQV do printf(fh, "  ~a[~a] = ~a; ~%", dst, i-1, float(expand(nxt[i]))),
+        cur : makelist(arraymake(dst, [i-1]), i, 1, NQV)
+      )
+    )
+  ),
+  printf(fh, "} ~%")
+)$

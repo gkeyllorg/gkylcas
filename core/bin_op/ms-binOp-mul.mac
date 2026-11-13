@@ -19,7 +19,7 @@ maxCdim_Ser : 0$
 /* Note that Serendipity, p = 1, is equivalent to Tensor */
 /* Thus no need to calculate p = 1 Tensor basis */
 minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 3$
 minCdim_Tensor : 2$
 maxCdim_Tensor : 3$
 
@@ -36,8 +36,11 @@ maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
 for bInd : 1 thru length(bName) do (
   /* Generate kernels for operations between two fields defined on
      spaces with same dimensions (1D, 2D, 3D). */
-  for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
-    for c : minCdim[bInd] thru maxCdim[bInd] do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (c=3) then maxPolyOrderB : 2,
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
       fname : sconcat("~/max-out/binop_mul_", c, "d_",bName[bInd],"_p", polyOrder, ".c"),
       fh : openw(fname),
       disp(printf(false,sconcat("Creating ~ax ", bName[bInd]),c)),

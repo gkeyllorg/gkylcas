@@ -2,6 +2,8 @@ load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac");
 load("util_maxima/utilities.mac");
 load(stringproc)$
+load("vlasov/vlasov/vlasov-basis.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
 fpprec : 24$
 
 /* This script generates the kernels for the volume drag term
@@ -52,6 +54,11 @@ calcVmLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   ),
   printf(fh, "~%"),
 
+  if polyOrder=1 and sdowncase(basisFun)="tensor" then (  /* The tensor p=1 hybrid basis. */
+    calcVmLBODragVolNodal(fh, cdim, vdim),
+    return(true)
+  ),
+
   /* Expand distribution function f in phase basis. */
   f_e : doExpand1(f, bP),
 
@@ -100,3 +107,59 @@ calcVmLBODragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "~%"),
   printf(fh, "} ~%")
 );
+
+/* Body of the drag volume kernel of the tensor p=1 hybrid basis (signature, the nuUSum pointer
+   and rd<v>2 already written) with the update at the 2^cdim configuration-space Gauss-Legendre
+   nodes: there the drag speed along v_d is a_d + b_d eta_d, a_d = rdv2_d (nuUSum_d - nuSum w_d)
+   and b_d = -rdv2_d nuSum dxv_d/2, and in the orthonormal 1D Legendre polynomials the increment
+   sum_d < d_vd(psi), alpha_d f > is sum_d Dt_d (a_d f + b_d V_d f), with V_d the multiplication by
+   eta_d and Dt_d the transposed derivative along v_d. Exact (the configuration-space integrand is
+   at most cubic per direction); the CFL frequency is the one of calcVmLBODragVolUpdater. The
+   nodes are written out at generation time and every output written once (a runtime node loop
+   accumulating into out is up to 1.6x slower on the GPU). */
+calcVmLBODragVolNodal(fh, cdim, vdim) := block(
+  [varsC, bC, varsV, bV, varsP, bP, NC, NV, NP, nq, NQV, cIdx, mIdx, coefL, degV, coefV, vars1,
+   phi1, Dm, Vm, flat, tupOf, nodes, NQ, bcq, Fs, G, Gall, nuc, cfl, i, k, c, d, q],
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis("tensor", cdim, vdim, 1),
+  NC : length(bC), NV : length(bV), NP : length(bP), nq : 3, NQV : nq^vdim,
+  [cIdx, mIdx, coefL, degV, coefV, vars1, phi1] : hybFactorBasis(bP, bC, bV, varsV, nq - 1),
+  Dm : makelist(makelist(integrate(phi1[a]*diff(phi1[b], vars1[1]), vars1[1], -1, 1), b, 1, nq), a, 1, nq),
+  Vm : makelist(makelist(integrate(phi1[a]*vars1[1]*phi1[b], vars1[1], -1, 1), b, 1, nq), a, 1, nq),
+  flat : lambda([tq], sum(tq[d]*nq^(vdim-d), d, 1, vdim)),
+  tupOf : lambda([ii], makelist(mod(floor(ii/nq^(vdim-d)), nq), d, 1, vdim)),
+  /* CFL frequency: (2 pv + 1)/2 |alpha_d| at the cell center, summed over d. */
+  nuc : lambda([sym, off], sum(arraymake(sym, [off + c - 1])*subst(makelist(varsC[d] = 0, d, 1, cdim), bC[c]), c, 1, NC)),
+  cfl : makelist(float(expand(2.5*rdv2[d]*(nuc(nuUSum, NC*(d-1)) - nuc(nuSum, 0)*w[cdim+d-1]))), d, 1, vdim),
+  nodes : gaussOrd(2, cdim), NQ : length(nodes),
+  Gall : [],
+  for q : 1 thru NQ do (
+    bcq : makelist(subst(makelist(varsC[d] = nodes[q][d], d, 1, cdim), bC[c]), c, 1, NC),
+    printf(fh, "  const double nuq~a = ~a; ~%", q-1, float(expand(sum(bcq[c]*nuSum[c-1], c, 1, NC)))),
+    for d : 1 thru vdim do (
+      printf(fh, "  const double a~a_~a = ~a*(~a - nuq~a*w[~a]); ~%", q-1, vvarsAll[d], rdv2[d],
+        float(expand(sum(bcq[c]*nuUSum[NC*(d-1)+c-1], c, 1, NC))), q-1, cdim+d-1),
+      printf(fh, "  const double b~a_~a = -0.5*~a*nuq~a*dxv[~a]; ~%", q-1, vvarsAll[d], rdv2[d], q-1, cdim+d-1)
+    ),
+    printf(fh, "  double f~a[~a]; ~%", q-1, NQV),
+    for i : 1 thru NQV do printf(fh, "  f~a[~a] = ~a; ~%", q-1, i-1, float(expand(sum(
+      (if flat(degV[mIdx[k]]) = i-1 then bcq[cIdx[k]]*coefL[k]*coefV[mIdx[k]]*f[k-1] else 0), k, 1, NP)))),
+    Fs : makelist(arraymake(eval_string(sconcat("f", q-1)), [i-1]), i, 1, NQV),
+    G : makelist(block([tq : tupOf(ii-1)], sum(block([ad : eval_string(sconcat("a", q-1, "_", vvarsAll[d])),
+          bd : eval_string(sconcat("b", q-1, "_", vvarsAll[d]))],
+        sum(Dm[t+1][tq[d]+1]*block([tt : makelist(if e = d then t else tq[e], e, 1, vdim)],
+          ad*Fs[flat(tt)+1] + bd*sum(Vm[t+1][sv+1]*Fs[flat(makelist(if e = d then sv else tq[e], e, 1, vdim))+1], sv, 0, nq-1)),
+          t, 0, nq-1)), d, 1, vdim)), ii, 1, NQV),
+    printf(fh, "  double G~a[~a]; ~%", q-1, NQV),
+    for i : 1 thru NQV do block([e : float(expand(G[i]))],
+      if e # 0.0 then printf(fh, "  G~a[~a] = ~a; ~%", q-1, i-1, e)),
+    Gall : endcons([bcq, G], Gall)
+  ),
+  for k : 1 thru NP do
+    if float(expand(Gall[1][2][flat(degV[mIdx[k]])+1])) # 0.0 then
+      printf(fh, "  out[~a] += ~a; ~%", k-1, float(expand(sum(Gall[q][1][cIdx[k]]*arraymake(eval_string(sconcat("G", q-1)),
+        [flat(degV[mIdx[k]])]), q, 1, NQ)/(coefL[k]*coefV[mIdx[k]])))),
+  printf(fh, "~%"),
+  printf(fh, "  return ~a; ~%", simplode(makelist(sconcat("fabs(", string(cfl[d]), ")"), d, 1, vdim), "+")),
+  printf(fh, "~%"),
+  printf(fh, "} ~%")
+)$

@@ -185,11 +185,13 @@ calcCrossPrimMomsLBO(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   printf(fh, "  ~%"),
 
   /* Expansion in configuration space basis and coefficients
-     of m0 and m2. */
+     of m0 and m2. Note we multiply by 2 
+     because the M2 moment is the 1/2 v^2 moment.*/
   m0_c : makelist(m0r[i-1],i,1,numB),
-  m2_c : makelist(m2r[i-1],i,1,numB),
+  m2_c : makelist(2.0*m2r[i-1],i,1,numB),
   m0_e : doExpand(m0_c, basis),
   m2_e : doExpand(m2_c, basis),
+
   /* Equivalently for  vtSq .*/
   vtsq_self_c  : makelist(vtsq_self[i-1],i,1,numB),
   vtsq_other_c : makelist(vtsq_other[i-1],i,1,numB),

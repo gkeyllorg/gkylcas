@@ -3,14 +3,13 @@ load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the 
    acceleration variables required to update the PKPM system. 
 
-   Acceleration variables are computed with either recovery (div(b)) or averaging (grad_i u_j) 
+   Acceleration variables are computed with averaging (grad_i u_j) 
    where averaging is chosen to ensure phase space incompressibility in the weak sense. 
    Full acceleration variable list: 
-   1. div_b (divergence of magnetic field unit vector)
+   1. p_perp_div_b (p_perp/rho*div(b) = T_perp/m*div(b))
    2. b_grad_u (bb : grad(u))
    3. p_force (total pressure forces in kinetic equation 1/rho div(p_parallel b_hat) - T_perp/m*div(b)
-   4. p_perp_source (pressure source for higher Laguerre moments -> bb : grad(u) - div(u) - 2 nu)
-   5. p_perp_div_b (p_perp/rho*div(b) = T_perp/m*div(b)) */
+   4. p_perp_source (pressure source for higher Laguerre moments -> bb : grad(u) - div(u) - 2 nu) */
 
 
 /* ...... USER INPUTS........ */

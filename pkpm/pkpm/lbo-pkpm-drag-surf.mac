@@ -21,7 +21,7 @@ calcVlasovPKPMLBODragSurfUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) :=
    incr_F_0_l, incr_G_1_l, incr_F_0_r, incr_G_1_r],
   
   /* Load basis of dimensionality requested. */
-  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+  [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),
 
   /* Number of basis monomials. */
   NP : length(bP),

@@ -145,9 +145,9 @@ calcMaxwellLimiter(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  double waves_slope_c[48] = {0.0}; ~%"),  
   printf(fh, "  double waves_slope_r[48] = {0.0}; ~%"),  
   printf(fh, "  double speeds[6] = {0.0}; ~%"),
-  printf(fh, "  double my_max_speed_l = wave(wv_eqn, GKYL_WV_HIGH_ORDER_FLUX, delta_l, q_c_local, q_c_local, waves_slope_l, speeds); ~%"),
-  printf(fh, "  double my_max_speed_c = wave(wv_eqn, GKYL_WV_HIGH_ORDER_FLUX, delta_c_local, q_c_local, q_c_local, waves_slope_c, speeds); ~%"),
-  printf(fh, "  double my_max_speed_r = wave(wv_eqn, GKYL_WV_HIGH_ORDER_FLUX, delta_r, q_c_local, q_c_local, waves_slope_r, speeds); ~%"), 
+  printf(fh, "  double my_max_speed_l = wave(wv_eqn, GKYL_WV_HIGH_ORDER_FLUX, delta_l, q_c_local, q_c_local, 1.0, 1.0, waves_slope_l, speeds); ~%"),
+  printf(fh, "  double my_max_speed_c = wave(wv_eqn, GKYL_WV_HIGH_ORDER_FLUX, delta_c_local, q_c_local, q_c_local, 1.0, 1.0, waves_slope_c, speeds); ~%"),
+  printf(fh, "  double my_max_speed_r = wave(wv_eqn, GKYL_WV_HIGH_ORDER_FLUX, delta_r, q_c_local, q_c_local, 1.0, 1.0, waves_slope_r, speeds); ~%"), 
   printf(fh, "~%"),
 
   printf(fh, "  double mm[48] = {0.0}; ~%"),

@@ -25,7 +25,7 @@ let(dvpar^2, dvpar_sq)$
 /* Calculate mass density, parallel pressure, and perpendicular pressure sequentially */
 calcPKPMUpdateMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   [varsC,bC,varsP,bP,NP,NC,fl,vTrans,rho,ppar,pperp,PKPM_moments,clst],
-  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+  [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),
 
   /* Number of basis monomials. */
   NP : length(bP),
@@ -66,7 +66,7 @@ calcPKPMDiagMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   [varsC,bC,varsP,bP,NP,NC,fl,vTrans,
   rho,M1,ppar,pperp,qpar,qperp,rparpar,rparperp,
   PKPM_moments,clst],
-  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+  [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),
 
   /* Number of basis monomials. */
   NP : length(bP),

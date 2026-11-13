@@ -46,7 +46,7 @@ for bInd : 1 thru length(bName) do (
       maxPolyOrderB : maxPolyOrder[bInd],
       if (c+v>4 and maxPolyOrderB > 2) then maxPolyOrderB : 2,
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
-
+      if (v=1) then maxPolyOrderB : 3,
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         /* With parallelization over components */
         fname : sconcat("~/max-out/binop_cross_mul_accumulate_comp_par_", c, "d_", c+v, "d_",bName[bInd],"_p", polyOrder, ".c"),

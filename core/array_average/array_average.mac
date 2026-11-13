@@ -79,8 +79,13 @@ genArrayAverageKernels(fh, fhHeader, cdim, vdim, basisType, polyOrder) := block(
     if length(outVars) = 0 then (
       bRed : []
     ) elseif basisType = "hyb" and numConfOut = 0 then (
-      /* Velocity-only hybrid basis is the p=2 serendipity basis. */
-      bRed : basisFromVars("ser", outVars, 2)
+      /* Velocity-only part of the (tensor) hybrid basis is the p=2 tensor basis. */
+      bRed : basisFromVars("tensor", outVars, 2)
+    ) elseif basisType = "gkhyb" and numConfOut > 0 and member(vpar, outVars)
+             and not member(mu, outVars) then (
+      /* With mu averaged out, conf x vpar is the Vlasov (tensor) hybrid basis,
+         i.e. gkyl_cart_modal_hybrid(cdim, 1). */
+      bRed : basisFromVars("hyb", outVars, 1)
     ) elseif basisType = "hyb" and numConfOut = length(outVars) then (
       /* Conf-only hybrid basis is the p=1 serendipity basis. */
       bRed : basisFromVars("ser", outVars, 1)

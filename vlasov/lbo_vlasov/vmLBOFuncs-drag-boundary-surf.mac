@@ -4,6 +4,7 @@ load("core/nodal_operations/nodal_functions.mac")$
 load("core/recovery.mac")$
 load("util_maxima/utilities.mac")$
 load(stringproc)$
+load("vlasov/vlasov/hybFactoredOps.mac")$
 fpprec : 24$
 
 /* This script generates the kernels for the boundary surface term
@@ -19,6 +20,10 @@ calcVmLBOBoundaryDragUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrde
    alphaDrSurf_r_c,alst_l,alst_r,alphaDrSurf_l_e,alphaDrSurf_r_e,surf_cdim,surf_vdim,surfNodes,numNodes,
    alphaOrd_l_n,alphaOrd_r_n,surfNodesConfig,numNodesConfig,numNodesVel,i,rcoFac_l,rcoFac_r,fHatSurf_e,Ghat_c,
    glst1,Ghat_e,incr],
+
+  /* The tensor p=1 hybrid basis: the factored kernel of vlasov/vlasov/hybFactoredOps.mac (the face
+     nodes evaluated one direction at a time instead of with the basis helpers). */
+  if polyOrder = 1 and sdowncase(basisFun) = "tensor" then return(calcLBODragBoundarySurfFactored(dir, fh, funcNm, cdim, vdim)),
 
   /* Load basis of dimensionality requested. */
   [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
@@ -52,7 +57,10 @@ calcVmLBOBoundaryDragUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrde
   /* Surface basis. Equivalent to basis of one lower
      dimensionality without surface variable. */
   if polyOrder=1 then (  /* Force p=1 to use hybrid basis. */
-    bSurf : basisFromVars("hyb",surfVars,polyOrder)
+    bSurf : /* p=1 = TENSOR hybrid (p1 conf x p2 vel, graded ordering) -- the same basis
+       loadPhaseBasis("tensor",...,1) and core gkyl_cart_modal_hybrid use; the
+       retired "hyb" (Serendipity-flavored) mapping has a different mode set. */
+    basisFromVars("tenhyb",surfVars,polyOrder)
   ) else (
     bSurf : basisFromVars(basisFun,surfVars,polyOrder)
   ),
@@ -76,13 +84,6 @@ calcVmLBOBoundaryDragUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrde
   ),
   numNodes : length(surfNodes),
 
-  /* Evaluate alpha at ordinates.
-     Note: alphaSurf_e is already a surface expansion. 
-     In addition, it is continuous and does not vary with respect to the surface variable.
-     We still require a alpha_l (w - dv/2) and alpha_r (w + dv/2) for the two sides of the cell */
-  alphaOrd_l_n : gcfac(float(evAtNodes(alphaDrSurf_l_e,surfNodes,surfVars))),
-  alphaOrd_r_n : gcfac(float(evAtNodes(alphaDrSurf_r_e,surfNodes,surfVars))),
-
   /* Drag term flux does not depend on velocity space surface on which it sits
      i.e., drag term in vx does not depend on vy and vz
      so sort quadrature points between configuration space and velocity space */
@@ -90,6 +91,17 @@ calcVmLBOBoundaryDragUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrde
   surfNodesConfig : gaussOrd(polyOrder+1, cdim),
   numNodesConfig  : length(surfNodesConfig),
   numNodesVel     : numNodes/numNodesConfig,
+
+  /* Evaluate alpha at ordinates.
+     Note: alphaSurf_e is already a surface expansion. 
+     In addition, it is continuous and does not vary with respect to the surface variable.
+     We still require a alpha_l (w - dv/2) and alpha_r (w + dv/2) for the two sides of the cell */
+  alphaDrSurfC_l_c : fullratsimp(calcInnerProdList(varsC, 1, bC, alphaDrSurf_l_e)),
+  alphaDrSurfC_r_c : fullratsimp(calcInnerProdList(varsC, 1, bC, alphaDrSurf_r_e)),
+  alphaDrSurfC_l_e : doExpand(alphaDrSurfC_l_c, bC),
+  alphaDrSurfC_r_e : doExpand(alphaDrSurfC_r_c, bC),
+  alphaOrd_l_n : gcfac(float(evAtNodes(alphaDrSurfC_l_e,surfNodesConfig,varsC))),
+  alphaOrd_r_n : gcfac(float(evAtNodes(alphaDrSurfC_r_e,surfNodesConfig,varsC))),
 
   printf(fh, "  double alphaDrSurf[~a] = {0.0}; ~%", length(bSurf)),
   printf(fh, "  double fUpwindQuad[~a] = {0.0};~%", numNodes),

@@ -15,10 +15,9 @@ maxCdim_Ser : 3$
 
 /* Tensor product basis. */
 /* Note that Serendipity, p = 1, is equivalent to Tensor */
-/* Thus no need to calculate p = 1 Tensor basis */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
-minCdim_Tensor : 2$
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 3$
+minCdim_Tensor : 1$
 maxCdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
@@ -33,8 +32,7 @@ for bInd : 1 thru length(bName) do (
   for d : minCdim[bInd] thru maxCdim[bInd] do (
     minPolyOrderB : minPolyOrder[bInd],
     maxPolyOrderB : maxPolyOrder[bInd],
-    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
-
+    if (d>2 and maxPolyOrderB > 2) then maxPolyOrderB : 2,
     for polyOrder : minPolyOrderB thru maxPolyOrderB do (
       fname : sconcat("~/max-out/gkyl_basis_",  bName[bInd], "_", d, "x_p", polyOrder, "_sqrt.h"),
       fh : openw(fname),

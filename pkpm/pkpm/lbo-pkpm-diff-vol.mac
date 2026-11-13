@@ -12,7 +12,7 @@ calcVlasovPKPMLBODiffVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := 
   [varsC,bC,varsP,bP,NP,NC,zr,nuVtSqSum_e,polyFact,facDiff_mid],
 
   /* Load basis of dimensionality requested. */
-  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+  [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),
 
   /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
      mean hybrid basis. */

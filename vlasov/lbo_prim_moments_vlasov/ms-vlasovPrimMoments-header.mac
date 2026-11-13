@@ -3,7 +3,7 @@
 /* ...... USER INPUTS........ */
 
 /* Serendipity basis. */
-minPolyOrder_Ser : 1$
+minPolyOrder_Ser : 2$ /* pure ser p=1 unsupported for the LBO */
 maxPolyOrder_Ser : 2$
 minCdim_Ser : 1$
 minVdim_Ser : 1$    /* see begining of v loop below though. */
@@ -11,14 +11,12 @@ maxCdim_Ser : 3$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-/* Note that Serendipity, p = 1, is equivalent to Tensor */
-/* Thus no need to calculate p = 1 Tensor basis */
-minPolyOrder_Tensor : 2$
+minPolyOrder_Tensor : 1$ /* tensor p=1 hybrid: conf-space prim moments at p=1 */
 maxPolyOrder_Tensor : 2$
 minCdim_Tensor : 1$
 minVdim_Tensor : 1$    /* see begining of v loop below though. */
-maxCdim_Tensor : 0$
-maxVdim_Tensor : 0$
+maxCdim_Tensor : 3$
+maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */
 
@@ -49,10 +47,13 @@ printf(fh, "~%")$
 decorator : "GKYL_CU_DH "$
 for bInd : 1 thru length(bName) do (
   for c : minCdim[bInd] thru maxCdim[bInd] do (
-    for v : max(c,minVdim[bInd]) thru maxVdim[bInd] do (
+    minVdim : c, 
+    if (c < 3) then minVdim : 1, 
+    for v : minVdim thru maxVdim[bInd] do (
 
       minPolyOrderB : minPolyOrder[bInd],
       maxPolyOrderB : maxPolyOrder[bInd],
+      if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
       if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
 
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (

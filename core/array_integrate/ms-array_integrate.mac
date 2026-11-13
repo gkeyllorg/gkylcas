@@ -101,6 +101,14 @@ for bInd : 1 thru length(bName) do (
     )
   ),
 
+  for cd : minCdim[bInd] thru maxCdim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      disp(printf(false,sconcat("Creating gkyl_array_integrate_op_eps_grad_sq ~ax p~a ", bName[bInd]),cd,polyOrder)),
+      funcName : sconcat("gkyl_array_integrate_op_eps_grad_sq_",cd,"x_",bName[bInd],"_p",polyOrder),
+      arrayIntegrate_eps_grad_sq(fh, funcName, cd, bName[bInd], polyOrder)
+    )
+  ),
+
   close(fh)
 );
 

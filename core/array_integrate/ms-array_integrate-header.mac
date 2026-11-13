@@ -84,6 +84,14 @@ for bInd : 1 thru length(bName) do (
       printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out);~%", funcName)
     )
   ),
+  printf(fh, "~%"),
+
+  for cd : minCdim[bInd] thru maxCdim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      funcName : sconcat("gkyl_array_integrate_op_eps_grad_sq_",cd,"x_",bName[bInd],"_p",polyOrder),
+      printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out);~%", funcName)
+    )
+  ),
   printf(fh, "~%")
 
 )$

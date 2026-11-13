@@ -44,12 +44,21 @@ calcUpdateInDir(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
   if polyOrder = 0 then bC : basisConstant,
   nbasis : length(bC),
   
-  printf(fh, "GKYL_CU_DH double ~a~a_~ax_~a_p~a(const gkyl_maxwell_inp *meq, const double *w, const double *dx, const double *ql, const double *qc, const double *qr, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cvars[dir], cdim, basisFun, polyOrder),
+  printf(fh, "GKYL_CU_DH double ~a~a_~ax_~a_p~a(const gkyl_maxwell_inp *meq, const double *w, const double *dx, const double *jacob_pos_l, const double *jacob_pos_c, const double *jacob_pos_r, const double *ql, const double *qc, const double *qr, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cvars[dir], cdim, basisFun, polyOrder),
 
   printf(fh, "  const double c = meq->c, chi = meq->chi, gamma = meq->gamma; ~%"),
   printf(fh, "  const double c2 = c*c; ~%"),
   printf(fh, "  const double c2chi = c2*chi, c2gamma = c2*gamma; ~% ~%"),
   printf(fh, "  const double dx1 = 2.0/dx[~a]; ~%", dir-1),
+  /* Configuration-space position-map Jacobian (C^0 linear, constant in a cell):
+     the interface numerical flux is built from PHYSICAL fields, so each side's
+     stored J*field is divided by its own normal-direction Jacobian J_x,dir. The
+     transverse Jacobians are continuous across a normal interface and cancel
+     against the J_c weighting of the stored update, leaving only J_x,dir here.
+     Identity map -> J=1 -> fields unchanged. */
+  printf(fh, "  const double jacob_cl_inv = 1.0/jacob_pos_l[~a]; ~%", (polyOrder+1)*(dir-1)),
+  printf(fh, "  const double jacob_cc_inv = 1.0/jacob_pos_c[~a]; ~%", (polyOrder+1)*(dir-1)),
+  printf(fh, "  const double jacob_cr_inv = 1.0/jacob_pos_r[~a]; ~% ~%", (polyOrder+1)*(dir-1)),
   
   printf(fh, "  const double *exl = &ql[~a]; ~%", 0*nbasis),
   printf(fh, "  const double *eyl = &ql[~a]; ~%", 1*nbasis),
@@ -90,32 +99,34 @@ calcUpdateInDir(dir, fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  double incr_l[~a]; ~% ~%", nbasis),
   printf(fh, "  double incr_r[~a]; ~% ~%", nbasis),
 
-  Exll : doExpand1(exl,bC),
-  Eyll : doExpand1(eyl,bC),
-  Ezll : doExpand1(ezl,bC),
-  Bxll : doExpand1(bxl,bC),
-  Byll : doExpand1(byl,bC),
-  Bzll : doExpand1(bzl,bC),
-  phll : doExpand1(phl,bC),
-  psll : doExpand1(psl,bC),
+  /* Divide each side's stored J*field by its own normal-direction Jacobian to
+     recover the physical field used in the interface numerical flux. */
+  Exll : jacob_cl_inv*doExpand1(exl,bC),
+  Eyll : jacob_cl_inv*doExpand1(eyl,bC),
+  Ezll : jacob_cl_inv*doExpand1(ezl,bC),
+  Bxll : jacob_cl_inv*doExpand1(bxl,bC),
+  Byll : jacob_cl_inv*doExpand1(byl,bC),
+  Bzll : jacob_cl_inv*doExpand1(bzl,bC),
+  phll : jacob_cl_inv*doExpand1(phl,bC),
+  psll : jacob_cl_inv*doExpand1(psl,bC),
 
-  Excl : doExpand1(exc,bC),
-  Eycl : doExpand1(eyc,bC),
-  Ezcl : doExpand1(ezc,bC),
-  Bxcl : doExpand1(bxc,bC),
-  Bycl : doExpand1(byc,bC),
-  Bzcl : doExpand1(bzc,bC),
-  phcl : doExpand1(phc,bC),
-  pscl : doExpand1(psc,bC),
+  Excl : jacob_cc_inv*doExpand1(exc,bC),
+  Eycl : jacob_cc_inv*doExpand1(eyc,bC),
+  Ezcl : jacob_cc_inv*doExpand1(ezc,bC),
+  Bxcl : jacob_cc_inv*doExpand1(bxc,bC),
+  Bycl : jacob_cc_inv*doExpand1(byc,bC),
+  Bzcl : jacob_cc_inv*doExpand1(bzc,bC),
+  phcl : jacob_cc_inv*doExpand1(phc,bC),
+  pscl : jacob_cc_inv*doExpand1(psc,bC),
 
-  Exrl : doExpand1(exr,bC),
-  Eyrl : doExpand1(eyr,bC),
-  Ezrl : doExpand1(ezr,bC),
-  Bxrl : doExpand1(bxr,bC),
-  Byrl : doExpand1(byr,bC),
-  Bzrl : doExpand1(bzr,bC),
-  phrl : doExpand1(phr,bC),
-  psrl : doExpand1(psr,bC),
+  Exrl : jacob_cr_inv*doExpand1(exr,bC),
+  Eyrl : jacob_cr_inv*doExpand1(eyr,bC),
+  Ezrl : jacob_cr_inv*doExpand1(ezr,bC),
+  Bxrl : jacob_cr_inv*doExpand1(bxr,bC),
+  Byrl : jacob_cr_inv*doExpand1(byr,bC),
+  Bzrl : jacob_cr_inv*doExpand1(bzr,bC),
+  phrl : jacob_cr_inv*doExpand1(phr,bC),
+  psrl : jacob_cr_inv*doExpand1(psr,bC),
 
   cv : varsC[dir],
 

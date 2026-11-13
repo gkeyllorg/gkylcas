@@ -5,7 +5,7 @@
 
 namespace Gkyl {
   /* Basis type */
-  enum ModalBasisType { MODAL_SER, MODAL_TEN, MODAL_HYB, MODAL_GKHYB, MODAL_GKHYB_VEL };
+  enum ModalBasisType { MODAL_SER, MODAL_TEN, MODAL_HYB, MODAL_GKHYB, MODAL_GKHYB_VEL, MODAL_TENHYB };
   
   class ModalBasis {
   public:

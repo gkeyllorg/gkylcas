@@ -13,6 +13,15 @@ flux : [
 
 dxInv : [dx0, dx1, dx2]$
 
+clabels : ["x","y","z"]$
+/* Per-direction inverse configuration-space Jacobian of the C^0 linear position
+   map. The Maxwell curl in direction d uses the physical derivative
+   (1/J_x,d) d/dxi; J_x,d is constant within a cell so this is an exact scalar
+   multiply. jacob_pos holds cdim blocks of (polyOrder+1) entries each, block d
+   replicating J_x,d; kernels read its first entry. Identity map -> J=1 (the
+   block entries are exactly 1), so the kernels reduce to the uniform-grid ones. */
+jacobConstInv_ci : [jacob_cx_inv, jacob_cy_inv, jacob_cz_inv]$
+
 lhs : [outEx, outEy, outEz, outBx, outBy, outBz, outPh, outPs]$
 
 calcMaxwellVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
@@ -26,7 +35,7 @@ calcMaxwellVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
   
   printf(fh, "#include <gkyl_maxwell_kernels.h> ~%"),
 
-  printf(fh, "GKYL_CU_DH double ~a_p~a(const gkyl_maxwell_inp *meq, const double *w, const double *dx, const double *q, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "GKYL_CU_DH double ~a_p~a(const gkyl_maxwell_inp *meq, const double *w, const double *dx, const double *jacob_pos, const double *q, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
   printf(fh, "  const double c2 = meq->c*meq->c, chi = meq->chi, gamma = meq->gamma; ~%"),
   printf(fh, "  const double c2chi = c2*chi, c2gamma = c2*gamma; ~% ~%"),
 
@@ -49,7 +58,9 @@ calcMaxwellVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  double *outPs = &out[~a]; ~% ~%", 7*nbasis),
 
   for d : 1 thru cdim do (
-    printf(fh, "  double dx~a = 2.0/dx[~a]; ~%", d-1, d-1)
+    printf(fh, "  double dx~a = 2.0/dx[~a]; ~%", d-1, d-1),
+    printf(fh, "  const double *jacob_c~a = &jacob_pos[~a]; ~%", clabels[d], (polyOrder+1)*(d-1)),
+    printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_c~a[0]; ~%", clabels[d], clabels[d])
   ),
 
   printf(fh, "~%"),
@@ -64,15 +75,17 @@ calcMaxwellVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
   psil : doExpand1(ps,bC),
   
   fluxl : subst([Ex=Exl, Ey=Eyl, Ez=Ezl, Bx=Bxl, By=Byl, Bz=Bzl, phi=phil, psi=psil], flux),
-  volTerms : sum(makelist(dxInv[d]*calcInnerProdList(varsC, 1, diff(bC,varsC[d]), fluxl[d][i]), i, 1, 8), d, 1, cdim),
+  volTerms : sum(makelist(dxInv[d]*jacobConstInv_ci[d]*calcInnerProdList(varsC, 1, diff(bC,varsC[d]), fluxl[d][i]), i, 1, 8), d, 1, cdim),
   for m : 1 thru 8 do (
     vt : volTerms[m],
     writeCIncrExprs1(lhs[m], vt),
     printf(fh, "~%")
   ),
-  printf(fh, "  double cflFreq = 0.0; ~%"), 
+  printf(fh, "  double cflFreq = 0.0; ~%"),
   for d : 1 thru cdim do (
-    printf(fh, "  cflFreq += meq->c/dx[~a]; ~%", d-1)
+    /* The light wave travels in physical space, so the CFL uses the physical
+       cell length dx_phys = J_x,d * dx: cflFreq += c/(J_x,d * dx). */
+    printf(fh, "  cflFreq += meq->c/dx[~a]*jacob_c~a_inv; ~%", d-1, clabels[d])
   ),
   
   printf(fh, "  return ~a*cflFreq; ~%", float(2*polyOrder+1)),

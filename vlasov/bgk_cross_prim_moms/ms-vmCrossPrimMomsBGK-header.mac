@@ -1,0 +1,66 @@
+/* Generate the header file for cross primitive moments kernels in the Vlasov BGK. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* but see v loop below. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor order basis. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$ 
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* but see v loop below. */
+maxCdim_Tensor : 2$
+maxVdim_Tensor : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+printPrototypeVM(deco, ci, vi, bStr, pi) := block([si],
+  printf(fh, "~avoid vlasov_cross_prim_moms_bgk_~ax~av_~a_p~a(const double delta_sr, const double betaGreenep1, const double m_self, const double *prim_moms_self, const double m_other, const double *prim_moms_other, double *prim_moms_cross); ~%", deco, ci, vi, bStr, pi),
+  printf(fh, "~%") 
+)$
+
+fh : openw("~/max-out/gkyl_vlasov_cross_prim_moms_bgk_kernels.h")$
+printf(fh, "#pragma once ~%")$
+printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <gkyl_mat.h> ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, " ~%")$
+printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+
+decorator : "GKYL_CU_DH "$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    minVdim : c, 
+    if (c < 3) then minVdim : 1, 
+    for v : minVdim thru maxVdim[bInd] do (
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        printPrototypeVM(decorator, c, v, bName[bInd], polyOrder)
+      )
+    )
+  )
+);
+
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$

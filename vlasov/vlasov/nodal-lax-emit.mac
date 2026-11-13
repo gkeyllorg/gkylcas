@@ -1,0 +1,235 @@
+/* nodal-lax-emit.mac -------------------------------------------------------
+   Factorized (sum-factorization) emission of the nodal Lax-Friedrichs flux
+   producers (lax_flux_nodal / ho_lax_flux_nodal, velocity- and
+   configuration-direction).
+
+   Every gkeyll modal basis function is a product of 1D Legendre polynomials,
+   so each phase-space basis function splits EXACTLY as
+
+     phi_k = coef_k * chi_{cmap[k]}(outer vars) * psi_{vmap[k]}(normal + inner vars)
+
+   where the chi/psi "shapes" (normalized to 1 at a reference point) are
+   shared across many k. The surface node set is the tensor product of outer
+   nodes and inner nodes, so the nodal evaluation of f_l/f_r factorizes into
+   two stages:
+
+     stage 1:  G[j][a]      = sum_k coef_k * V_side[j][vmap_side[k]] * f[k]   (k with cmap[k] = a)
+     stage 2:  f(node i,j)  = sum_a C[i][a] * G[j][a]
+
+   with C (outer-shape evaluations at outer nodes) and V_l/V_r (inner-shape
+   evaluations at the +/-1 edge and inner nodes) emitted as small static
+   constant matrices. This replaces the fully unrolled per-node evaluations
+   (1.6MB of text per kernel at 2x3v p=2 ho) with short loops over constant
+   data. The flat node index n = i*NI + j reproduces gaussOrd's ordering
+   (last surface variable fastest, so the outer/configuration block is
+   slowest); laxAssertNodeOrder verifies this at generation time.
+
+   The two stages are emitted as two callable functions, which is also the
+   GPU 2D (cell x node) thread mapping: `_g` computes one G[j][a] entry per
+   call (one thread per (inner node, outer shape) item, cooperative
+   shared-memory fill), `_node` does the per-node stage-2 dot product and the
+   Lax flux from the filled G. Stage 1 is the expensive part (NB terms with
+   table gathers) and depends on the inner node only, so this does it once
+   per inner node instead of once per surface node; the static matrices are
+   constant device data. A third function, `_prj`, projects the nodal Lax
+   flux of a surface onto the surface modal basis (one surface mode per
+   call, quadrature-weight-folded Cw/Vw tables of the nod2mod header), so the
+   stored flux is MODAL (num_surf_basis coefficients per direction) and the
+   hyper_dg surface consumers only scatter modal coefficients into the
+   volume increment.
+
+   PAIRING CONSTRAINT: every emitter writes ALL callable forms into the same
+   .c file — the stage-1 `_g` function, the per-node `_node` function, the
+   projection `_prj` function and the whole-array wrapper (original ABI; it
+   fills G, loops the nodes into a local nodal buffer and projects, with
+   loop bounds emitted as literals so the compiler inlines the functions and
+   recovers unrolled-kernel performance). The C dispatch
+   tables in vlasov/zero/gkyl_dg_vlasov_{vel,conf}_flux_surf_priv.h
+   reference all symbol sets (`_arr` tables -> wrappers for the CPU path,
+   `_g`, `_node` and `_prj` tables -> the GPU 2D launcher), so a kernel file missing
+   any form fails at link time even if only one path runs. Never hand-edit
+   one form in isolation; regenerate the file so the set (and
+   gkyl_vlasov_surf_node_kernels.h) stays consistent. */
+
+/* Reference point for shape normalization; must avoid the roots of every
+   Legendre polynomial used (P1, P2, P3 are all nonzero at 2/5). */
+laxNormPoint : 2/5$
+
+/* Split each basis function into outer/rest factors with dedup'd shapes.
+   Returns [chiShapes, psiShapes, coefL, cmap, vmap] with 0-based maps.
+   Errors out if any basis function is not outer*rest separable. */
+laxFactorizeBasis(bP, outerVars, restVars) := block(
+  [NB, sOuter, sRest, chiShapes, psiShapes, coefL, cmap, vmap,
+   k, phik, chiRaw, chiShape, psiRaw, psiShape, coefk, found, q],
+  NB : length(bP),
+  chiShapes : [], psiShapes : [], coefL : [],
+  cmap : makelist(0, k, 1, NB),
+  vmap : makelist(0, k, 1, NB),
+  sOuter : makelist(outerVars[i] = laxNormPoint, i, 1, length(outerVars)),
+  sRest  : makelist(restVars[i]  = laxNormPoint, i, 1, length(restVars)),
+  for k : 1 thru NB do (
+    phik : bP[k],
+    chiRaw   : ratsimp(subst(sRest, phik)),
+    chiShape : ratsimp(chiRaw / subst(sOuter, chiRaw)),
+    psiRaw   : ratsimp(phik / chiShape),
+    psiShape : ratsimp(psiRaw / subst(sRest, psiRaw)),
+    coefk    : ratsimp(subst(sOuter, subst(sRest, phik))),
+    /* radcan, not ratsimp: the zero test involves radical normalizations
+       (e.g. 15^(3/2) vs 15*sqrt(15)) that plain ratsimp can fail to merge
+       once the rational-form cache has been touched by the nodal-basis
+       loaders' bfloat arithmetic. radcan is canonical for these. */
+    if ratsimp(radcan(phik - coefk*chiShape*psiShape)) # 0 then
+      error("laxFactorizeBasis: basis function not outer*rest separable, k =", k),
+    found : 0,
+    for q : 1 thru length(chiShapes) do
+      if (found = 0) then (if ratsimp(chiShapes[q] - chiShape) = 0 then found : q),
+    if found = 0 then (chiShapes : endcons(chiShape, chiShapes), found : length(chiShapes)),
+    cmap[k] : found - 1,
+    found : 0,
+    for q : 1 thru length(psiShapes) do
+      if (found = 0) then (if ratsimp(psiShapes[q] - psiShape) = 0 then found : q),
+    if found = 0 then (psiShapes : endcons(psiShape, psiShapes), found : length(psiShapes)),
+    vmap[k] : found - 1,
+    coefL : endcons(coefk, coefL)
+  ),
+  [chiShapes, psiShapes, coefL, cmap, vmap]
+)$
+
+/* Verify that the flat surface node ordering is outer (x) inner with the
+   inner block fastest: surfNodes[(i-1)*NI + j] = [outerNode_i, innerNode_j].
+   Degenerate node lists from the loaders are [1] (single node, no coords). */
+laxAssertNodeOrder(surfNodes, nodesOuter, nodesInner) := block(
+  [NO, NI, i, j, d, expectd, n],
+  NO : length(nodesOuter), NI : length(nodesInner),
+  if NO*NI # length(surfNodes) then
+    error("laxAssertNodeOrder: node count mismatch"),
+  for i : 1 thru NO do
+    for j : 1 thru NI do (
+      expectd : append(if listp(nodesOuter[i]) then nodesOuter[i] else [],
+                       if listp(nodesInner[j]) then nodesInner[j] else []),
+      n : (i-1)*NI + j,
+      if length(expectd) # length(surfNodes[n]) then
+        error("laxAssertNodeOrder: node dimension mismatch at flat node", n),
+      for d : 1 thru length(expectd) do
+        if abs(float(expectd[d] - surfNodes[n][d])) > 1.0e-14 then
+          error("laxAssertNodeOrder: ordering mismatch at flat node", n)
+    )
+)$
+
+/* Emit the stage-1 producer: one item per call, node thread tid does item
+   tid = a*NI + j for the outer shape a and inner node j (inner node fastest, so consecutive
+   threads of a warp work on one shape, i.e. one k sequence, and read the
+   node tables contiguously); computes G_l[j*NA + a] and G_r[j*NA + a], the
+   contraction of f with the inner-factor evaluations over the basis
+   functions whose outer factor is shape a (CSR tables aoff/aks), one FMA
+   per term with the per-edge coefficient folded into the node tables
+   Wl/Wr[k*NI + j] = coef[k]*V[j][vmap[k]]. Items are NA*NI <= NO*NI, so the
+   launcher's one thread per surface node covers them; items beyond are a
+   no-op. The sum over q is in increasing k, as in the former per-node loop. */
+laxEmitStage1Fn(fh, funcNm, prefix, NA, NMV, NI) := block(
+  printf(fh, "GKYL_CU_DH void ~a_g(int tid, const double *f_l, const double *f_r,
+  double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r) ~%{ ~%", funcNm),
+  printf(fh, "  if (tid >= ~a) return; ~%", NA*NI),
+  printf(fh, "  const int a = tid/~a; ~%", NI),
+  printf(fh, "  const int j = tid - a*~a; ~%", NI),
+  printf(fh, "  double g_l = 0.0; ~%"),
+  printf(fh, "  double g_r = 0.0; ~%"),
+  printf(fh, "  for (int q = ~a_aoff[a]; q < ~a_aoff[a+1]; ++q) { ~%", prefix, prefix),
+  printf(fh, "    const int k = ~a_aks[q]; ~%", prefix),
+  printf(fh, "    g_l += ~a_Wl[k*~a + j]*f_l[k]; ~%", prefix, NI),
+  printf(fh, "    g_r += ~a_Wr[k*~a + j]*f_r[k]; ~%", prefix, NI),
+  printf(fh, "  } ~%"),
+  printf(fh, "  G_l[j*~a + a] = g_l; ~%", NA),
+  printf(fh, "  G_r[j*~a + a] = g_r; ~%", NA),
+  printf(fh, "} ~%~%")
+)$
+
+/* Emit the per-node function: given (i, j) and the filled stage-1 arrays
+   (G[j*NA + a]), do the stage-2 dot, apply the Lax flux at flat node
+   n = i*NI + j of the per-direction nodal buffer Fhat_nodal (NO*NI entries,
+   consumed by _prj), and return |alpha| at the node for the caller's CFL
+   reduction. The wrapper (and the CUDA launcher) supplies one
+   thread/iteration per node.
+   prefix is the SHARED table symbol prefix (vst_<tag>_ph_<surf>).
+   jacDecls is a list of C lines computing `const double jac = ...;` from j
+   (index arithmetic for the cubic map, cell constants for the linear map);
+   an empty list means no jacobian factor (jac omitted). jacArgs is the
+   argument-declaration string for the jacobian inputs ("" if none).
+   scaleLines is a list of C lines emitted after the stage-2 nodal
+   reconstruction (e.g. per-side `f_l_quad *= ...;` un-weighting on
+   configuration-direction surfaces); [] means none. */
+laxEmitNodeFn(fh, funcNm, prefix, NB, NA, NMV, NI, jacArgs, jacDecls, hasJac, scaleLines) := block([ln],
+  printf(fh, "GKYL_CU_DH double ~a_node(int i, int j,~a
+  double alpha, const double *G_l, const double *G_r, double* GKYL_RESTRICT Fhat_nodal) ~%{ ~%", funcNm, jacArgs),
+  printf(fh, "  double f_l_quad = 0.0; ~%"),
+  printf(fh, "  double f_r_quad = 0.0; ~%"),
+  printf(fh, "  for (int a = 0; a < ~a; ++a) { ~%", NA),
+  printf(fh, "    f_l_quad += ~a_Cm[i*~a + a]*G_l[j*~a + a]; ~%", prefix, NA, NA),
+  printf(fh, "    f_r_quad += ~a_Cm[i*~a + a]*G_r[j*~a + a]; ~%", prefix, NA, NA),
+  printf(fh, "  } ~%"),
+  for ln in scaleLines do printf(fh, "~a~%", ln),
+  printf(fh, "  const int n = i*~a + j; ~%", NI),
+  for ln in jacDecls do printf(fh, "~a~%", ln),
+  if hasJac then
+    printf(fh, "  Fhat_nodal[n] = 0.5*jac*(alpha*(f_r_quad + f_l_quad) - fabs(alpha)*(f_r_quad - f_l_quad)); ~%")
+  else
+    printf(fh, "  Fhat_nodal[n] = 0.5*(alpha*(f_r_quad + f_l_quad) - fabs(alpha)*(f_r_quad - f_l_quad)); ~%"),
+  printf(fh, "  return fabs(alpha); ~%"),
+  printf(fh, "} ~%~%")
+)$
+
+/* Emit the projection of the nodal flux Fhat_nodal (NO*NI entries, this
+   direction only) onto the surface modal basis, stored at flux[outOff + k]
+   with outOff the direction's modal offset: one item per call, node thread
+   tid does item tid, like the other stages (the launcher gives one thread
+   per surface node; items beyond the count are a no-op, and there are never
+   more items than nodes). prjPre is the consumer-projection table prefix
+   (vst_<tag>_prj_<surf>) whose quadrature-weight-folded Cw/Vw and
+   kamap/boff/bks tables it contracts. An item is one inner surface mode b:
+   the inner-node contraction t_i = sum_j Vw[j][b] F[i][j] (for every outer
+   node i; j outer so each Vw entry is loaded once; each t_i sums over j in
+   increasing order, the order the former consumer-side projection used) is
+   done once and then finishes every surface mode k with kbmap[k] = b,
+   g_k = sum_i Cw[i][a_k] t_i. The same rule for every kernel: measured
+   against one surface mode per item it is faster wherever the kernels are
+   large (2x3v, 3x3v) and costs ~15% only in the 2x2v p=2 kernels, where
+   few inner modes make each item a long serial chain. */
+laxEmitPrjFn(fh, funcNm, prjPre, NK, NAp, NMVp, NO, NI, outOff) := block(
+  printf(fh, "GKYL_CU_DH void ~a_prj(int tid, const double *Fhat_nodal, double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  printf(fh, "  if (tid >= ~a) return; ~%", NMVp),
+  printf(fh, "  const int b = tid; ~%"),
+  printf(fh, "  double t[~a]; ~%", NO),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) t[i] = 0.0; ~%", NO),
+  printf(fh, "  for (int j = 0; j < ~a; ++j) { ~%", NI),
+  printf(fh, "    const double w = ~a_Vw[j*~a + b]; ~%", prjPre, NMVp),
+  printf(fh, "    for (int i = 0; i < ~a; ++i) t[i] += w*Fhat_nodal[i*~a + j]; ~%", NO, NI),
+  printf(fh, "  } ~%"),
+  printf(fh, "  for (int q = ~a_boff[b]; q < ~a_boff[b+1]; ++q) { ~%", prjPre, prjPre),
+  printf(fh, "    const int k = ~a_bks[q]; ~%", prjPre),
+  printf(fh, "    const int a = ~a_kamap[k]; ~%", prjPre),
+  printf(fh, "    double g = 0.0; ~%"),
+  printf(fh, "    for (int i = 0; i < ~a; ++i) g += ~a_Cw[i*~a + a]*t[i]; ~%", NO, prjPre, NAp),
+  printf(fh, "    flux[~a + k] = g; ~%", outOff),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%~%")
+)$
+
+/* Emit the wrapper body: fill the stage-1 arrays, loop the node function
+   over all (i, j) into a local nodal buffer (reducing alpha_max), then
+   project it onto the surface modal basis into the modal output flux. nodeCallArgs must
+   match the node function's jacArgs. The wrapper still ingests the full
+   nodal alpha_quad array (original ABI); the per-node dispatch in the
+   updater passes a register double instead. */
+laxEmitWrapperLoop(fh, funcNm, NO, NI, NA, NK, nodeCallArgs) := block(
+  printf(fh, "  double G_l[~a]; ~%", NI*NA),
+  printf(fh, "  double G_r[~a]; ~%", NI*NA),
+  printf(fh, "  double Fhat_nodal[~a]; ~%", NO*NI),
+  printf(fh, "  for (int tid = 0; tid < ~a; ++tid) ~a_g(tid, f_l, f_r, G_l, G_r); ~%", NI*NA, funcNm),
+  printf(fh, "  double alpha_max = 0.0; ~%"),
+  printf(fh, "  for (int i = 0; i < ~a; ++i) { ~%", NO),
+  printf(fh, "    for (int j = 0; j < ~a; ++j) { ~%", NI),
+  printf(fh, "      alpha_max = fmax(alpha_max, ~a_node(i, j,~a alpha_quad[i*~a + j], G_l, G_r, Fhat_nodal)); ~%", funcNm, nodeCallArgs, NI),
+  printf(fh, "    } ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  for (int tid = 0; tid < ~a; ++tid) ~a_prj(tid, Fhat_nodal, flux); ~%", NO*NI, funcNm)
+)$

@@ -17,7 +17,7 @@ genDGdiffVlasovKernelSurf(fh, funcNm, cdim, vdim, basisType, polyOrder, dir, dif
     dim : cdim+vdim,
   
     bType : basisType,
-    [varsC, basisC, vars, basis] : loadPhaseBasis(basisType, cdim, vdim, polyOrder),
+    [varsC, basisC, vars, basis] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisType, cdim, vdim, polyOrder),
     if polyOrder=1 then bType : "hyb",  /* Force p=1 to mean hybrid. */
     numBasis : length(basis),
   

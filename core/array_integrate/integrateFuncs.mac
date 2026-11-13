@@ -302,5 +302,106 @@ arrayIntegrate_eps_gradperp_sq(fh, funcNm, dim, basisFun, polyOrder) := block(
 
   printf(fh, "}~%"),
   printf(fh, "~%")
-  
+
+)$
+
+/* Metric-weighted FULL-gradient squared: int dx sum_{ij} eps_ij d_i(f) d_j(f),
+   summed over ALL dim configuration directions (not just the perp plane).
+   Identical to arrayIntegrate_eps_gradperp_sq except dimPerp := dim. Used by the
+   Vlasov position map for the electrostatic field energy, where the (diagonal)
+   metric eps_ii = J/J_xi^2 (off-diagonals zero for the diagonal stretch map). */
+arrayIntegrate_eps_grad_sq(fh, funcNm, dim, basisFun, polyOrder) := block(
+  [dimPerp,vars,basis,f_e,dir,volumeFac,exprStr,subList,k,s],
+  kill(varsC, basisC),
+
+  dimPerp : dim,
+
+  [vars, basis] : loadBasis(basisFun, dim, polyOrder),
+  numB : length(basis),
+
+  varsPerp : makelist(vars[d],d,1,dimPerp),
+
+  printf(fh, "GKYL_CU_DH void ~a(double *dxSq, double vol, int num_comp, int num_basis, const double *weight, const double *fIn, double *out) ~%{ ~%", funcNm),
+  printf(fh, "~%"),
+
+  /* Pointers to components of (symmetric) permittivity tensor. */
+  varCombos : listify(cartesian_product(setify(varsPerp),setify(varsPerp))),
+  epsSup_l  : unique(makelist(sort(varCombos[i]),i,1,length(varCombos))),
+  eps : [],  eps_e : [],
+  for i : 1 thru dimPerp do (
+    eps   : endcons([],eps),
+    eps_e : endcons([],eps_e),
+    for j : 1 thru dimPerp do (
+      varsSorted : sort([varsPerp[i],varsPerp[j]]),
+      epsNew : eval_string(simplode(["eps",varsSorted[1],varsSorted[2]])),
+      isNew : true,
+      for k : 1 thru length(eps) do (
+        if (isNew) and (length(sublist(eps[k], lambda([x], x=epsNew)))>0) then ( isNew : false )
+      ),
+      eps[i] : endcons(epsNew,eps[i]),
+      if isNew then (
+        idx : sublist_indices(epsSup_l, lambda([w], w=varsSorted))[1],
+        printf(fh, "  const double *~a = &weight[~a];~%", eps[i][j], (idx-1)*numB)
+      ),
+      eps_c : makelist(eps[i][j][k-1],k,1,numB),
+      eps_e[i] : endcons(doExpand(eps_c,basis), eps_e[i])
+    )
+  ),
+  printf(fh, "~%"),
+
+  /* Product of cell lengths. */
+  rdx_ij : [],
+  for i : 1 thru dimPerp do (
+    rdx_ij : endcons([],rdx_ij),
+    for j : 1 thru dimPerp do (
+      ijSorted : sort([i-1,j-1]),
+      rdxNew : eval_string(simplode([rdx,ijSorted[1],ijSorted[2]])),
+      isNew : true,
+      for k : 1 thru length(rdx_ij) do (
+        if (isNew) and (length(sublist(rdx_ij[k], lambda([x], x=rdxNew)))>0) then ( isNew : false )
+      ),
+      rdx_ij[i] : endcons(rdxNew,rdx_ij[i]),
+      if isNew then (
+        if (i = j) then (
+          printf(fh, "  double ~a = 4.0/dxSq[~a];~%", rdx_ij[i][j], i-1)
+        ) else (
+          printf(fh, "  double ~a = 4.0/sqrt(dxSq[~a]*dxSq[~a]);~%", rdx_ij[i][j], i-1, j-1)
+        )
+      )
+    )
+  ),
+  printf(fh, "~%"),
+
+  /* List of substitutions to replace powers. */
+  subList : [],
+  for k : 0 thru numB-1 do (
+    subList : endcons([sconcat("fIn[",k,"]^2"),sconcat("(fIn[",k,"]*fIn[",k,"])")],subList)
+  ),
+
+  f_e : doExpand1(fIn,basis),
+  integrand_e : 0,
+
+  for i : 1 thru dimPerp do (
+    for j : 1 thru dimPerp do (
+      epsdf_e : eps_e[i][j]*diff(f_e,vars[i])*diff(f_e,vars[j]),
+      epsdf_c : rdx_ij[i][j]*calcInnerProdList(vars,1,basis,epsdf_e),
+
+      integrand_e : integrand_e+doExpand(epsdf_c,basis)
+    )
+  ),
+
+  intOut : fullratsimp(innerProd(vars,1,1,integrand_e)),
+
+  expr : vol*float(fullratsimp(intOut)),
+  if expr # 0.0 then (
+    exprStr : string(expr),
+    for s : 1 thru length(subList) do (
+      exprStr : ssubst(subList[s][2],subList[s][1],exprStr)
+    ),
+    printf(fh, "  ~a += ~a; ~%", out[0], exprStr)
+  ),
+
+  printf(fh, "}~%"),
+  printf(fh, "~%")
+
 )$
