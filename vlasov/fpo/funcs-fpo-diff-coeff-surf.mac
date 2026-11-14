@@ -14,7 +14,9 @@ dirs : [vx, vy, vz]$
 
 generateFpoDiffCoeffSurf(fname, funcNm, cdim, basisFun, polyOrder, pv1) := block(
   [],
-  /* if (polyOrder = 1) then (basisFun : "hyb"), */
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* FPO is only defined in 3V */
   vdim : 3,
   pdim : vdim+cdim,
@@ -23,9 +25,12 @@ generateFpoDiffCoeffSurf(fname, funcNm, cdim, basisFun, polyOrder, pv1) := block
   pvdir1 : assoc(pv1,dirNums),
  
   /* Load basis of dimensionality requested. */
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ) else (
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+  ),
 
   NC : length(bP),
 

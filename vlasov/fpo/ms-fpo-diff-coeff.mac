@@ -9,21 +9,21 @@ load("vlasov/fpo/funcs-fpo-diff-coeff_stencil.mac");
 /* ...... USER INPUTS........ */
 
 /* Serendipity basis. */
-minPolyOrder_Ser : 1$
+minPolyOrder_Ser : 2$ /* pure Serendipity p=1 is not supported for the FPO */
 maxPolyOrder_Ser : 2$
 minCdim_Ser : 1$
 minVdim_Ser : 3$
-maxCdim_Ser : 2$
+maxCdim_Ser : 1$
 maxVdim_Ser : 3$
 
 /* Tensor product basis. */
-/* Note that Serendipity, p = 1, is equivalent to Tensor */
-/* Thus no need to calculate p = 1 Tensor basis */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 0$
+/* Tensor p=1 IS the tensor hybrid basis: p=1 in configuration space and p=2 in
+   velocity space. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
 minVdim_Tensor : 3$
-maxCdim_Tensor : 1$
+maxCdim_Tensor : 2$
 maxVdim_Tensor : 3$
 
 /* ...... END OF USER INPUTS........ */

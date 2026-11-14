@@ -22,14 +22,23 @@ setFpoConservationMatrices(fh, funcNm, cdim, basisFun, polyOrder) := block(
   bcorr_energy_e, bcorr_ai_D_ij_lst, acorr_e, acorr_c, block_offset, weak_mul_c, 
   weak_mul_mat, weak_mul_mat_flat, m1i_e],
 
-  /* if (polyOrder = 1) then (basisFun : "hyb"), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* FPO is always 3V */
   vdim : 3,
 
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+
+  ) else (
+
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+
+  ),
 
   /* Number of basis monomials. */
   NP : length(bP),
@@ -200,14 +209,23 @@ accumulateFpoConservationCorrs(fh, funcNm, cdim, basisFun, polyOrder) := block(
   az_accum_out_c, D_accum_out_c, ax_surf_accum_out_c, ay_surf_accum_out_c, az_surf_accum_out_c,
   Dxx_surf_accum_out_c, Dyy_surf_accum_out_c, Dzz_surf_accum_out_c],
 
-  /* if (polyOrder = 1) then (basisFun : "hyb"), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* FPO is always 3V */
   vdim : 3,
 
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+
+  ) else (
+
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+
+  ),
 
   surfVarsvx : delete(vx, varsP),
   surfVarsvy : delete(vy, varsP),

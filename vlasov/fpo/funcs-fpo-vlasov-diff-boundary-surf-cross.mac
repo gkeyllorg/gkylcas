@@ -35,8 +35,9 @@ generateFpoVlasovDiffBoundarySurfCrossUpper(fname, funcNm, cdim, basisFun, polyO
   df_rec_up_e, df_rec_lo_e, surft1_lo_c, surft1_up_c, surft2_lo_c, surft2_up_c, vol_c,
   surft1_lo_e, surft1_up_e, surft2_lo_e, surft2_up_e, vol_lst, kernel],
 
-  /* if (polyOrder = 1) then ( basisFun : "hyb" ), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   pv1 : dirCombo[1],
   pv2 : dirCombo[2],
 
@@ -48,9 +49,12 @@ generateFpoVlasovDiffBoundarySurfCrossUpper(fname, funcNm, cdim, basisFun, polyO
   pvdir2 : assoc(pv2,dirNums),
 
   /* Load basis of dimensionality requested. */
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ) else (
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+  ),
   NC : length(bP),
 
   surfVars1 : delete(pv1, varsP),
@@ -455,8 +459,9 @@ generateFpoVlasovDiffBoundarySurfCrossLower(fname, funcNm, cdim, basisFun, polyO
   df_rec_up_e, df_rec_lo_e, surft1_lo_c, surft1_up_c, surft2_lo_c, surft2_up_c, vol_c,
   surft1_lo_e, surft1_up_e, surft2_lo_e, surft2_up_e, vol_lst, kernel],
   
-  /* if (polyOrder = 1) then ( basisFun : "hyb" ), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   pv1 : dirCombo[1],
   pv2 : dirCombo[2],
 
@@ -468,9 +473,12 @@ generateFpoVlasovDiffBoundarySurfCrossLower(fname, funcNm, cdim, basisFun, polyO
   pvdir2 : assoc(pv2,dirNums),
 
   /* Load basis of dimensionality requested. */
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ) else (
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+  ),
   NC : length(bP),
 
   surfVars1 : delete(pv1, varsP),

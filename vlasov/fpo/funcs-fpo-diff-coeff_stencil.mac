@@ -51,8 +51,9 @@ generateFpoDiffCoeffCrossUpper(fname, funcNm, cdim, basisFun, polyOrder, dirComb
   surft2_lo_c, surft2_up_c, vol_c, surft1_lo_e, surft1_up_e, surft2_lo_e, surft2_up_e,
   G_rec2_pv2_lo_p, G_rec2_pv2_up_p],
 
-  /* if (polyOrder = 1) then (basisFun : "hyb"), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* Phase space variables */
   pv1 : dirCombo[1],
   pv2 : dirCombo[2],
@@ -65,9 +66,12 @@ generateFpoDiffCoeffCrossUpper(fname, funcNm, cdim, basisFun, polyOrder, dirComb
   pvdir2 : assoc(pv2,dirNums),
 
   /* Load basis of dimensionality requested. */
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ) else (
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+  ),
   NC : length(bP),
 
   /* Set up surface basis sets */
@@ -486,8 +490,9 @@ generateFpoDiffCoeffCrossLower(fname, funcNm, cdim, basisFun, polyOrder, dirComb
   dG_rec_lo_e, dG_rec_up_e, G_rec_lo_e, G_rec_up_e, surft1_lo_c, surft1_up_c,
   surft2_lo_c, surft2_up_c, vol_c, surft1_lo_e, surft1_up_e, surft2_lo_e, surft2_up_e],
 
-  /* if (polyOrder = 1) then (basisFun : "hyb"), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* Phase space variables */
   pv1 : dirCombo[1],
   pv2 : dirCombo[2],
@@ -508,9 +513,12 @@ generateFpoDiffCoeffCrossLower(fname, funcNm, cdim, basisFun, polyOrder, dirComb
   pvdir2 : assoc(pv2,dirNums),
 
   /* Load basis of dimensionality requested. */
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ) else (
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+  ),
   NC : length(bP),
 
   /* Set up surface basis sets */
@@ -926,8 +934,9 @@ generateFpoDiffCoeffDiag(fname, funcNm, cdim, basisFun, polyOrder, pv) := block(
   varsC, bC, varsP, bP, surfVars, bSurf, NC, numSurf, G_L_lst, G_C_lst, G_R_lst,
   G_C_e, d2G_surf_C_e, stencilCells, diff_coeff_index, G_rec, diff_coeff_out],
 
-  /* if (polyOrder = 1) then (basisFun : "hyb"), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* FPO is always 3V */
   vdim : 3,
 
@@ -968,9 +977,17 @@ generateFpoDiffCoeffDiag(fname, funcNm, cdim, basisFun, polyOrder, pv) := block(
     printf(fh, "  double dv1_sq = 4.0/dxv[~a]/dxv[~a]; ~%", pvdir+cdim-1, pvdir+cdim-1),
     printf(fh, "~%"),
 
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+
+  ) else (
+
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+
+  ),
 
     surfVars : delete(pv, varsP),
     bSurf : basisFromVars(basisFun, surfVars, polyOrder),

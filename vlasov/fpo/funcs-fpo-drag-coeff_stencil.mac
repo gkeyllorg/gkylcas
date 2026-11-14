@@ -22,8 +22,9 @@ generateFpoDragCoeffStencil(fname, funcNm, cdim, basisFun, polyOrder, pv) := blo
   varsP, bP, surfVars, bSurf, NC, numSurf, H_L_lst, H_C_lst, H_R_lst, H_C_e, dHdv_surf_C_e, stencilCells,
   H_rec, drag_coeff_out],
 
-  /* if (polyOrder = 1) then (basisFun : "hyb"), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* FPO is only defined in 3V */
   vdim : 3,
   pdim : cdim+vdim,
@@ -69,9 +70,17 @@ generateFpoDragCoeffStencil(fname, funcNm, cdim, basisFun, polyOrder, pv) := blo
     printf(fh, "  double dv1 = 2.0/dxv[~a]; ~%", pvdir+cdim-1),
     printf(fh, "~%"),
 
-    /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+    if (basisFun = "hyb") then (
+
+      [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+
+    ) else (
+
+      [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+
+      [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+
+    ),
 
 
     surfVars : delete(pv, varsP),
@@ -162,9 +171,9 @@ generateFpoSgnDragCoeff(fname, funcNm, cdim, basisFun, polyOrder, pv) := block(
   [vdim, pdim, dim, dirNums, varsC, bC, varsP, bP, surfVars, bSurf, surfNodes, numSurf,
   numNodes, coordVarS, stencilLoc, sI, pvdir, fnameStencil, fh, drag_coeff_surf_e],
 
-  /* if (polyOrder = 1) then (basisFun : "hyb"), */
-
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* FPO is only defined in 3V */
   vdim : 3,
   pdim : cdim+vdim,
@@ -175,9 +184,12 @@ generateFpoSgnDragCoeff(fname, funcNm, cdim, basisFun, polyOrder, pv) := block(
   dirNums : [[vx, 1], [vy, 2], [vz,3]],
 
   kill(varsC, basisC, varsP, basisP),
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ) else (
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+  ),
 
 
   surfVars : delete(pv, varsP),

@@ -14,8 +14,9 @@ generateFpoVlasovDiffVol(fname, funcNm, cdim, basisFun, polyOrder) := block(
   [vdim, varsC, bC, varsP, bP, NC, fh, f_lst, f_e, D_xx_e, D_xy_e, D_xz_e, D_yx_e, D_yy_e, D_yz_e,
   D_zx_e, D_zy_e, D_zz_e, D_comps, dv1_sq_comps, kernel, zr, polyFact, facDiff_mid, facDiff_e],
 
-  /* if (polyOrder = 1) then ( basisFun : "hyb" ), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* FPO is always 3V */
   vdim : 3,
 

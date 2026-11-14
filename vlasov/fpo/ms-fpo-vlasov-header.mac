@@ -1,16 +1,16 @@
 /* Serendipity basis. */
-minPolyOrder_Ser : 1$
+minPolyOrder_Ser : 2$ /* pure Serendipity p=1 is not supported for the FPO */
 maxPolyOrder_Ser : 2$
 minCdim_Ser : 1$
-maxCdim_Ser : 2$
+maxCdim_Ser : 1$
 
 /* Tensor product basis. */
-/* Note that Serendipity, p = 1, is equivalent to Tensor */
-/* Thus no need to calculate p = 1 Tensor basis */
-minPolyOrder_Tensor : 2$
-maxPolyOrder_Tensor : 2$
+/* Tensor p=1 IS the tensor hybrid basis: p=1 in configuration space and p=2 in
+   velocity space. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
 minCdim_Tensor : 1$
-maxCdim_Tensor : 0$
+maxCdim_Tensor : 2$
 
 /* ...... END OF USER INPUTS........ */
 
@@ -28,19 +28,20 @@ printf(fh, "#include <gkyl_util.h>~%~%") $
 printf(fh, "EXTERN_C_BEG~%~%") $
 
 vdim : 3$
-bName : "ser" $
+bNames : ["ser", "tensor"] $
 dirs : [vx, vy, vz] $
 dirCombos : listify(cartesian_product(setify(dirs), setify(dirs)))$
 stencilStrs3 : ["lo", "in", "up"]$
 stencilStrs9 : listify(cartesian_product(setify(stencilStrs3), setify(stencilStrs3)))$
 boundaryStencilStrs9 : delete(["in","in"], stencilStrs9)$
 
-for c : minCdim_Ser thru maxCdim_Ser do (
-  minPolyOrderB : minPolyOrder[1],
-  maxPolyOrderB : maxPolyOrder[1],
-  if (c>1 and bName = "ser") then maxPolyOrderB : 1,
+for bInd : 1 thru length(bNames) do (
+bName : bNames[bInd],
+for c : minCdim[bInd] thru maxCdim[bInd] do (
+  minPolyOrderB : minPolyOrder[bInd],
+  maxPolyOrderB : maxPolyOrder[bInd],
   for polyOrder : minPolyOrderB thru maxPolyOrderB do (
-    printf(fh, sconcat("// ",c,"x3v p",polyOrder," kernels~%")),
+    printf(fh, sconcat("// ",c,"x3v ",bName," p",polyOrder," kernels~%")),
 
     /* Drag coefficient */
     for d1 : 1 thru length(dirs) do (
@@ -159,6 +160,7 @@ for c : minCdim_Ser thru maxCdim_Ser do (
 
     printf(fh, "~%")
   )
+)
 )$
 printf(fh, "~%") $
 

@@ -18,16 +18,20 @@ generateFpoVlasovDragSurf(fname, funcNm, cdim, basisFun, polyOrder, pv) := block
   fh, bSurf, numSurf, drag_coeff_surf_L_e, drag_coeff_surf_R_e, fL_e, fC_e, fR_e, fUp_L_e,
   fUp_R_e, GhatL_c, GhatR_c, GhatL_e, GhatR_e, incrL_c, incrR_c],
 
-  /* if (polyOrder = 1) then ( basisFun : "hyb" ), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* FPO is always 3V */
   vdim : 3,
   pdim : cdim+vdim,
 
   /* Load basis of dimensionality requested. */
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ) else (
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+  ),
   NC : length(bP),
 
   dirNums : [[vx, 1], [vy, 2], [vz, 3]],

@@ -15,15 +15,19 @@ generateFpoVlasovDragVol(fname, funcNm, cdim, basisFun, polyOrder) := block(
   [vdim, NC, fh, f_e, a_vx_e, a_vy_e, a_vz_e, a_comps, dv1_comps, a_e, dv1, dir,
     kernel, zr, polyFact, facDrag_mid, facDrag_e],
 
-  /* if (polyOrder = 1) then ( basisFun : "hyb" ), */
-
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
   /* FPO is always 3V */
   vdim : 3,
 
   /* Load basis of dimensionality requested. */
-  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
-  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
-  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  if (basisFun = "hyb") then (
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ) else (
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+  ),
   NC : length(bP),
 
   disp(printf(false, "creating ~a", fname)),
