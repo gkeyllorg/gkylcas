@@ -20,7 +20,7 @@ calcRecovFaceGen(basisNm, recDirs, dirs, numDer, face, polyOrder, C, lo, ce, up)
     rLo : diff(rLo, recDirs[1], numDer),
     rLoCoef : calcInnerProdList(perpDirs, 1, ba, subst(recDirs[1]=face, rLo)),
     lo2 : dg(rLoCoef)
-  ) elseif is(op(lo)=bc) then (
+  ) elseif is(op(lo)=bc) or is(op(lo)=bcs) then (
     lo2 : lo
   ),
 
@@ -37,7 +37,7 @@ calcRecovFaceGen(basisNm, recDirs, dirs, numDer, face, polyOrder, C, lo, ce, up)
     rUp : diff(rUp, recDirs[1], numDer),
     rUpCoef : calcInnerProdList(perpDirs, 1, ba, subst(recDirs[1]=face, rUp)),
     up2 : dg(rUpCoef)
-  ) elseif is(op(up)=bc) then (
+  ) elseif (is(op(up)=bc) or is(op(up)=bcs)) then (
     up2 : up
   ),
 
