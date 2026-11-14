@@ -1,0 +1,251 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/recovery.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* This script generates the kernels for the boundary surface term
+   diffusion contribution from Lenard Bernstein operator for the
+   gyrokinetic equation. */
+
+calcGkLBOBoundaryDiffUpdateInDir(dir, fh, funcNm, cdim, vdim, basisFun, polyOrder, ismapped) := block(
+  [varsC,bC,varsP,bP,vSub,NC,NP,varsV,vmap_e,vmapSq_e,vmap_prime_e,pDim,vidx1,surfVar,surfIntVars,
+   bPp,vmap_edge_e,vmap_skin_e,jacobvel_edge_e,jacobvel_skin_e,bmagBasis,bType,fskin_over_jacv_e,
+   dxvRec_edge,dxvRec_skin,hl_e,hr_e,rdv2hFac,nuVtSqSum_e,BmagInv_e,bSurf,numBSurf,confFac_e,dfVfac,fVfac,
+   confFac_c,vpSqSub,dfRecFacl_e,dfRecFacr_e,fRecFacl_e,fRecFacr_e],
+
+  printf(fh, "GKYL_CU_DH double ~a(const double *dxv, const double *vmap_edge, const double *vmap_skin, const double *vmap_prime, const double *jacobvel_edge, const double *jacobvel_skin, const double m_, const double *bmag_inv, const double *nuSum, const double *nuPrimMomsSum, const int edge, const double *fedge, const double *fskin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // dxv: Cell spacing. ~%"),
+  printf(fh, "  // vmap_edge,vmap_skin: velocity space mapping.~%"),
+  printf(fh, "  // vmap_prime: velocity space mapping derivative (in the skin cell).~%"),
+  printf(fh, "  // jacobvel_edge,jacobvel_skin: velocity space jacobian.~%"),
+  printf(fh, "  // m_: species mass.~%"),
+  printf(fh, "  // bmag_inv: 1/(magnetic field magnitude). ~%"),
+  printf(fh, "  // nuSum: collisionalities added (self and cross species collisionalities). ~%"),
+  printf(fh, "  // nuPrimMomsSum: sum of bulk velocities and thermal speeds squared times their respective collisionalities. ~%"),
+  printf(fh, "  // fskin/edge: Distribution function in cells ~%"),
+  printf(fh, "  // out: Incremented distribution function in cell ~%"),
+  printf(fh, "~%"),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC),  NP : length(bP),
+  varsV : makelist(varsP[cdim+i],i,1,vdim),
+
+  pDim    : cdim+vdim,
+  vidx1   : makelist(i,i,cdim,cdim+vdim-1),
+  surfVar : varsV[dir],
+  surfIntVars : delete(surfVar,varsP),
+
+  bPp : diff(bP,surfVar),  /* Basis derivative. */
+
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    bSurf : basisFromVars("gkhyb",surfIntVars,polyOrder)
+  ) else (
+    bSurf : basisFromVars(basisFun,surfIntVars,polyOrder)
+  ),
+  numBSurf : length(bSurf),
+
+  /* Axisymmetric basis (independent of y). */
+  bmagBasis : getAxisymmetricConfBasis(bC),
+
+  /* Expand velocity mapping fields. */
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_edge_e : subst(vmap=vmap_edge, copylist(vmap_e)),
+  vmap_skin_e : subst(vmap=vmap_skin, copylist(vmap_e)),
+
+  /* Construct the recovery polynomial */
+  if polyOrder=1 then /* Force p=1 to mean hybrid. */
+    bType : "gkhyb"
+  else
+    bType : basisFun,
+
+  if (ismapped) then (
+    /* Use mapped velocity space, and nonuniform recovery. */
+    jacobvel_edge_e : jacobvel_edge[0],
+    jacobvel_skin_e : jacobvel_skin[0],
+
+    printf(fh, "  double vmap_primeSq = pow(vmap_prime[~a],2);~%", dir-1),
+    printf(fh, "~%"),
+
+    /* Scale the distribution by the velocity space jacobian. */
+    printf(fh, "  double fedge_over_jacv[~a], fskin_over_jacv[~a];~%", NP, NP),
+    writeCExprs1(fedge_over_jacv, makelist(fedge[i-1]/jacobvel_edge_e,i,1,NP)),  printf(fh, "~%"),
+    writeCExprs1(fskin_over_jacv, makelist(fskin[i-1]/jacobvel_skin_e,i,1,NP)),  printf(fh, "~%"),
+
+    fskin_over_jacv_e : doExpand1(fskin_over_jacv, bP),
+
+    printf(fh, "  double dv_edge = ~a;~%", float(expand( subst(surfVar=1, vmap_edge_e[dir]) - subst(surfVar=-1, vmap_edge_e[dir]) ))),
+    printf(fh, "  double dv_skin = ~a;~%", float(expand( subst(surfVar=1, vmap_skin_e[dir]) - subst(surfVar=-1, vmap_skin_e[dir]) ))),
+    printf(fh, "~%"),
+
+    dxvRec_edge : makelist(2, i, 1, pDim),  dxvRec_edge[cdim+dir] : dv_edge,
+    dxvRec_skin : makelist(2, i, 1, pDim),  dxvRec_skin[cdim+dir] : dv_skin,
+
+    hl_e : calcRecov2CellGenNonuniform(bType,surfVar,varsP,polyOrder,dxvRec_edge,dxvRec_skin,
+      dg(makelist(fedge_over_jacv[i-1],i,1,NP)), dg(makelist(fskin_over_jacv[i-1],i,1,NP))),
+    hr_e : calcRecov2CellGenNonuniform(bType,surfVar,varsP,polyOrder,dxvRec_skin,dxvRec_edge,
+      dg(makelist(fskin_over_jacv[i-1],i,1,NP)), dg(makelist(fedge_over_jacv[i-1],i,1,NP))),
+
+    rdv2hFac : rdv2
+  )
+  else (
+    /* Set rates of change to 1 for simplicity. */
+    vmap_prime_e : [1, 1],
+    jacobvel_edge_e : 1,
+    jacobvel_skin_e : 1,
+    fskin_over_jacv_e : doExpand1(fskin, bP),
+
+    /* Use uniform recovery in non-mapped kernels, since nonuniform recovery
+       can produce very large stencils. */
+    hl_e : calcRecov2CellGen(bType,surfVar,varsP,polyOrder,
+      dg(makelist(fedge[i-1],i,1,NP)), dg(makelist(fskin[i-1],i,1,NP))),
+    hr_e : calcRecov2CellGen(bType,surfVar,varsP,polyOrder,
+      dg(makelist(fskin[i-1],i,1,NP)), dg(makelist(fedge[i-1],i,1,NP))),
+
+    rdv2hFac : rdv2Sq
+  ),
+
+  /*............. RECOVERY DONE ..............................*/
+        
+  /* Create a pointer to nuVtSqSum. */
+  printf(fh, "  const double *nuVtSqSum = &nuPrimMomsSum[~a];~%", 1*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  double rdv2 = 2.0/dxv[~a]; ~%", vidx1[dir]),
+  printf(fh, "  double rdv2Sq = rdv2*rdv2; ~%"),
+  printf(fh, "~%"),
+
+  nuVtSqSum_e : doExpand1(nuVtSqSum,bC),
+  BmagInv_e   : doExpand1(bmag_inv, bmagBasis),
+
+  /* diffFac_c = < psi, nuVtSqSum*mu' > for vpar term,
+                 < psi, (2*m/B)*nuVtSqSum*vpar' > for mu term.
+     dfRecFac : phase-space dependent factor from 1st IBP.
+     fRecFac : phase-space dependent factor from 2nd IBP. */
+  if dir=1 then (
+    confFac_e : nuVtSqSum_e,
+    dfVfac    : vmap_prime_e[2],
+    fVfac     : jacobvel_skin_e/(vmap_prime_e[dir])^2
+  ) elseif dir=2 then (
+    confFac_c : calcInnerProdList(varsC, 1, bC, 2*m_*BmagInv_e*nuVtSqSum_e),
+    printf(fh, "  double confFac[~a]; ~%", NC),
+    writeCExprs1(confFac, confFac_c),
+    printf(fh, "~%"),
+    confFac_c : makelistNoZeros1(confFac_c, confFac),
+
+    confFac_e : doExpand(confFac_c, bC),
+    dfVfac    : vmap_prime_e[1] * vmap_skin_e[dir],
+    fVfac     : jacobvel_skin_e/(vmap_prime_e[dir])^2 * vmap_skin_e[dir]
+  ),
+
+  vpSqSub : makelist(vmap_prime[i-1]^2=vmap_primeSq,i,1,vdim),
+  printf(fh, "  double dfVfac_l = ~a; ~%", float(subst(vpSqSub,subst(surfVar=-1,dfVfac)))),
+  printf(fh, "  double dfVfac_r = ~a; ~%", float(subst(vpSqSub,subst(surfVar=1 ,dfVfac)))),
+  printf(fh, "~%"),
+
+  printf(fh, "  double fVfac_l = ~a; ~%", float(subst(vpSqSub,subst(surfVar=-1,fVfac)))),
+  printf(fh, "  double fVfac_r = ~a; ~%", float(subst(vpSqSub,subst(surfVar=1 ,fVfac)))),
+  printf(fh, "~%"),
+
+  calcAndWriteIncr(bSurf,dfRecFacl_eIn,dfRecFacr_eIn,fRecFacl_eIn,fRecFacr_eIn,isLo) := block(
+    /* Write the phase-space factors in the increments. */
+    [surfIntVars,numBSurf,dfRecFacl_c,dfRecFacr_c,fRecFacl_c,fRecFacr_c,dfRecFacl_e,dfRecFacr_e,fRecFacl_e,fRecFacr_e,
+     tmpPowVars,clst,phaseFacl_c,phaseFacr_c,phaseFacl_e,phaseFacr_e,incrl_c,incrr_c],
+
+    surfIntVars : listofvars(bSurf),
+    numBSurf : length(bSurf),
+
+    dfRecFacl_c : calcInnerProdList(surfIntVars, 1, bSurf, dfRecFacl_eIn),
+    dfRecFacr_c : calcInnerProdList(surfIntVars, 1, bSurf, dfRecFacr_eIn),
+
+    fRecFacl_c : calcInnerProdList(surfIntVars, 1, bSurf, fRecFacl_eIn),
+    fRecFacr_c : calcInnerProdList(surfIntVars, 1, bSurf, fRecFacr_eIn),
+
+    dfRecFacl_e : doExpand(dfRecFacl_c, bSurf),
+    dfRecFacr_e : doExpand(dfRecFacr_c, bSurf),
+
+    fRecFacl_e : doExpand(fRecFacl_c, bSurf),
+    fRecFacr_e : doExpand(fRecFacr_c, bSurf),
+
+    tmpPowVars : [],
+    clst : [dv_edge,dv_skin,dv_edgeR2,dv_skinR2],
+
+    /* Write out the recovered distribution and its derivative (times fVfac or dfVfac). */
+
+    if (isLo) then (
+      phaseFacl_c : -rdv2Sq*calcInnerProdList(surfIntVars, 1, subst(surfVar=-1,bPp), fRecFacl_e),
+  
+      phaseFacr_c : rdv2hFac*calcInnerProdList(surfIntVars, 1, subst(surfVar=1,bP ), dfRecFacr_e)
+                   -rdv2Sq  *calcInnerProdList(surfIntVars, 1, subst(surfVar=1,bPp), fRecFacr_e)
+    ) else (
+      phaseFacl_c : rdv2hFac*calcInnerProdList(surfIntVars, 1, subst(surfVar=-1,bP ), dfRecFacl_e)
+                   -rdv2Sq  *calcInnerProdList(surfIntVars, 1, subst(surfVar=-1,bPp), fRecFacl_e),
+    
+      phaseFacr_c : -rdv2Sq*calcInnerProdList(surfIntVars, 1, subst(surfVar=1,bPp), fRecFacr_e)
+    ),
+
+    if (polyOrder=1 or sdowncase(basisFun)="tensor") then (
+      /* This simplification only works for p=1 because it is a tensor product of
+         conf and velocity space (remains to be checked for tensor basis). */
+      printf(fh, "  double phaseFacl[~a] = {0.0}; ~%", NP),
+      tmpPowVars : writeCExprsCollect1noPowers(phaseFacl, phaseFacl_c, clst, [dv_edge,dv_skin], tmpPowVars),
+      printf(fh, "~%"),
+
+      printf(fh, "  double phaseFacr[~a] = {0.0}; ~%", NP),
+      tmpPowVars : writeCExprsCollect1noPowers(phaseFacr, phaseFacr_c, clst, [dv_edge,dv_skin], tmpPowVars),
+      printf(fh, "~%"),
+
+      phaseFacl_e : doExpand(makelistNoZeros1(phaseFacl_c, phaseFacl), bP),
+      phaseFacr_e : doExpand(makelistNoZeros1(phaseFacr_c, phaseFacr), bP)
+    ) else (
+      phaseFacl_e : doExpand(phaseFacl_c, bP),
+      phaseFacr_e : doExpand(phaseFacr_c, bP)
+    ),
+
+    incrl_c : calcInnerProdList(varsP, confFac_e, bP, phaseFacl_e),
+    incrr_c : calcInnerProdList(varsP, confFac_e, bP, phaseFacr_e),
+
+    printf(fh, "  double incrl[~a] = {0.0}; ~%", NP),
+    writeCExprs1(incrl, incrl_c),
+    printf(fh, "~%"),
+    
+    printf(fh, "  double incrr[~a] = {0.0}; ~%", NP),
+    writeCExprs1(incrr, incrr_c),
+    printf(fh, "~%"),
+    
+    writeCIncrExprs1(out, makelistNoZeros1(incrr_c, incrr) - makelistNoZeros1(incrl_c, incrl) ), 
+    printf(fh, "~%")
+  ),
+    
+  dfRecFacl_e : fullratsimp(dfVfac_l * subst(surfVar=0, diff(hl_e, surfVar))),
+  dfRecFacr_e : fullratsimp(dfVfac_r * subst(surfVar=0, diff(hr_e, surfVar))),
+
+  /* If edge == -1 we are doing the lower skin cell. */
+  printf(fh, "  if (edge == -1) { ~%~%"),
+
+  /* Use the regular (not recovered) distribution at the domain boundary. */
+  fRecFacl_e : fullratsimp(fVfac_l * subst(surfVar=-1, fskin_over_jacv_e)),
+  fRecFacr_e : fullratsimp(fVfac_r * subst(surfVar=0, hr_e)),
+
+  calcAndWriteIncr(bSurf,dfRecFacl_e,dfRecFacr_e,fRecFacl_e,fRecFacr_e,true),
+
+  /* Otherwise edge == +1, we are doing the upper skin cell. */
+  printf(fh, "~%  } else { ~%~%"),
+  
+  /* Use the regular (not recovered) distribution at the domain boundary. */
+  fRecFacl_e : fullratsimp(fVfac_l * subst(surfVar=0, hl_e)),
+  fRecFacr_e : fullratsimp(fVfac_r * subst(surfVar=1 , fskin_over_jacv_e)),
+
+  calcAndWriteIncr(bSurf,dfRecFacl_e,dfRecFacr_e,fRecFacl_e,fRecFacr_e,false),
+
+  printf(fh, "  } ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  return 0.;~%"),  /* Return CFL frequency in volume kernel. */
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+);

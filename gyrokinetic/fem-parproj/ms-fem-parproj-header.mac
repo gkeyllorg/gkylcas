@@ -1,0 +1,170 @@
+/* Create the header file for the fem_parproj kernels. */
+load("moments/bvp_utilities/bvp-util.mac")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minDim_Ser : 1$
+maxDim_Ser : 3$
+
+/* Tensor product basis. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minDim_Tensor : 1$
+maxDim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minDim       : [minDim_Ser, minDim_Tensor]$
+maxDim       : [maxDim_Ser, maxDim_Tensor]$
+
+/* Types of boundary conditions for which to generate kernels.
+     =0 periodic or nondirichlet
+     =1 nonperiodic or Dirichlet
+   For periodic we'll assume ghost cells are filled accordingly
+   and use an interior stencil. */
+bcTypesNP : [0, 1]$
+bcStrsNP  : ["periodic", "nonperiodic"]$
+bcKeyNP   : makelist([bcTypesNP[i],bcStrsNP[i]],i,1,length(bcTypesNP))$
+
+bcTypesND : [0, 1]$
+bcStrsND  : ["nondirichlet", "dirichlet"]$
+bcKeyND   : makelist([bcTypesND[i],bcStrsND[i]],i,1,length(bcTypesND))$
+
+bcTypesNDgs : [0, 1, 2]$
+bcStrsNDgs  : ["nondirichlet", "dirichlet_ghost", "dirichlet_skin"]$
+bcKeyNDgs   : makelist([bcTypesNDgs[i],bcStrsNDgs[i]],i,1,length(bcTypesNDgs))$
+
+disp(printf(false,"Creating gkyl_fem_parproj_kernels.h"))$
+fname : "~/max-out/gkyl_fem_parproj_kernels.h"$
+fh    : openw(fname)$
+
+printf(fh, "// Gkyl ------------------------------------------------------------------------~%")$
+printf(fh, "//~%")$
+printf(fh, "// Header file for parallel FEM projection operator.~%")$
+printf(fh, "//~%")$
+printf(fh, "//    _______     ___~%")$
+printf(fh, "// + 6 @ |||| # P ||| +~%")$
+printf(fh, "//------------------------------------------------------------------------------~%")$
+printf(fh, "~%")$
+printf(fh, "#pragma once ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, "#include <gkyl_mat.h> ~%")$
+printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+printf(fh, "// This needs to be inside EXTERN_C~%")$
+printf(fh, "#include <gkyl_mat_triples.h> ~%")$
+printf(fh, "~%")$
+
+findCombos(fhIn, funcTypeStr, funcNameStr, funcArgsStr, basisFun, dim, polyOrder, bcKey, posDependent, inloOnly) := block([coordVarS,stencilLoc,sI,bcCombos,bcI,currBC,stencilStr,i],
+  /* Obtain the various string combinations for the names of the kernels.
+       funcTypeStr: function type.
+       funcNameStr: funtion name.
+       funcArgsStr: function signature.
+       basisFun: basis type.
+       dim: dimensionality.
+       polyOrder: polynomial order.
+       bcKey: bc key-label pairs.
+       posDependent: indicate if kernel is position dependent (true/false).
+       inloOnly: differentiate between upper and other locations in the grid (=true), or between lower, interior and upper (=false).
+  */
+
+  load(sconcat("core/basis-precalc/basis", basisFun, dim, "x", ".lisp")),
+
+  /* Associative list between stencil location (-1,0,1) and variable
+     strings used in kernel names. */
+  coordVarS : getCoordVarS(varsC),
+
+  /* List of stencil locations. Each entry is a dim-dimensional list
+   with -1 meaning it is at a lower boundary, 1 upper boundary, or
+   0 away from boundaries in that direction. */
+  stencilLoc : getStencilCoords(dim),
+
+  /* Only need stencils that include all the nodes in the perp directions.
+     This is effectively upper x,y-boundary stencils, so remove all stencil
+     locations not on the upper x,y-boundaries. */
+  if dim=2 then (
+    stencilLoc : sublist(stencilLoc, lambda([x], x[1]=1))
+  ) else if dim=3 then (
+    stencilLoc : sublist(stencilLoc, lambda([x], x[1]=1 and x[2]=1))
+  ),
+
+  numStencils : 1,
+  if posDependent then ( numStencils : length(stencilLoc) ),
+  for sI : 1 thru numStencils do (
+
+    /* This if-statement excludes lower boundary kernels (without an upper boundary). */
+    if (not inloOnly) or (stencilLoc[sI]=makelist(0,d,1,dim)) or
+       (length(sublist(stencilLoc[sI],lambda([x],x < 0)))=0) then (
+
+      bcTypes  : makelist(bcKey[i][1],i,1,length(bcKey)),
+      bcCombos : [[0]],
+      if (stencilLoc[sI][1] # 0) or (not posDependent) or (inloOnly) then ( bcCombos : makelist([bcTypes[i]],i,1,length(bcTypes)) ),
+
+      /* Loop over BC combinations. Will create a separate kernel for each. */
+      for bcI : 1 thru length(bcCombos) do (
+
+        currBC : copylist(bcCombos[bcI]),
+
+        /* String used in kernel name, identifying stencil location and BC. */
+        if posDependent then (
+          stencilStr : sconcat("_",assoc(stencilLoc[sI][dim],[[-1,"lo"],[0,"in"],[1,"up"]]),
+                       assoc(stencilLoc[sI][dim],coordVarS)[dim],"_",assoc(currBC[1],bcKey),string(varsC[dim]))
+        ) else (
+          stencilStr : sconcat("_",assoc(currBC[1],bcKey),string(varsC[dim]))
+        ),
+
+        printf(fhIn, sconcat(funcTypeStr," ",funcNameStr,"_~ax_~a_p~a~a(",funcArgsStr,");~%"), dim, bName[bInd], polyOrder, stencilStr)
+      )
+    )
+  )
+)$
+
+for bInd : 1 thru length(bName) do (
+
+  for ci : minDim[bInd] thru maxDim[bInd] do (
+
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      /* Number of nodes in linear problem. */
+      findCombos(fh, "long", "fem_parproj_num_nodes_global", "int numCellsPar", bName[bInd], ci, polyOrder, bcKeyNP, false, true),
+      printf(fh, "~%"),
+
+      /* Local to global mapping. */
+      findCombos(fh, "GKYL_CU_DH void", "fem_parproj_local_to_global", "int numCellsPar, int parIdx, long *globalIdxs", bName[bInd], ci, polyOrder, bcKeyNP, true, true),
+      printf(fh, "~%"),
+
+      /* Left side matrix stencil (weighted and unweighted). */
+      findCombos(fh, "void", "fem_parproj_lhs_stencil_noweight", "const double *weight, const long *globalIdxs, struct gkyl_mat_triples *tri", bName[bInd], ci, polyOrder, bcKeyND, true, false),
+      findCombos(fh, "void", "fem_parproj_lhs_stencil_weighted", "const double *weight, const long *globalIdxs, struct gkyl_mat_triples *tri", bName[bInd], ci, polyOrder, bcKeyND, true, false),
+      printf(fh, "~%"),
+
+      /* Right side source stencil (mass matrix . modal_to_nodal matrix). */
+      findCombos(fh, "GKYL_CU_DH void", "fem_parproj_src_stencil_noweight", "const double *weight, const double *rho, const double *phiBC, long nodeOff, const long *globalIdxs, double *bsrc", bName[bInd], ci, polyOrder, bcKeyNDgs, true, false),
+      findCombos(fh, "GKYL_CU_DH void", "fem_parproj_src_stencil_weighted", "const double *weight, const double *rho, const double *phiBC, long nodeOff, const long *globalIdxs, double *bsrc", bName[bInd], ci, polyOrder, bcKeyNDgs, true, false),
+      printf(fh, "~%"),
+
+      /* Solution stencil kernels. */
+      printf(fh, "GKYL_CU_DH void fem_parproj_sol_stencil_~ax_~a_p~a(const double *sol_nodal_global, long nodeOff, const long *globalIdxs, double *sol_modal_local);~%", ci, bName[bInd], polyOrder),
+      printf(fh, "~%"),
+
+      if (ci > 1) then (
+        /* Biasing kernels. */
+        findCombos(fh, "GKYL_CU_DH void", "fem_parproj_bias_line_lhs", "const int *edge, const int *perp_dirs, const long *globalIdxs, gkyl_mat_triples *tri", bName[bInd], ci, polyOrder, bcKeyNP, true, true),
+        findCombos(fh, "GKYL_CU_DH void", "fem_parproj_bias_line_src", "const int *edge, const int *perp_dirs, double val, long nodeOff, const long *globalIdxs, double *bsrc", bName[bInd], ci, polyOrder, bcKeyNP, true, true),
+        printf(fh, "~%")
+      )
+    ),
+
+    printf(fh, "~%")
+
+  )
+
+)$
+
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$

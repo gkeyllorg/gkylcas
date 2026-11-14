@@ -1,0 +1,165 @@
+/* This script generates the kernels for the volume term contribution from 
+   the Boltzmann equation for photons in a reduced 1x2v (z, kpar, kperp) 
+   geometry, where z is the motion of the photon along the field line, 
+   kpar is the momentum of the photon along the field line, and kperp
+   is the momentum of the photon perpendicular to the field. */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("util_maxima/utilities.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load ("scifac")$
+load(stringproc)$
+fpprec : 24$
+
+varsV : [vx, vy, vz]$
+cvars : [X, Y, Z]$
+vvars : [VX, VY, VZ]$
+
+pVsub : [x=vx,y=vy,z=vz]$
+
+dx11 : [dx10, dx11, dx12]$
+dv11 : [dv10, dv11, dv12]$
+
+cidx(cdim)      := makelist(i,i,0,cdim-1)$
+vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+
+/* Helper functions for expanding in basis functions a quantity we know should be sparse  */
+/* For example, alpha, the phase space flow only depends on a few phase space coordinates */
+doMakeExprLst_a0(vals, S)  := makelist(if vals[i] # 0 then S[a0+i-1] else 0, i, 1, length(vals))$
+doMakeExprLst(vals, S)  := makelist(if vals[i] # 0 then S[i-1] else 0, i, 1, length(vals))$
+doExpandLst(lst, basis) := sum(lst[i]*basis[i], i, 1, length(basis))$
+
+calcBoltzmannPhotonVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC, bC, varsP, bP, varsV, bV, NC, NP, NV,
+  cflPt,cid,vid,dir,f_e,incr_cdim,incr_vdim,cdir,vdir,expr,alpha_cdim_c,alpha_vdim_c,amid],
+
+  pOrderV : polyOrder,
+  /* Load the specific desired basis, including the loading of the hybrid basis if p=1 */
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder),
+  /* Number of basis monomials. */
+  NP : length(bP),
+  NC : length(bC),
+
+  /* Identify polyOrder in velocity space as p=2 for p=1 since we force p=1 to
+     mean hybrid basis. */
+  if polyOrder=1 then ( 
+    pOrderV : 2, 
+    [varsV, bV] : loadBasis(basisFun, vdim, 2)
+  ) 
+  else (
+    [varsV, bV] : loadBasis(basisFun, vdim, polyOrder)
+  ), 
+  bV : subst(pVsub, copylist(bV)),  
+  varsV : subst(pVsub, copylist(varsV)), 
+  NV : length(bV),
+
+  /* Load cubic mapping for velocity-space coordinate 
+     Only 1D because we have 2 1D mappings. But we need
+     2 of them to obtain the correct variation in up to 2V. 
+     Utilized to compute |kpar|. */
+  [varsV_p3,bV_p3] : loadBasis(basisFun, 1, 3),
+  bV_vx_p3 : subst(x=vx, copylist(bV_p3)), 
+  bV_vy_p3 : subst(x=vy, copylist(bV_p3)), 
+  NV_p3 : length(bV_p3),
+
+  /* Load basis sets for inverse Jacobian in each direction, 
+     which are p=2 in one velocity dimension (derivative of cubic C^1 mapping) */
+  [varsV_1D, bV_1D] :  loadBasis(basisFun, 1, 2), 
+  bV_vx : subst(x=vx, copylist(bV_1D)), 
+  bV_vy : subst(x=vy, copylist(bV_1D)), 
+  NV_1D : length(bV_1D),  
+
+  printf(fh, "#include <gkyl_boltzmann_photon_kernels.h> ~%"),
+
+  /* specify a point to evaluate alpha at for use in computing CFL */
+  cflPt : makelist(varsP[d]=0, d, 1, length(varsP)),
+
+  printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, double light_speed, double rho_curv, 
+  const double *vmap, const double *jacob_vel_inv, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
+  printf(fh, "  // w[NDIM]:       Cell-center coordinates.~%"),
+  printf(fh, "  // dxv[NDIM]:     Cell spacing.~%"),
+  printf(fh, "  // light_speed:   Speed of light.~%"),
+  printf(fh, "  // rho_curv:      Curvature of the magnetic field.~%"),
+  printf(fh, "  // vmap:          Velocity-space nonuniform mapping in each dimension. ~%"),
+  printf(fh, "  // jacob_vel_inv: Inverse of velocity space Jacobian in each dimension. ~%"),
+  printf(fh, "  // f:             Input photon distribution function.~%"),
+  printf(fh, "  // out:           Incremented output.~%"),
+
+  cid : cidx(cdim),
+  vid : vidx(cdim,vdim),
+
+  for dir : 1 thru cdim do (
+    printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", dir-1, cid[dir])
+  ),
+
+  printf(fh, "  const double wv = w[~a]; ~%", vid[1]), 
+  for dir : 1 thru vdim do (
+    printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", dir-1, vid[dir]), 
+    printf(fh, "  const double *jacob_vel_inv~a = &jacob_vel_inv[~a]; ~%", dir-1, NV_1D*(dir-1))
+  ),
+
+  /* Get nodes for evaluating |kpar| when kpar < 0 */
+  vmap_e : doExpand1(vmap, bV_vx_p3),
+  nodes :  gaussOrd(4, 1),
+  num_nodes : length(nodes), 
+  vmap_nodes : evAtNodes(vmap_e,nodes,[vx]),  
+  basis_nodal : getVarsNodalBasisWithNodes("Tensor", 1, 3, [vx], nodes), 
+  kpar_abs_nodal_e : doExpand1(kpar_abs_nodal,basis_nodal),
+  kpar_abs_c : calcInnerProdList([vx], 1, bV_vx_p3, kpar_abs_nodal_e), 
+
+  printf(fh, "  double kpar_abs[~a] = {0.0}; ~%", NV_p3), 
+  printf(fh, "  double kpar_abs_nodal[~a] = {0.0}; ~%", NV_p3), 
+  printf(fh, "  if (wv > 0.0) { ~%"), 
+  for i : 1 thru NV_p3 do (
+    printf(fh, "    kpar_abs[~a] = vmap[~a]; ~%", i-1, i-1)
+  ), 
+  printf(fh, "  } ~%"), 
+  printf(fh, "  else { ~%"), 
+  for i : 1 thru num_nodes do (
+    printf(fh, "    kpar_abs_nodal[~a] = ~a; ~%", i-1, float(expand(vmap_nodes[i])))
+  ), 
+  for i : 1 thru NV_p3 do (
+    printf(fh, "    kpar_abs[~a] = ~a; ~%", i-1, float(expand(kpar_abs_c[i])))
+  ), 
+  printf(fh, "  } ~%"), 
+
+  kpar_abs_e : doExpand1(kpar_abs, bV_vx_p3), 
+  /* Expand inverse velocity space Jacobian in corresponding coordinate */
+  jacob_vel_inv_vx : doExpand1(jacob_vel_inv0, bV_vx), 
+  jacob_vel_inv_vy : doExpand1(jacob_vel_inv1, bV_vy), 
+
+  /* alpha_cdim = light_speed z_hat, alpha_vdim = |kpar|*light_speed/rho_curv kperp_hat */
+  printf(fh, "  double incr_cdim[~a] = {0.0}; ~%", length(bP)),
+  printf(fh, "  double incr_vdim[~a] = {0.0}; ~%~%", length(bP)),
+
+  /* Fetch the sign of kpar for the streaming in configuration space */
+  printf(fh, "  double sign_kpar = 1.0; ~%"),
+  printf(fh, "  if (wv < 0.0) sign_kpar = -1.0; ~%"),
+
+  /* Expand distribution function f in phase basis. */
+  f_e : doExpand1(f, bP),
+
+  /* incr_cdim = c df/dz */
+  incr_cdim : calcInnerProdList(varsP, 1, diff(bP,varsP[1]), f_e), 
+  for i : 1 thru NP do (
+    if float(expand(incr_cdim[i])) # 0.0 then printf(fh, "  incr_cdim[~a] = light_speed*sign_kpar*~a*(~a); ~%", i-1, dx11[1], float(expand((incr_cdim[i]))))
+  ),
+  printf(fh, "~%"),
+
+  /* incr_vdim = c*|kpar|/rho_curv df/dkperp 
+     No kpar force. kperp is third coordinate */
+  incr_vdim : calcInnerProdList(varsP, 1, diff(bP,varsP[3]), jacob_vel_inv_vy*kpar_abs_e*f_e), 
+  for i : 1 thru NP do (
+    if float(expand(incr_vdim[i])) # 0.0 then printf(fh, "  incr_vdim[~a] = light_speed/rho_curv*~a*(~a); ~%", i-1, dv11[2], float(expand((incr_vdim[i]))))
+  ),
+  printf(fh, "~%"),
+
+  for i : 1 thru NP do (
+    printf(fh, "  out[~a] += incr_cdim[~a] + incr_vdim[~a]; ~%", i-1, i-1, i-1)
+  ), 
+
+  printf(fh, "~%"),
+  printf(fh, "  return 0.0; ~%"),
+  printf(fh, "} ~%")
+)$

@@ -1,0 +1,70 @@
+/*
+  Generate kernels for the updates from the surface term
+  contributions from the diffusion portion of the 
+  Rosenbluth/Fokker-Planck Operator
+*/
+
+load("vlasov/fpo/funcs-fpo-vlasov-diff-surf.mac")$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 3$
+maxCdim_Ser : 2$
+maxVdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 0$
+minCdim_Tensor : 1$
+minVdim_Tensor : 3$
+maxCdim_Tensor : 1$
+maxVdim_Tensor : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+dirs : [vx, vy, vz]$
+dirCombos : listify(cartesian_product(setify(dirs), setify(dirs)))$
+
+dirNums : [[vx, 1], [vy, 2], [vz, 3]]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for vidx : 1 thru length(dirCombos) do (
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c>1 and bName[bInd] = "ser") then maxPolyOrderB : 1, 
+
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        pv1 : dirCombos[vidx][1],
+        pv2 : dirCombos[vidx][2],
+        pvdir1 : assoc(pv1,dirNums),
+        pvdir2 : assoc(pv2,dirNums),
+
+        fname : sconcat("~/max-out/fpo_vlasov_diff_surf",pv1,pv2,"_",
+          c,"x3v_",bName[bInd],"_p",polyOrder,".c"),
+        funcNm : sconcat("fpo_vlasov_diff_surf",pv1,pv2,"_",c,"x3v_",bName[bInd],"_p",polyOrder),
+
+        if (pvdir1 = pvdir2) then (
+          generateFpoVlasovDiffSurfDiag(fname, funcNm, c, bName[bInd], polyOrder, pv1)
+        )
+        else (
+          generateFpoVlasovDiffSurfCross(fname, funcNm, c, bName[bInd], polyOrder, pv1, pv2)
+        )
+      )
+    )
+  )
+)$

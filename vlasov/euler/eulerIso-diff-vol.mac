@@ -1,0 +1,42 @@
+load("core/modal-basis.mac")$
+load("core/recovery.mac")$
+load(stringproc)$
+
+lhs : [outrho, outrhou0, outrhou1, outrhou2]$
+uvar : [uvar0,uvar1,uvar2]$
+
+genEulerIsoDiffVolKernel(fh, dim, basisType, polyOrder) := block(
+  [vars,basis,ba,numC,dir],
+
+  [vars, basis] : loadBasis(basisType, dim, polyOrder),
+  ba : basis,
+  numC : length(ba),
+
+  printf(fh, "#include <dg_euleriso_diffusion_kernels.h>~%~%"),
+  printf(fh, "GKYL_CU_DH double~%"),
+  printf(fh, sconcat("dg_euleriso_diffusion_vol_", dim, "x_", basisType,
+      "_p", polyOrder, "(const double* w, const double* dx,~%")),
+  printf(fh,
+    "  const double* D, const double* uvar, const double* statevec, double* GKYL_RESTRICT out) ~%"),
+  printf(fh, "{~%"),
+  printf(fh, "  // w[NDIM]: Cell-center coordinates~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing~%"),
+  printf(fh, "  // D: Diffusion tensor (rho diffusion, rhoux diffusion, rhouyz diffusion, rhouz diffusion)- advection eq (rho) has no diffusion, first pOrder values should be zero~%"),
+  printf(fh, "  // uvar: unaliased form of rhoui/ rho~%"),
+  printf(fh, "  // q: Input state [rho rhoux rhouy rhouz]~%"),
+  printf(fh, "  // out: Incremented output~%~%"),
+  printf(fh, "  const double retval;~%"),
+  printf(fh, "  const double *D1 = &D[~a]; ~%", 0*numC),
+  printf(fh, "  const double *D2 = &D[~a]; ~%", 1*numC),
+  printf(fh, "  const double *D3 = &D[~a]; ~%", 2*numC),
+  printf(fh, "  const double *D4 = &D[~a]; ~%", 3*numC),
+  printf(fh, "  double mu = D2[0]; ~%"),
+  for dir : 1 thru dim do (
+    printf(fh, "  double dx1~a = 2./dx[~a]; ~%", dir-1, dir-1)
+  ),
+
+  printf(fh, "  double cfl = mu*~a*(dx10*dx10);~%",(polyOrder+1)*(polyOrder+1)), /*Assumes square grids...*/
+  printf(fh, "  return cfl;~%"),
+
+  printf(fh, "}~%")
+)$

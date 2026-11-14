@@ -1,0 +1,122 @@
+/* Compute the header file for gyrokinetic collisionless flux kernels. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$
+maxCdim_Ser : 3$
+maxVdim_Ser : 2$
+
+/* Tensor order basis. */
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$
+maxCdim_Tensor : 0$
+maxVdim_Tensor : 0$
+
+/* Number of velocity dimensions allowed for each
+   configuration-space dimension. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* ...... END OF USER INPUTS........ */
+
+varsC : [x, y, z]$
+varsV : [vpar, mu]$
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+/* Options for writing kernels with and without toroidal field (b_y=0), one per
+   dimension. */
+byOpt : [[false], [false, true], [false, true]]$
+byStr : ["", "no_by_"]$
+
+/* Options for writing kernels used at multiblock boundaries. One for each
+ dimension. */
+mb_bcOpt : [[false,true],[false,true],[false,true]]$
+mb_bcStr : ["", "multib_boundary_"]$
+
+printPrototypes() := block([],
+  for bInd : 1 thru length(bName) do (
+    for c : minCdim[bInd] thru maxCdim[bInd] do (
+      for gkV : 1 thru length(gkVdims[c]) do (
+        v : gkVdims[c][gkV],
+  
+        maxPolyOrderB : maxPolyOrder[bInd],
+        if (c=3) then maxPolyOrderB : 1, /* Only declare p=1 kernels for 3x2v */
+        for polyOrder : 1 thru maxPolyOrderB do (
+
+          for byI : 1 thru length(byOpt[c]) do (
+            no_by : byOpt[c][byI],
+            no_byStr : byStr[byI],
+
+            for mbI : 1 thru length(mb_bcOpt[c]) do (
+              mb_bound : mb_bcOpt[c][mbI],
+              mb_boundStr : mb_bcStr[mbI],
+
+              for surfDir : 1 thru c do (
+                dirlabel : varsC[surfDir],
+                extraargs : "const struct gkyl_dg_surf_geom *dgs, const struct gkyl_gk_dg_surf_geom *gkdgs, ",
+                vprimeargs : "",
+
+                printf(fh, "GKYL_CU_DH double gk_collisionless_flux_~a~asurf~a_~ax~av_~a_p~a(
+                  const double *w, const double *dxv,
+                  ~a
+                  const double *vmap, const double *vmapSq, const double q_, const double m_, 
+                  ~a
+                  const double *bmag, const double *jacobgeo_rat_surfL, const double *jacobgeo_rat_surfR,
+                  const double *phi, const double *JfL, const double *JfR, 
+                  double* GKYL_RESTRICT flux_surf); ~%", no_byStr, mb_boundStr, dirlabel, c, v, bName[bInd], polyOrder, vprimeargs, extraargs),  
+
+                printf(fh, "GKYL_CU_DH double gk_collisionless_flux_~a~aedge_surf~a_~ax~av_~a_p~a(
+                  const double *w, const double *dxv,
+                  ~a
+                  const double *vmap, const double *vmapSq, const double q_, const double m_,
+                  ~a
+                  const double *bmag, const double *jacobgeo_rat_surfL, const double *jacobgeo_rat_surfR,
+                  const double *phi, const double *JfL, const double *JfR, 
+                  double* GKYL_RESTRICT flux_surf); ~%", no_byStr, mb_boundStr, dirlabel, c, v, bName[bInd], polyOrder, vprimeargs, extraargs)
+              )
+            ),
+
+            dirlabel : varsV[1],
+            extraargs : "const struct gkyl_dg_vol_geom *dgv, const struct gkyl_gk_dg_vol_geom *gkdgv, ",
+            vprimeargs : "const double *vmap_prime_l, const double *vmap_prime_r, ",
+
+            printf(fh, "GKYL_CU_DH double gk_collisionless_flux_~asurf~a_~ax~av_~a_p~a(
+              const double *w, const double *dxv,
+              ~a
+              const double *vmap, const double *vmapSq, const double q_, const double m_, 
+              ~a
+              const double *bmag, const double *phi, const double *JfL, const double *JfR, 
+              double* GKYL_RESTRICT flux_surf); ~%", no_byStr, dirlabel, c, v, bName[bInd], polyOrder, vprimeargs, extraargs)
+          ),
+
+          printf(fh, "~%")
+        )
+      )   
+    )
+  )
+)$
+
+fh : openw("~/max-out/gkyl_gk_collisionless_flux_kernels.h")$
+printf(fh, "#pragma once~%")$
+printf(fh, "~%")$
+printf(fh, "#include <math.h>~%")$
+printf(fh, "#include <gkyl_util.h>~%")$
+printf(fh, "#include <gkyl_dg_geom.h>~%")$
+printf(fh, "#include <gkyl_gk_dg_geom.h>~%")$
+printf(fh, "~%")$
+printf(fh, "EXTERN_C_BEG~%")$
+printf(fh, "~%")$
+printPrototypes()$
+printf(fh, "~%")$
+printf(fh, "EXTERN_C_END~%")$
+close(fh)$

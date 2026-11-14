@@ -1,0 +1,54 @@
+load("pkpm/pkpm/euler-pkpm-implicit-source.mac")$
+load(stringproc)$
+/* This script calls the functions which generate the kernels for an implicit update of
+   the source terms in the fluid equations of the PKPM system. 
+   Following Wang et al. JCP 2020, we construct a linear system of (3*num_species + 3) 
+   for each of the species current densities and the three components of the electric field. */
+
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 3$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 2$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      disp(printf(false,sconcat("Creating euler pkpm vars source funcs ",bName[bInd]," ~axp~a"),d,polyOrder)),
+      fname : sconcat("~/max-out/euler_pkpm_em_coupling_set_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("euler_pkpm_em_coupling_set_",  d, "x_", bName[bInd], "_p", polyOrder),
+      setPKPMEMSourceSolve(fh, funcName, d, bName[bInd], polyOrder),
+      close(fh),
+
+      fname : sconcat("~/max-out/euler_pkpm_em_coupling_copy_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("euler_pkpm_em_coupling_copy_",  d, "x_", bName[bInd], "_p", polyOrder),
+      copyPKPMEMSourceSolve(fh, funcName, d, bName[bInd], polyOrder),
+      close(fh)
+    )
+  )
+);

@@ -1,0 +1,190 @@
+/* Generate kernels for computing rest-frame pressure = n*T
+   in the special relativistic Vlasov-Maxwell system of equations.
+   The moment factor is: 
+   gamma*GammaV^2 - 2*GammaV*(v . p) + 1/gamma*((v . p)^2 - 1) 
+   where v is the spatial component of the bulk four-velocity: GammaV*V_drift_i, 
+   GammaV is the bulk Lorentz boost factor: sqrt(1 + v^2), 
+   p is the spatial component of the particle four-velocity, 
+   and gamma = sqrt(1 + p^2) is the particle Lorentz boost factor. */
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("vlasov/vlasov/vlasov-basis.mac");
+load(stringproc)$
+fpprec : 24$
+
+let(wx1^2, wx1_sq)$
+let(wx2^2, wx2_sq)$
+let(wx3^2, wx3_sq)$
+let(dv1^2, dv1_sq)$
+let(dv2^2, dv2_sq)$
+let(dv3^2, dv3_sq)$
+
+volExpr(cdim, vdim) := prod(dxv[cdim+i-1], i, 1, vdim)$
+volExprTot(totDim) := prod(dxv[i-1], i, 1, totDim)$
+pVsub : [x=vx,y=vy,z=vz]$
+vidx(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+dv11 : [dv10, dv11, dv12]$
+
+vTrans  : [vx*dv1/2.0+wx1, vy*dv2/2.0+wx2, vz*dv3/2.0+wx3]$
+wTrans  : [wx1, wx2, wx3]$
+dvTrans : [vx*dv1/2.0, vy*dv2/2.0, vz*dv3/2.0]$
+
+/* Helper functions for expanding in basis functions a quantity we know should be sparse  */
+doMakeExprLst(vals, S)  := makelist(if vals[i] # 0 then S[i-1] else 0, i, 1, length(vals))$
+doExpandLst(lst, basis) := sum(lst[i]*basis[i], i, 1, length(basis))$
+
+/* total fluid-frame pressure = n*T where n is the fluid-frame density */
+calc_sr_pressure(fh, funcNm, cdim, vdim, basisFun, polyOrder, rep) := block(
+  [varsC, bC, varsP, bP, varsV, bV, NC, NP, NV,
+   GammaV_e, Vx_e, Vy_e, Vz_e, GammaVSq_e, VxSq_e, VySq_e, VzSq_e,
+   temp_c, temp_sq_c, tempNoZero, temp_e, tempSqNoZero, tempSq_e, 
+   p_fac_c, p_facNoZero, 
+   gamma_inv_e, gamma_e, p_fac_e, fl, Pressure, clst],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsV,bV,varsP,bP] : loadVlasovBasis(basisFun, cdim, vdim, polyOrder), 
+  NV : length(bV),
+  NP : length(bP),
+  NC : length(bC),
+  pDim : length(varsP),
+
+  /* Load cubic mapping for momentum-space coordinate 
+     Only 1D because we have 3 1D mappings. But we need
+     3 of them to obtain the correct variation in up to 3V. */
+  [varsV_p3,bV_p3] : loadBasis(basisFun, 1, 3),
+  bV_vx : subst(x=vx, copylist(bV_p3)), 
+  bV_vy : subst(x=vy, copylist(bV_p3)), 
+  bV_vz : subst(x=vz, copylist(bV_p3)), 
+  NV_p3 : length(bV_p3),
+
+  printf(fh, "#include <gkyl_sr_Gamma_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_basis_ser_1x_p3_exp_sq.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *vmap, const double *gamma, const double *gamma_inv, const double *u_i, const double *u_i_sq, const double *GammaV, const double *GammaV_sq, const double *f, double* GKYL_RESTRICT sr_pressure) ~%{ ~%", funcNm),
+  printf(fh, "  // w:           Cell-center coordinates of velocity grid.~%"),
+  printf(fh, "  // dxv:         Cell spacing of velocity grid.~%"),
+  printf(fh, "  // vmap:        Momentum-space nonuniform mapping.~%"),
+  printf(fh, "  // gamma:       Particle Lorentz boost factor sqrt(1 + p^2).~%"),
+  printf(fh, "  // gamma_inv:   Inverse particle Lorentz boost factor 1/sqrt(1 + p^2).~%"),
+  printf(fh, "  // u_i:         Spatial components of bulk four-velocity = GammaV*V_drift. ~%"),
+  printf(fh, "  // u_i_sq:      Squared spatial components of bulk four-velocity = u_i^2. ~%"),
+  printf(fh, "  // GammaV:      Bulk four-velocity Lorentz factor = sqrt(1 + |u_i|^2). ~%"),
+  printf(fh, "  // GammaV_sq:   Squared bulk four-velocity Lorentz factor = 1 + |u_i|^2. ~%"),
+  printf(fh, "  // f:           Input distribution function.~%"),
+  printf(fh, "  // sr_pressure: Output relativistic pressure.~%"),
+  printf(fh, "  const double volFact = ~a/~a; ~%", volExpr(cdim, vdim), 2^vdim),
+  printf(fh, " ~%"),
+
+  for i : 1 thru vdim do (
+    printf(fh, "  const double *p~a = &vmap[~a]; ~%", i-1, NV_p3*(i-1)),
+    printf(fh, "  const double *V_~a = &u_i[~a]; ~%", i-1, NC*(i-1)),
+    printf(fh, "  const double *V_~a_sq = &u_i_sq[~a]; ~%", i-1, NC*(i-1)),
+    printf(fh, " ~%")
+  ),
+
+  /* The momentum coordinate always comes from the stored map: C^1 cubic
+     (tensor bases) or C^0 linear in slots [0],[1] (Serendipity bases). */
+  if (rep = "cubic") then (
+    px_e : doExpand1(p0, bV_vx),
+    py_e : doExpand1(p1, bV_vy),
+    pz_e : doExpand1(p2, bV_vz)
+  )
+  else (
+    loadVelLinearMapBasis(),
+    px_e : doExpand1(p0, bV_lin_vi[1]),
+    py_e : doExpand1(p1, bV_lin_vi[2]),
+    pz_e : doExpand1(p2, bV_lin_vi[3])
+  ),
+  p_e : [px_e, py_e, pz_e],
+
+  px_sq_e : doExpand1(p0_sq, bV_vx), 
+  py_sq_e : doExpand1(p1_sq, bV_vy), 
+  pz_sq_e : doExpand1(p2_sq, bV_vz), 
+  p_sq_e : [px_sq_e, py_sq_e, pz_sq_e],
+
+  GammaV_e : doExpand1(GammaV, bC),
+  Vx_e : doExpand1(V_0, bC),
+  Vy_e : doExpand1(V_1, bC),
+  Vz_e : doExpand1(V_2, bC),
+
+  GammaVSq_e : doExpand1(GammaV_sq, bC),
+  VxSq_e : doExpand1(V_0_sq, bC),
+  VySq_e : doExpand1(V_1_sq, bC),
+  VzSq_e : doExpand1(V_2_sq, bC),
+
+  gamma_inv_e : doExpand1(gamma_inv, bV),
+  gamma_e : doExpand1(gamma, bV),
+
+  printf(fh, "  double temp[~a] = {0.0}; ~%", NP),
+  printf(fh, "  double temp_sq[~a] = {0.0}; ~%", NP),
+  printf(fh, "  double p_fac[~a] = {0.0}; ~%", NP),
+  printf(fh, "  double p0_sq[~a] = {0.0}; ~%", NV_p3),
+  printf(fh, "  ser_1x_p3_exp_sq(p0, p0_sq); ~%"),
+  if (vdim = 1) then (
+    temp_c : calcInnerProdList(varsP, 1, bP, p_e[1]*Vx_e),
+    temp_sq_c : calcInnerProdList(varsP, 1, bP, p_sq_e[1]*VxSq_e)
+  )
+  elseif (vdim = 2) then (
+    printf(fh, "  double p1_sq[~a] = {0.0}; ~%", NV_p3),
+    printf(fh, "  ser_1x_p3_exp_sq(p1, p1_sq); ~%"),
+    temp_c : calcInnerProdList(varsP, 1, bP, p_e[1]*Vx_e + p_e[2]*Vy_e),
+    /* (v . p)^2 = v_x^2 p_x^2 + v_y^2 p_y^2 + 2.0 v_x p_x v_y p_y 
+       where v is the four-velocity GammaV*V_drift_i and p is the particle velocity. */
+    temp_sq_c : calcInnerProdList(varsP, 1, bP, p_sq_e[1]*VxSq_e 
+                                              + p_sq_e[2]*VySq_e
+                                              + 2*p_e[1]*Vx_e*p_e[2]*Vy_e)
+  )
+  else (
+    printf(fh, "  double p1_sq[~a] = {0.0}; ~%", NV_p3),
+    printf(fh, "  ser_1x_p3_exp_sq(p1, p1_sq); ~%"),
+    printf(fh, "  double p2_sq[~a] = {0.0}; ~%", NV_p3),
+    printf(fh, "  ser_1x_p3_exp_sq(p2, p2_sq); ~%"),
+    temp_c : calcInnerProdList(varsP, 1, bP, p_e[1]*Vx_e + p_e[2]*Vy_e + p_e[3]*Vz_e),
+    /* (v . p)^2 = v_x^2 p_x^2 + v_y^2 p_y^2 + v_z^2 p_z^2 
+       + 2.0 v_x p_x v_y p_y + 2.0 v_x p_x v_z p_z + 2.0 v_y p_y v_z p_z 
+       where v is the four-velocity GammaV*V_drift_i and p is the particle velocity. */
+    temp_sq_c : calcInnerProdList(varsP, 1, bP, p_sq_e[1]*VxSq_e 
+                                              + p_sq_e[2]*VySq_e 
+                                              + p_sq_e[3]*VzSq_e
+                                              + 2*p_e[1]*Vx_e*p_e[2]*Vy_e
+                                              + 2*p_e[1]*Vx_e*p_e[3]*Vz_e
+                                              + 2*p_e[2]*Vy_e*p_e[3]*Vz_e)
+  ),
+  writeCExprs1(temp, temp_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  temp_sq_c : map(letsimp, temp_sq_c),
+  writeCExprs1(temp_sq, temp_sq_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Zero out components of v . p and (v . p)^2 which are empty. */
+  tempNoZero : doMakeExprLst(temp_c, temp),
+  temp_e     : doExpandLst(tempNoZero, bP),
+
+  tempSqNoZero : doMakeExprLst(temp_sq_c, temp_sq),
+  tempSq_e     : doExpandLst(tempSqNoZero, bP),
+
+  /* Full pressure factor is gamma*GammaV^2 - 2*GammaV*(v . p) + 1/gamma*((v . p)^2 - 1) 
+     where v is the four-velocity GammaV*V_drift_i, p is the particle velocity, 
+     and gamma = sqrt(1 + p^2) is the particle Lorentz boost factor. */
+  p_fac_c : calcInnerProdList(varsP, 1, bP, gamma_e*GammaVSq_e - 2*GammaV_e*temp_e + gamma_inv_e*(tempSq_e - 1)),
+  writeCExprs1(p_fac, p_fac_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Zero out components of p . V_drift which are empty. */
+  p_facNoZero : doMakeExprLst(p_fac_c, p_fac),
+  p_fac_e     : doExpandLst(p_facNoZero, bP),
+
+  fl : doExpand1(f, bP),
+  /* Pressure is dense and we separate into individual inner products to try to minimize the internal memory Maxima uses. */
+  for i : 1 thru NC do (
+   printf(fh, "  sr_pressure[~a] += (volFact/~a)*(~a); ~%", i-1, vdim, float(expand(innerProd(varsP, bC[i], p_fac_e, fl))))
+  ),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  printf(fh, "} ~%")
+)$

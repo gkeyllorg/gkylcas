@@ -1,0 +1,37 @@
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
+
+/* Nodes on the surface */
+loadConfSurfBasis(cdim, basisType, polyOrder, surfCVars) := block(
+  btype : basisType,
+
+  /* Handle the special case of surfaces in 1D: */
+  if (cdim > 1) then (
+    bSurf : basisFromVars(btype, surfCVars, polyOrder),
+    nodes_conf : gaussOrd(polyOrder + 1, cdim - 1),
+    basisNodalConf : getVarsNodalBasisWithNodes("Tensor", length(surfCVars), polyOrder, surfCVars, nodes_conf),
+    surfNodes : gaussOrd(polyOrder + 1, length(surfCVars))
+  )
+  else (
+    bSurf : [1],
+    nodes_conf : [1],
+    basisNodalConf : [1],
+    surfNodes : [1]
+  ),
+
+  return([bSurf, nodes_conf, basisNodalConf, surfNodes])
+)$
+
+/* Nodes in the volume */
+loadConfVolBasis(cdim, basisType, polyOrder, volVars) := block(
+  btype : basisType,
+
+  /* p+1 nodal points to ensure no aliasing */
+  bVol : basisFromVars(btype, volVars, polyOrder),
+
+  volNodes : gaussOrd(polyOrder + 1, cdim),
+  basisNodalConf  : getVarsNodalBasisWithNodes("Tensor", length(volVars), polyOrder, volVars, volNodes),
+
+  return([bVol, basisNodalConf, volNodes])
+)$

@@ -1,0 +1,115 @@
+/*
+  Functions to generate kernels that force the skin cell
+  to equal the ghost cell at the boundary surface.
+*/
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+load("core/nodal_operations/nodal_functions.mac")$
+fpprec : 24$
+
+genSSFGkernelInDir(fh, funcNm, dim, surfDir, basisNm, polyOrder) := block(
+  [vars,basis,numB,surfVar,perpVars,perpDirs,perpBasis,subList,numBperp,
+   nodes,numNodes,perpNodes,numNodesPerp,boundaryStr,ghostEvSign,bS,fghost_e,fghostSurf_c,
+   fghostSurf_noZero_c,fghostSurf_e,fghostSurf_n,fskin_e,fskin_n,i,curr_node,surf_node_idx,j,
+   found_node,d,nodToMod,fskin_c],
+
+  [vars, basis] : loadBasis(basisNm, dim, polyOrder),
+  numB : length(basis),
+
+  surfVar : vars[surfDir],
+  perpVars : delete(surfVar, vars),
+  perpDirs : delete(surfDir, makelist(i,i,1,dim)),
+
+  /* Get the nodes at requested dimension, and the nodal-to-modal matrix. */
+  nodes : getNodes(basisNm, dim, polyOrder),
+  numNodes : length(nodes),
+  nodToMod : calcNodToModWithNodes(basisNm, dim, polyOrder, nodes),
+
+  /* Load a basis of one fewer dimension for projecting onto surface. */
+  if dim>1 then (
+    perpBasis : basisFromVars(basisNm, perpVars, polyOrder)
+  ) else (
+    perpBasis : [1/innerProd(perpVars,1,1,1)]
+  ),
+  numBperp : length(perpBasis),
+
+  /* Get the nodes in one dimension lower. */
+  if dim>1 then (
+    perpNodes : getNodes(basisNm, dim-1, polyOrder)
+  ) else (
+    perpNodes : getNodes(basisNm, dim, polyOrder)
+  ),
+  numNodesPerp : length(perpNodes),
+
+  /* Expand skin and ghost cell in volume basis. */
+  fskin_e : doExpand1(fskin, basis),
+  fghost_e : doExpand1(fghost, basis),
+
+  boundaryStr : ["lower","upper"],
+  ghostEvSign : [1, -1],  skinEvSign  : [-1, 1],
+
+  for bS : 1 thru 2 do ( /* One kernel for each of lower and upper boundaries. */
+    printf(fh,sconcat("GKYL_CU_DH void ",funcNm,"(const double *fghost, double *fskin) ~%{ ~%"), sconcat(boundaryStr[bS],surfVar)),
+    printf(fh,"  // fghost: field in the ghost cell.~%"),
+    printf(fh,"  // fskin: field in the skin cell.~%"),
+    printf(fh,"~%"),
+
+    /* Evaluate the (ghost cell) flux at the boundary surface. */
+    fghostSurf_c : calcInnerProdList(perpVars,1,perpBasis,subst(surfVar=ghostEvSign[bS], fghost_e)),
+    fghostSurf_noZero_c : makelistNoZeros1(fghostSurf_c, fghostSurf),
+    fghostSurf_e : doExpand(fghostSurf_noZero_c,perpBasis),
+    printf(fh,"  double fghostSurf[~a];~%", numBperp),
+    writeCExprs1(fghostSurf, fghostSurf_c),
+    printf(fh,"~%"),
+
+    /* Evaluate the surface expansion at nodes. */
+    fghostSurf_n : evAtNodes(fghostSurf_e, perpNodes, perpVars),
+
+    /* Evaluate skin cell at volume nodes. */
+    fskin_n : evAtNodes(fskin_e, nodes, vars),
+
+    /* Replace values of fskin at nodes on boundary surface with nodal values of fghostSurf. */
+    for i : 1 thru numNodes do (
+      curr_node : nodes[i],
+      /* Only nodes on the boundary surface. */
+      if curr_node[surfDir] = skinEvSign[bS] then (
+
+        surf_node_idx : -1,
+        for j : 1 thru numNodesPerp do (
+          found_node : true,
+          for d : 1 thru dim-1 do (
+            if perpNodes[j][d] = curr_node[perpDirs[d]] then (
+              found_node : found_node and true
+            ) else (
+              found_node : found_node and false
+            )
+          ),
+          if found_node then (surf_node_idx : j)
+        ),
+
+        fskin_n[i] : fghostSurf_n[surf_node_idx]
+      )
+    ),
+
+    /* Perform a nodal to modal transformation of the skin. */
+    fskin_c : nodToMod . fskin_n,
+    fskin_c : makelist(fullratsimp(fskin_c[i][1]),i,1,numB),
+    /* Write these coefficients to avoid wrongful use of new coefficients. */
+    printf(fh,"  double fskinNew[~a];~%", numB),
+    writeCExprs1(fskinNew, fskin_c),
+    printf(fh,"~%"),
+
+    writeCExprs1(fskin, makelist(fskinNew[i-1],i,1,numB)),
+    printf(fh, "~%"),
+
+    printf(fh, "}~%~%")
+  )
+)$
+
+genSSFGkernel(fh, funcNm, dim, basisNm, polyOrder) := block([],
+  for d : 1 thru dim do (
+    genSSFGkernelInDir(fh, funcNm, dim, d, basisNm, polyOrder)
+  )
+)$

@@ -1,0 +1,89 @@
+/* 
+  Generate kernels for the volume term 
+  drag contribution for the Rosenbluth/Fokker-Planck Operator
+
+*/
+load("vlasov/fpo/fpo-utils.mac")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+
+fpprec : 24$
+
+dirs : [vx, vy, vz]$
+
+generateFpoVlasovDragVol(fname, funcNm, cdim, basisFun, polyOrder) := block(
+  [vdim, NC, fh, f_e, a_vx_e, a_vy_e, a_vz_e, a_comps, dv1_comps, a_e, dv1, dir,
+    kernel, zr, polyFact, facDrag_mid, facDrag_e],
+
+  /* if (polyOrder = 1) then ( basisFun : "hyb" ), */
+
+  /* FPO is always 3V */
+  vdim : 3,
+
+  /* Load basis of dimensionality requested. */
+  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
+  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  NC : length(bP),
+
+  disp(printf(false, "creating ~a", fname)),
+
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_fpo_vlasov_kernels.h> ~%~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double* dxv, const double* drag_coeff, const double* f, double* GKYL_RESTRICT out) { ~%", funcNm),
+
+  printf(fh, "  // dxv[NDIM]: Cell spacing in each direction. ~%"),
+  printf(fh, "  // drag_coeff: Drag coefficient. ~%"),
+  printf(fh, "  // f: Distribution function. ~%"),
+  printf(fh, "  // out: Incremented output. ~%~%"),
+
+  printf(fh, "  // dv1 for each direction. ~%"),
+  for d : 1 thru vdim do (
+    printf(fh, "  double dv1_~a = 2.0/dxv[~a]; ~%", dirs[d], cdim+d-1)
+  ),
+
+  printf(fh, "  ~%"),
+  printf(fh, "  // Index into drag coefficient. ~%"),
+  printf(fh, "  const double* a_vx = &drag_coeff[~a]; ~%", 0*NC),
+  printf(fh, "  const double* a_vy = &drag_coeff[~a]; ~%", 1*NC),
+  printf(fh, "  const double* a_vz = &drag_coeff[~a]; ~%", 2*NC),
+  printf(fh, "  ~%"),
+
+  f_e : doExpand1(f, bP),
+
+  /* Components of a */
+  a_vx_e : doExpand1(a_vx, bP),
+  a_vy_e : doExpand1(a_vy, bP),
+  a_vz_e : doExpand1(a_vz, bP),
+  a_comps : [a_vx_e, a_vy_e, a_vz_e],
+
+  dv1_comps : [dv1_vx, dv1_vy, dv1_vz],
+
+  /* 
+    Iterate over directions and write out vol term contribution 
+    for each direction.
+  */
+  for d : 1 thru vdim do (
+    a_e : a_comps[d],
+    dv1 : dv1_comps[d],
+    dir : dirs[d],
+
+    /* vol = 1/2 * <d/dvi(psi) ai * f> */ 
+    kernel : 0.5*dv1*calcInnerProdList(varsP, 1, 
+      diff(bP, dir), a_e * f_e),
+
+    printf(fh, "  // ~a contribution ~%", dir),
+
+    /* Write out increment for direction */
+    factorAndWriteCIncrExprsCollect1(out, kernel, [dv1]),
+    printf(fh, "~%") 
+  ),
+
+  printf(fh, "~%~%"),
+
+  /* Return CFL in surface kernels */
+  printf(fh, "  return 0.0; ~%"),
+  printf(fh, "~%}~%"),
+  close(fh)
+)$
+

@@ -1,0 +1,485 @@
+/* Velocity-space Hamiltonian streaming kernels of the tensor p=1 hybrid basis (p=1 tensor in
+   configuration space x p=2 tensor in velocity space) with the velocity-space operations factored
+   by direction, for the cubic velocity map: the configuration-space surface kernels (interior and
+   boundary) and the volume kernel of calcHamilVelSurfStream, calcHamilVelBoundarySurfStream and
+   calcHamilVol.
+
+   Everything is written in the product of the 1D orthonormal Legendre polynomials (p=1 along each
+   configuration-space direction, p=2 along each velocity-space direction), where restricting to a
+   face x_d = +/-1, dividing by the velocity-map Jacobian J_d at the 3 Gauss-Legendre nodes along
+   v_d (the 1D matrix B_d = Et3 diag(1/J_d) E3) and differentiating are 1D operations. The
+   Hamiltonian is velocity-only, so the configuration-space modes are spectators of the product
+   with dH/dv_d: for the sparse representation dH/dv_d depends on v_d only and the product is a
+   3x3 matrix along v_d (folded with B_d at runtime); for the dense one the product is evaluated at
+   the 4 Gauss-Legendre nodes per velocity direction (exact: the integrand is at most of degree 6
+   per direction) with the transforms applied one direction at a time. Same as the modal kernels
+   to round off. */
+
+load("vlasov/vlasov/vlasov-basis.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+
+hfoLabels : ["x", "y", "z"]$
+
+/* Factorization data of the tensor p=1 hybrid basis: phase mode k as the product cf[k] prod_e
+   psi_{pc[k][e]}(x_e) prod_e phi_{pt[k][e]}(v_e) of the 1D orthonormal polynomials, and the
+   velocity modes as bV[m] = coefV[m] prod_e phi_{degV[m][e]}(v_e). Returns
+   [NP, NC, pc, pt, cf, varsC, varsV, degV, coefV]. */
+hfoFactor(cdim, vdim) := block([varsC, bC, varsV, bV, varsP, bP, NP, NC, NV, cIdx, mIdx, coefL,
+  degV, coefV, vars1, phi1, varsC1, psi1, degC, coefC, k, c, e],
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis("tensor", cdim, vdim, 1),
+  NP : length(bP), NC : length(bC), NV : length(bV),
+  [cIdx, mIdx, coefL, degV, coefV, vars1, phi1] : hybFactorBasis(bP, bC, bV, varsV, 2),
+  [varsC1, psi1] : loadBasis("Tensor", 1, 1),
+  degC : makelist(makelist(hipow(expand(bC[c]), varsC[e]), e, 1, cdim), c, 1, NC),
+  coefC : makelist(radcan(bC[c]/prod(subst(varsC1[1] = varsC[e], psi1[degC[c][e]+1]), e, 1, cdim)), c, 1, NC),
+  for c : 1 thru NC do
+    if listofvars(coefC[c]) # [] then error("hfoFactor: conf mode not a 1D product, c =", c),
+  [NP, NC, makelist(degC[cIdx[k]], k, 1, NP), makelist(degV[mIdx[k]], k, 1, NP),
+   makelist(coefL[k]*coefC[cIdx[k]]*coefV[mIdx[k]], k, 1, NP), varsC, varsV, degV, coefV]
+)$
+
+/* 1D tables: E3[i][a] = phi_a(x_i) at the 3 nodes, Et3[a][i] = w_i phi_a(x_i), the same for 4 nodes
+   (E4, Et4), Dm[a][b] with d phi_b/dx = sum_a Dm[a][b] phi_a, T1[a][b][c] = int phi_a phi_b phi_c,
+   and psiAt[a+1][s] = psi_a at x = -1 (s = 1) and +1 (s = 2). */
+hfoTables() := block([vars1, phi1, varsC1, psi1, x3, w3, x4, w4, E3, Et3, E4, Et4, Dm, T1, psiAt, x],
+  [vars1, phi1] : loadBasis("Tensor", 1, 2), x : vars1[1],
+  [varsC1, psi1] : loadBasis("Tensor", 1, 1),
+  [x3, w3] : gaussOrdWeight1D(3), [x4, w4] : gaussOrdWeight1D(4),
+  E3 : makelist(makelist(subst(x = x3[i], phi1[a]), a, 1, 3), i, 1, 3),
+  Et3 : makelist(makelist(w3[i]*E3[i][a], i, 1, 3), a, 1, 3),
+  E4 : makelist(makelist(subst(x = x4[i], phi1[a]), a, 1, 3), i, 1, 4),
+  Et4 : makelist(makelist(w4[i]*E4[i][a], i, 1, 4), a, 1, 3),
+  Dm : makelist(makelist(integrate(phi1[a]*diff(phi1[b], x), x, -1, 1), b, 1, 3), a, 1, 3),
+  T1 : makelist(makelist(makelist(integrate(phi1[a]*phi1[b]*phi1[c], x, -1, 1), c, 1, 3), b, 1, 3), a, 1, 3),
+  psiAt : makelist([subst(varsC1[1] = -1, psi1[a]), subst(varsC1[1] = 1, psi1[a])], a, 1, 2),
+  [E3, Et3, E4, Et4, Dm, T1, psiAt]
+)$
+
+/* Flat index of a velocity tuple tp with per-direction extents dims (first direction slowest),
+   and its inverse. */
+hfoFlat(tp, dims) := block([r : 0], for e : 1 thru length(dims) do r : r*dims[e] + tp[e], r)$
+hfoTup(ii, dims) := block([tp : makelist(0, e, 1, length(dims)), r : ii],
+  for e : length(dims) thru 1 step -1 do (tp[e] : mod(r, dims[e]), r : floor(r/dims[e])), tp)$
+
+/* One sweep of the matrix T (rows: new extent, columns: dims[d]) along velocity direction d of the
+   list cur (extents dims). Returns [new list, new extents]. */
+hfoSweep(T, cur, dims, d) := block([nd : copylist(dims), n],
+  nd[d] : length(T), n : prod(nd[e], e, 1, length(nd)),
+  [makelist(block([tp : hfoTup(ii-1, nd)],
+     sum(T[tp[d]+1][q+1]*cur[hfoFlat(makelist(if e = d then q else tp[e], e, 1, length(dims)), dims)+1], q, 0, dims[d]-1)),
+     ii, 1, n), nd]
+)$
+
+/* Write the list ex into the C array nm (declared here) and return the list of its entries. */
+hfoWrite(fh, nm, ex) := block([n : length(ex)],
+  printf(fh, "  double ~a[~a]; ~%", nm, n),
+  for i : 1 thru n do printf(fh, "  ~a[~a] = ~a; ~%", nm, i-1, float(expand(ex[i]))),
+  makelist(arraymake(if stringp(nm) then parse_string(nm) else nm, [i-1]), i, 1, n))$
+
+/* Runtime 1D matrices along v_d: bdiv_v<lab> = B_d (division by J_d at the 3 nodes) and, for the
+   dense Hamiltonian, eb_v<lab> = E4 B_d (evaluation at the 4 nodes after the division); for the
+   sparse one mb_v<lab> = M_g B_d with M_g the product with dH/dv_d (a function of v_d only). */
+hfoEmitDirMats(fh, d, vdim, hamil_rep, tabs, hamilT) := block([E3, Et3, E4, Et4, Dm, T1, psiAt, lab, B, g, h1, Mg],
+  [E3, Et3, E4, Et4, Dm, T1, psiAt] : tabs, lab : hfoLabels[d],
+  printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", lab, 3*(d-1)),
+  B : makelist(makelist(sum(Et3[a][i]*E3[i][b]/arraymake(parse_string(sconcat("jacob_v", lab)), [i-1]), i, 1, 3), b, 1, 3), a, 1, 3),
+  B : hfoWrite(fh, sconcat("bdiv_v", lab), flatten(B)),
+  B : makelist(makelist(B[3*(a-1)+b], b, 1, 3), a, 1, 3),
+  if hamil_rep = "vel_sparse" then (
+    /* dH/dv_d from the 1D modes of H along v_d (flat velocity index of degree a along d); as a
+       function of v_d alone these carry phi_0 = 1/sqrt(2) of every other velocity direction. */
+    h1 : makelist(2^(-(vdim-1)/2)*hamilT[hfoFlat(makelist(if e = d then a else 0, e, 1, vdim), makelist(3, e, 1, vdim))+1], a, 0, 2),
+    g : makelist(sum(Dm[a][b]*h1[b], b, 1, 3), a, 1, 3),
+    Mg : makelist(makelist(sum(g[c]*T1[a][c][b], c, 1, 3), b, 1, 3), a, 1, 3),
+    hfoWrite(fh, sconcat("mb_v", lab), flatten(makelist(makelist(sum(Mg[a][c]*B[c][b], c, 1, 3), b, 1, 3), a, 1, 3)))
+  ) else
+    hfoWrite(fh, sconcat("eb_v", lab), flatten(makelist(makelist(sum(E4[a][c]*B[c][b], c, 1, 3), b, 1, 3), a, 1, 4)))
+)$
+
+/* Dense Hamiltonian: dH/dv_d at the 4^vdim velocity nodes (array gn_v<lab>). */
+hfoEmitDenseG(fh, d, vdim, tabs, hamilT) := block([E3, Et3, E4, Et4, Dm, T1, psiAt, dims, g, cur, e],
+  [E3, Et3, E4, Et4, Dm, T1, psiAt] : tabs,
+  dims : makelist(3, e, 1, vdim),
+  [g, dims] : hfoSweep(Dm, hamilT, dims, d),
+  cur : g,
+  for e : 1 thru vdim do [cur, dims] : hfoSweep(E4, cur, dims, e),
+  hfoWrite(fh, sconcat("gn_v", hfoLabels[d]), cur)
+)$
+
+/* Velocity-space part of one face (or volume pencil set): u (list over the surface tuples, conf
+   surface index slowest, NS conf surface modes) -> G = product of dH/dv_d with B_d u. Returns the
+   list of G entries (written to the C array nm). */
+hfoEmitProduct(fh, nm, u, NS, d, vdim, hamil_rep, tabs) :=
+  hfoEmitProductG(fh, nm, u, NS, d, vdim, hamil_rep, tabs, sconcat("gn_v", hfoLabels[d]), false)$
+/* hfoEmitProduct with the nodal array gname of the velocity function and, when backD is a matrix
+   (3x4), that matrix in place of Et4 for the back transform along v_d. */
+hfoEmitProductG(fh, nm, u, NS, d, vdim, hamil_rep, tabs, gname, backD) := block([E3, Et3, E4, Et4, Dm, T1, psiAt,
+  lab, NV, out, s, cur, dims, gnv, e, ebm, mbm],
+  [E3, Et3, E4, Et4, Dm, T1, psiAt] : tabs, lab : hfoLabels[d], NV : 3^vdim,
+  out : [],
+  if hamil_rep = "vel_sparse" then (
+    mbm : makelist(makelist(arraymake(parse_string(sconcat("mb_v", lab)), [3*(a-1)+b-1]), b, 1, 3), a, 1, 3),
+    for s : 1 thru NS do
+      out : append(out, first(hfoSweep(mbm, makelist(u[NV*(s-1)+i], i, 1, NV), makelist(3, e, 1, vdim), d)))
+  ) else (
+    ebm : makelist(makelist(arraymake(parse_string(sconcat("eb_v", lab)), [3*(a-1)+b-1]), b, 1, 3), a, 1, 4),
+    gnv : makelist(arraymake(parse_string(gname), [i-1]), i, 1, 4^vdim),
+    for s : 1 thru NS do (
+      cur : makelist(u[NV*(s-1)+i], i, 1, NV), dims : makelist(3, e, 1, vdim),
+      [cur, dims] : hfoSweep(ebm, cur, dims, d),
+      cur : hfoWrite(fh, sconcat(nm, "_s", s-1, "_a"), cur),
+      for e : 1 thru vdim do if e # d then (
+        [cur, dims] : hfoSweep(E4, cur, dims, e),
+        cur : hfoWrite(fh, sconcat(nm, "_s", s-1, "_f", e), cur)),
+      cur : hfoWrite(fh, sconcat(nm, "_s", s-1, "_n"), makelist(gnv[i]*cur[i], i, 1, 4^vdim)),
+      for e : 1 thru vdim do (
+        [cur, dims] : hfoSweep(if e = d and backD # false then backD else Et4, cur, dims, e),
+        if e < vdim then cur : hfoWrite(fh, sconcat(nm, "_s", s-1, "_b", e), cur)),
+      out : append(out, cur)
+    )
+  ),
+  hfoWrite(fh, nm, out)
+)$
+
+/* Product-basis coefficients (flat velocity tuple index) of the velocity-space Hamiltonian symbol
+   hamil (sparse: the modes of at most one velocity variable). */
+hfoHamil(vdim, hamil_rep, degV, coefV) := block([hT : makelist(0, i, 1, 3^vdim), m],
+  for m : 1 thru length(degV) do
+    if not (hamil_rep = "vel_sparse" and length(sublist(degV[m], lambda([e], e > 0))) > 1) then
+      hT[hfoFlat(degV[m], makelist(3, e, 1, vdim))+1] : coefV[m]*arraymake(hamil, [m-1]),
+  hT)$
+
+/* Surface configuration-space index of conf degrees pcs without direction d (radix 2). */
+hfoSurfC(pcs, d) := hfoFlat(delete_at(pcs, d), makelist(2, e, 1, length(pcs)-1))$
+delete_at(l, i) := append(firstn(l, i-1), rest(l, i))$
+
+/* Restriction of f (symbol F) to the face x_d = side (-1 or 1) in the product basis, list over
+   (surface conf index, velocity tuple), times jacInv. */
+hfoRestrict(F, side, d, fac, jacInv) := block([NP, NC, pc, pt, cf, NV, vdim, u, k, i],
+  [NP, NC, pc, pt, cf] : firstn(fac, 5), vdim : length(pt[1]), NV : 3^vdim,
+  u : makelist(0, i, 1, (NC/2)*NV),
+  for k : 1 thru NP do block([i : hfoSurfC(pc[k], d)*NV + hfoFlat(pt[k], makelist(3, e, 1, vdim)) + 1],
+    u[i] : u[i] + jacInv*(if side < 0 then hfoPsi(pc[k][d], -1) else hfoPsi(pc[k][d], 1))*cf[k]*arraymake(F, [k-1])),
+  u)$
+hfoPsi(a, x) := if a = 0 then 1/sqrt(2) else sqrt(3/2)*x$
+
+/* Configuration-space surface streaming kernel (interior), the factored calcHamilVelSurfStream. */
+calcHamilVelSurfStreamFactored(dir, fh, funcNm, cdim, vdim, hamil_rep) := block(
+  [fac, NP, NC, pc, pt, cf, varsC, varsV, degV, coefV, tabs, hamilT, lab, NV, NS, Gl, Gr, k, i,
+   bV_vi, NV_1D, jacobNodes, numJacobNodes, jacobNodes_vi, basisNodal_vi, vb, hamilE, dHn, dHne, stream],
+  fac : hfoFactor(cdim, vdim), [NP, NC, pc, pt, cf, varsC, varsV, degV, coefV] : fac,
+  tabs : hfoTables(), lab : hfoLabels[dir], NV : 3^vdim, NS : NC/2,
+  hamilT : hfoHamil(vdim, hamil_rep, degV, coefV),
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const double *jacob_pos_l, const double *jacob_pos_c, const double *jacob_pos_r, const double *jacob_vel,
+  const double *poisson_tensor_conf, const double *hamil,
+  const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // Upwinded f on the two faces, divided by the velocity-map Jacobian along v_~a and the ~%", lab),
+  printf(fh, "  // configuration-space one along ~a, times dH/dv_~a (velocity-space operations factored by direction). ~%", lab, lab),
+  printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", dir-1, dir-1),
+  printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", dir-1, cdim+dir-1),
+  printf(fh, "  const double wv = w[~a]; ~%", cdim+dir-1),
+  hfoEmitDirMats(fh, dir, vdim, hamil_rep, tabs, hamilT),
+  if hamil_rep # "vel_sparse" then hfoEmitDenseG(fh, dir, vdim, tabs, hamilT),
+  for side in ["l", "c", "r"] do
+    printf(fh, "  const double jacob_c~a_~a_inv = 1.0/jacob_pos_~a[~a]; ~%", lab, side, side, 3*(dir-1)),
+  printf(fh, "  double u_l[~a], u_r[~a]; ~%", NS*NV, NS*NV),
+  printf(fh, "  if (wv>0) { ~%"),
+  block([ur : hfoRestrict(fc, 1, dir, fac, parse_string(sconcat("jacob_c", lab, "_c_inv"))),
+         ul : hfoRestrict(fl, 1, dir, fac, parse_string(sconcat("jacob_c", lab, "_l_inv")))],
+    for i : 1 thru NS*NV do printf(fh, "  u_r[~a] = ~a; ~%", i-1, float(expand(ur[i]))),
+    for i : 1 thru NS*NV do printf(fh, "  u_l[~a] = ~a; ~%", i-1, float(expand(ul[i])))),
+  printf(fh, "  } else { ~%"),
+  block([ur : hfoRestrict(fr, -1, dir, fac, parse_string(sconcat("jacob_c", lab, "_r_inv"))),
+         ul : hfoRestrict(fc, -1, dir, fac, parse_string(sconcat("jacob_c", lab, "_c_inv")))],
+    for i : 1 thru NS*NV do printf(fh, "  u_r[~a] = ~a; ~%", i-1, float(expand(ur[i]))),
+    for i : 1 thru NS*NV do printf(fh, "  u_l[~a] = ~a; ~%", i-1, float(expand(ul[i])))),
+  printf(fh, "  } ~%"),
+  Gl : hfoEmitProduct(fh, "Ghat_l", makelist(arraymake(u_l, [i-1]), i, 1, NS*NV), NS, dir, vdim, hamil_rep, tabs),
+  Gr : hfoEmitProduct(fh, "Ghat_r", makelist(arraymake(u_r, [i-1]), i, 1, NS*NV), NS, dir, vdim, hamil_rep, tabs),
+  for k : 1 thru NP do block([i : hfoSurfC(pc[k], dir)*NV + hfoFlat(pt[k], makelist(3, e, 1, vdim)) + 1],
+    printf(fh, "  out[~a] += ~a; ~%", k-1, float(expand(parse_string(sconcat("dv1", dir-1))*parse_string(sconcat("dx1", dir-1))*cf[k]*
+      (hfoPsi(pc[k][dir], -1)*Gl[i] - hfoPsi(pc[k][dir], 1)*Gr[i]))))),
+  /* CFL frequency as in calcHamilVelSurfStream: cell average of (dH/dv_d)/J_d interpolated through the
+     Jacobian nodes, times the center cell's inverse configuration-space Jacobian. */
+  hfoEmitCfl(fh, dir, cdim, vdim, hamil_rep),
+  printf(fh, "~%"),
+  printf(fh, "} ~%")
+)$
+
+/* CFL frequency return of calcHamilVelSurfStream. */
+hfoEmitCfl(fh, dir, cdim, vdim, hamil_rep) := block([bV_vi, NV_1D, jacobNodes, numJacobNodes,
+  jacobNodes_vi, basisNodal_vi, hamilE, dHn, dHne, stream, basisFun : "tensor", lab : hfoLabels[dir], i],
+  block([varsC0, bC0, varsV0, bV0, varsP0, bP0],
+    [varsC0, bC0, varsV0, bV0, varsP0, bP0] : loadVlasovBasis("tensor", cdim, vdim, 1),
+    [bV_vi, NV_1D, jacobNodes, numJacobNodes, jacobNodes_vi, basisNodal_vi] : loadVelJacobianBasis(2),
+    hamilE : hamilExpand(hamil, bV0, varsV0, hamil_rep = "vel_sparse"),
+    dHn : evAtNodes(diff(hamilE, varsV0[dir]), jacobNodes, [varsV0[dir]]),
+    dHne : sum(dHn[i]/jacobNodes_vi[dir][i]*basisNodal_vi[dir][i], i, 1, numJacobNodes),
+    stream : calcInnerProdList(varsV0, 1, bV0, dHne),
+    printf(fh, "  return fabs(~a*dv1~a*dx1~a*jacob_c~a_c_inv*(~a));~%", float(0.5*3*2.0^(-0.5*vdim)), dir-1, dir-1, lab,
+      float(expand(stream[1]))))
+)$
+
+/* Configuration-space boundary surface streaming kernel, the factored calcHamilVelBoundarySurfStream:
+   edge = -1 updates the skin cell on the left of its upper face (the edge cell beyond it), edge = +1
+   the skin cell on the right of its lower face. */
+calcHamilVelBoundarySurfStreamFactored(dir, fh, funcNm, cdim, vdim, hamil_rep) := block(
+  [fac, NP, NC, pc, pt, cf, varsC, varsV, degV, coefV, tabs, hamilT, lab, NV, NS, G, k, i, br],
+  fac : hfoFactor(cdim, vdim), [NP, NC, pc, pt, cf, varsC, varsV, degV, coefV] : fac,
+  tabs : hfoTables(), lab : hfoLabels[dir], NV : 3^vdim, NS : NC/2,
+  hamilT : hfoHamil(vdim, hamil_rep, degV, coefV),
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv,
+  const double *jacob_pos_edge, const double *jacob_pos_skin, const double *jacob_vel,
+  const double *poisson_tensor_conf, const double *hamil,
+  const int edge, const double *fedge, const double *fskin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", dir-1, dir-1),
+  printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", dir-1, cdim+dir-1),
+  printf(fh, "  const double wv = w[~a]; ~%", cdim+dir-1),
+  hfoEmitDirMats(fh, dir, vdim, hamil_rep, tabs, hamilT),
+  if hamil_rep # "vel_sparse" then hfoEmitDenseG(fh, dir, vdim, tabs, hamilT),
+  for side in ["edge", "skin"] do
+    printf(fh, "  const double jacob_c~a_~a_inv = 1.0/jacob_pos_~a[~a]; ~%", lab, side, side, 3*(dir-1)),
+  printf(fh, "  double u[~a]; ~%", NS*NV),
+  /* Face between the cells L and R (upwind on wv), seen from the skin cell at x_d = evAt. */
+  br : lambda([L, R, jL, jR], block([uL : hfoRestrict(L, 1, dir, fac, jL), uR : hfoRestrict(R, -1, dir, fac, jR)],
+    printf(fh, "  if (wv>0) { ~%"),
+    for i : 1 thru NS*NV do printf(fh, "  u[~a] = ~a; ~%", i-1, float(expand(uL[i]))),
+    printf(fh, "  } else { ~%"),
+    for i : 1 thru NS*NV do printf(fh, "  u[~a] = ~a; ~%", i-1, float(expand(uR[i]))),
+    printf(fh, "  } ~%"))),
+  for edge in [-1, 1] do block([evAt : -edge],
+    if edge = -1 then printf(fh, "  if (edge == -1) { ~%") else printf(fh, "  } else { ~%"),
+    if edge = -1 then
+      br(fskin, fedge, parse_string(sconcat("jacob_c", lab, "_skin_inv")), parse_string(sconcat("jacob_c", lab, "_edge_inv")))
+    else
+      br(fedge, fskin, parse_string(sconcat("jacob_c", lab, "_edge_inv")), parse_string(sconcat("jacob_c", lab, "_skin_inv"))),
+    G : hfoEmitProduct(fh, "Ghat", makelist(arraymake(u, [i-1]), i, 1, NS*NV), NS, dir, vdim, hamil_rep, tabs),
+    for k : 1 thru NP do block([i : hfoSurfC(pc[k], dir)*NV + hfoFlat(pt[k], makelist(3, e, 1, vdim)) + 1],
+      printf(fh, "  out[~a] += ~a; ~%", k-1, float(expand(-evAt*parse_string(sconcat("dv1", dir-1))*parse_string(sconcat("dx1", dir-1))*cf[k]*
+        hfoPsi(pc[k][dir], evAt)*G[i]))))
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, "  return 0.0;~%"),
+  printf(fh, "~%"),
+  printf(fh, "} ~%")
+)$
+
+/* Volume streaming kernel of a velocity-space Hamiltonian, the factored calcHamilVol (cubic map):
+   for each streaming pair (x_d, v_d), dx1 dv1 int d_xd(psi) dH/dv_d (Jf/J_vd)/J_xd. */
+calcHamilVolFactored(fh, funcNm, cdim, vdim, hamil_rep) := block(
+  [fac, NP, NC, pc, pt, cf, varsC, varsV, degV, coefV, tabs, hamilT, lab, NV, NS, G, k, i, d, u],
+  fac : hfoFactor(cdim, vdim), [NP, NC, pc, pt, cf, varsC, varsV, degV, coefV] : fac,
+  tabs : hfoTables(), NV : 3^vdim, NS : NC/2,
+  hamilT : hfoHamil(vdim, hamil_rep, degV, coefV),
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const double *vmap,
+  const double *jacob_pos, const double *jacob_vel, const double *poisson_tensor_conf, const double *hamil,
+  const double *f,
+  const double *f_no_J, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  for d : 1 thru min(cdim, vdim) do (
+    lab : hfoLabels[d],
+    printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", d-1, d-1),
+    printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", d-1, cdim+d-1),
+    hfoEmitDirMats(fh, d, vdim, hamil_rep, tabs, hamilT),
+    if hamil_rep # "vel_sparse" then hfoEmitDenseG(fh, d, vdim, tabs, hamilT),
+    printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_pos[~a]; ~%", lab, 3*(d-1)),
+    /* The conf modes of degree 0 along x_d (the derivative of the degree-1 test functions). */
+    u : makelist(0, i, 1, NS*NV),
+    for k : 1 thru NP do if pc[k][d] = 0 then
+      u[hfoSurfC(pc[k], d)*NV + hfoFlat(pt[k], makelist(3, e, 1, vdim)) + 1] :
+        parse_string(sconcat("jacob_c", lab, "_inv"))*cf[k]*arraymake(f, [k-1]),
+    G : hfoEmitProduct(fh, sconcat("G_v", lab), u, NS, d, vdim, hamil_rep, tabs),
+    for k : 1 thru NP do if pc[k][d] = 1 then block([i : hfoSurfC(pc[k], d)*NV + hfoFlat(pt[k], makelist(3, e, 1, vdim)) + 1],
+      printf(fh, "  out[~a] += ~a; ~%", k-1, float(expand(sqrt(3)*parse_string(sconcat("dx1", d-1))*parse_string(sconcat("dv1", d-1))*cf[k]*G[i]))))
+  ),
+  printf(fh, "} ~%")
+)$
+
+/* Values of the product-basis conf polynomial of degrees pcs at the conf node xq. */
+hfoPsiAtNode(pcs, xq) := prod(hfoPsi(pcs[e], xq[e]), e, 1, length(pcs))$
+
+/* Volume force kernel with a configuration-space coefficient a_d(x) (p=1) along each velocity
+   direction d in dirs: sum_d sc_d int d_vd(psi) a_d (Jf/J_vd), written out at the 2^cdim
+   configuration-space Gauss-Legendre nodes (exact: at most cubic per configuration direction).
+   aq(d, xq) gives a_d at the node xq as an expression of the kernel's arguments. */
+hfoEmitConfForceVol(fh, cdim, vdim, dirs, sc, aq) := block([fac, NP, NC, pc, pt, cf, varsC, varsV,
+  degV, coefV, tabs, E3, Et3, E4, Et4, Dm, T1, psiAt, NV, nodes, NQ, q, k, d, e, Fs, G, Gall, dims, lab, B, h],
+  fac : hfoFactor(cdim, vdim), [NP, NC, pc, pt, cf, varsC, varsV, degV, coefV] : fac,
+  tabs : hfoTables(), [E3, Et3, E4, Et4, Dm, T1, psiAt] : tabs, NV : 3^vdim, dims : makelist(3, e, 1, vdim),
+  for d in dirs do block([lab : hfoLabels[d]],
+    printf(fh, "  const double *jacob_v~a = &jacob_vel[~a]; ~%", lab, 3*(d-1)),
+    hfoWrite(fh, sconcat("bdiv_v", lab), flatten(makelist(makelist(sum(Et3[a][i]*E3[i][b]/arraymake(parse_string(sconcat("jacob_v", lab)), [i-1]), i, 1, 3), b, 1, 3), a, 1, 3)))),
+  /* Dt[a][b] = Dm[b][a]: <d phi_a, h> = sum_b Dm[b][a] h_b along the direction. */
+  nodes : gaussOrd(2, cdim), NQ : length(nodes), Gall : [],
+  for q : 1 thru NQ do (
+    Fs : makelist(0, i, 1, NV),
+    for k : 1 thru NP do Fs[hfoFlat(pt[k], dims)+1] : Fs[hfoFlat(pt[k], dims)+1] + cf[k]*hfoPsiAtNode(pc[k], nodes[q])*arraymake(f, [k-1]),
+    Fs : hfoWrite(fh, sconcat("f", q-1), Fs),
+    G : makelist(0, i, 1, NV),
+    for d in dirs do block([lab : hfoLabels[d], Bm, aqd, Bf],
+      Bm : makelist(makelist(arraymake(parse_string(sconcat("bdiv_v", lab)), [3*(a-1)+b-1]), b, 1, 3), a, 1, 3),
+      printf(fh, "  const double a~a_~a = ~a; ~%", q-1, lab, float(expand(aq(d, nodes[q])))),
+      Bf : first(hfoSweep(Bm, Fs, dims, d)),
+      G : G + sc[d]*parse_string(sconcat("a", q-1, "_", lab))*first(hfoSweep(makelist(makelist(Dm[b][a], b, 1, 3), a, 1, 3), Bf, dims, d))
+    ),
+    Gall : endcons(hfoWrite(fh, sconcat("G", q-1), G), Gall)
+  ),
+  for k : 1 thru NP do block([ex : sum(hfoPsiAtNode(pc[k], nodes[q])*Gall[q][hfoFlat(pt[k], dims)+1], q, 1, NQ)],
+    if float(expand(ex)) # 0.0 then printf(fh, "  out[~a] += ~a; ~%", k-1, float(expand(cf[k]*ex))))
+)$
+
+/* Electric-field (and applied acceleration) volume kernel, the factored calcEVol (cubic map). */
+calcEVolFactored(fh, funcNm, cdim, vdim) := block([varsC, bC, varsV, bV, varsP, bP, NC, d],
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis("tensor", cdim, vdim, 1), NC : length(bC),
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, 
+  const double *jacob_vel, const double *qmem, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  for d : 1 thru vdim do (
+    printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", d-1, cdim+d-1),
+    printf(fh, "  const double *E~a = &qmem[~a]; ~%", hfoLabels[d], NC*(d-1))),
+  hfoEmitConfForceVol(fh, cdim, vdim, makelist(d, d, 1, vdim), makelist(parse_string(sconcat("dv1", d-1)), d, 1, vdim),
+    lambda([dd, xq], sum(arraymake(parse_string(sconcat("E", hfoLabels[dd])), [c-1])*subst(makelist(varsC[e] = xq[e], e, 1, cdim), bC[c]), c, 1, NC))),
+  printf(fh, "} ~%")
+)$
+
+/* Scalar-potential volume kernel, the factored calcPhiVol (cubic map): -grad phi, with the
+   configuration-space Jacobian of the streaming direction. */
+calcPhiVolFactored(fh, funcNm, cdim, vdim) := block([varsC, bC, varsV, bV, varsP, bP, NC, d, nd],
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis("tensor", cdim, vdim, 1), NC : length(bC),
+  nd : min(cdim, vdim),
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv,
+  const double *jacob_pos, const double *jacob_vel, const double *phi, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  for d : 1 thru nd do (
+    printf(fh, "  const double dx1~a = 2.0/dxv[~a]; ~%", d-1, d-1),
+    printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", d-1, cdim+d-1),
+    printf(fh, "  const double jacob_c~a_inv = 1.0/jacob_pos[~a]; ~%", hfoLabels[d], 3*(d-1))),
+  hfoEmitConfForceVol(fh, cdim, vdim, makelist(d, d, 1, nd),
+    makelist(parse_string(sconcat("dx1", d-1))*parse_string(sconcat("dv1", d-1))*parse_string(sconcat("jacob_c", hfoLabels[d], "_inv")), d, 1, nd),
+    lambda([dd, xq], -sum(arraymake(phi, [c-1])*subst(makelist(varsC[e] = xq[e], e, 1, cdim), diff(bC[c], varsC[dd])), c, 1, NC))),
+  printf(fh, "} ~%")
+)$
+
+/* Velocity-space radiation drag volume kernel, the factored calcRadVelVol (cubic map): sum_d dv1_d
+   int d_vd(psi) rad_d(v) (Jf/J_vd), the product with the (dense) drag coefficient at the 4 nodes per
+   velocity direction, every configuration-space mode a spectator. */
+calcRadVolFactored(fh, funcNm, cdim, vdim) := block([fac, NP, NC, pc, pt, cf, varsC, varsV, degV,
+  coefV, tabs, E3, Et3, E4, Et4, Dm, T1, psiAt, NV, dims, d, k, u, G, radT, cur, e, DtEt4],
+  fac : hfoFactor(cdim, vdim), [NP, NC, pc, pt, cf, varsC, varsV, degV, coefV] : fac,
+  tabs : hfoTables(), [E3, Et3, E4, Et4, Dm, T1, psiAt] : tabs, NV : 3^vdim, dims : makelist(3, e, 1, vdim),
+  DtEt4 : makelist(makelist(sum(Dm[a][b]*Et4[a][i], a, 1, 3), i, 1, 4), b, 1, 3),
+  printf(fh, "#include <gkyl_vlasov_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, 
+  const double *jacob_vel, const double *rad, const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  for d : 1 thru vdim do block([lab : hfoLabels[d]],
+    printf(fh, "  const double dv1~a = 2.0/dxv[~a]; ~%", d-1, cdim+d-1),
+    printf(fh, "  const double *rad_v~a = &rad[~a]; ~%", lab, NV*(d-1)),
+    hfoEmitDirMats(fh, d, vdim, "vel_dense", tabs, false),
+    radT : makelist(0, i, 1, NV),
+    for m : 1 thru NV do radT[hfoFlat(degV[m], dims)+1] : coefV[m]*arraymake(parse_string(sconcat("rad_v", lab)), [m-1]),
+    cur : radT, block([dd : dims], for e : 1 thru vdim do [cur, dd] : hfoSweep(E4, cur, dd, e)),
+    hfoWrite(fh, sconcat("radn_v", lab), cur),
+    u : makelist(0, i, 1, NC*NV),
+    for k : 1 thru NP do u[hfoFlat(pc[k], makelist(2, e, 1, cdim))*NV + hfoFlat(pt[k], dims) + 1] : cf[k]*arraymake(f, [k-1]),
+    G : hfoEmitProductG(fh, sconcat("Grad_v", lab), u, NC, d, vdim, "vel_dense", tabs, sconcat("radn_v", lab), DtEt4),
+    for k : 1 thru NP do block([ex : G[hfoFlat(pc[k], makelist(2, e, 1, cdim))*NV + hfoFlat(pt[k], dims) + 1]],
+      printf(fh, "  out[~a] += ~a; ~%", k-1, float(expand(parse_string(sconcat("dv1", d-1))*cf[k]*ex))))
+  ),
+  printf(fh, "} ~%")
+)$
+
+/* LBO drag on the velocity faces v_d = -1, +1 of the tensor p=1 hybrid basis, without the basis
+   helpers: f restricted to the face (the 1D p=2 polynomials along v_d at +/-1), evaluated at the face
+   quadrature nodes (2 Gauss-Legendre nodes per configuration and 3 per other velocity direction) one
+   direction at a time, upwinded per configuration node on the drag speed alpha = nuSum (w + dxv/2 v_d)
+   - nuUSum (a configuration-space function at the face), Ghat = alpha fUpwind projected back, and the
+   increment (rdv2) [psi(+1) Ghat_r - psi(-1) Ghat_l]. Exact as the helper-based kernel (vmLBOFuncs-
+   drag-surf.mac), which it replaces for the hybrid basis. */
+hfoLboFace(fh, tag, d, cdim, vdim, fac, tabs, FL, FR, side) := block([NP, NC, pc, pt, cf, E3, Et3, E4,
+  Et4, Dm, T1, psiAt, dimsS, nS, uL, uR, curL, curR, dd, e, nodesC, NQC, NV1, alphaq, q, i, G],
+  /* Face between the cells FL (its +1 face) and FR (its -1 face); side = the v_d of the face in the
+     cell being updated (unused here). Returns the list of Ghat entries (surface tuple: conf degrees,
+     other velocity degrees; first slowest). */
+  [NP, NC, pc, pt, cf] : firstn(fac, 5), [E3, Et3, E4, Et4, Dm, T1, psiAt] : tabs,
+  dimsS : append(makelist(2, e, 1, cdim), makelist(3, e, 1, vdim-1)), nS : prod(dimsS[e], e, 1, length(dimsS)),
+  uL : makelist(0, i, 1, nS), uR : makelist(0, i, 1, nS),
+  for k : 1 thru NP do block([tpo : delete_at(pt[k], d), ii],
+    ii : hfoFlat(append(pc[k], tpo), dimsS) + 1,
+    uL[ii] : uL[ii] + hfoVPsi(pt[k][d], 1)*cf[k]*arraymake(FL, [k-1]),
+    uR[ii] : uR[ii] + hfoVPsi(pt[k][d], -1)*cf[k]*arraymake(FR, [k-1])),
+  /* To the face nodes: conf directions with the 2-node table, other velocity directions with E3. */
+  block([E2 : makelist(makelist(hfoPsi(a, [-1/sqrt(3), 1/sqrt(3)][i]), a, 0, 1), i, 1, 2)],
+    curL : hfoWrite(fh, sconcat("fuL_", tag), uL), curR : hfoWrite(fh, sconcat("fuR_", tag), uR),
+    for e : 1 thru length(dimsS) do (
+      curL : hfoWrite(fh, sconcat("fqL_", tag, "_", e), first(hfoSweep(if e <= cdim then E2 else E3, curL, dimsS, e))),
+      curR : hfoWrite(fh, sconcat("fqR_", tag, "_", e), first(hfoSweep(if e <= cdim then E2 else E3, curR, dimsS, e))))),
+  /* Upwind and multiply by alpha at each configuration node (nodes along the conf dims slowest). */
+  NV1 : 3^(vdim-1), NQC : 2^cdim,
+  printf(fh, "  double fq_~a[~a]; ~%", tag, nS),
+  for q : 1 thru NQC do (
+    printf(fh, "  if (alpha_~a[~a] < 0) { ~%", tag, q-1),
+    for i : 1 thru NV1 do printf(fh, "    fq_~a[~a] = alpha_~a[~a]*~a; ~%", tag, (q-1)*NV1+i-1, tag, q-1, curL[(q-1)*NV1+i]),
+    printf(fh, "  } else { ~%"),
+    for i : 1 thru NV1 do printf(fh, "    fq_~a[~a] = alpha_~a[~a]*~a; ~%", tag, (q-1)*NV1+i-1, tag, q-1, curR[(q-1)*NV1+i]),
+    printf(fh, "  } ~%")),
+  /* Back to the modal surface coefficients (weights: Et3 along velocity, w = 1 x psi along conf). */
+  block([Et2 : makelist(makelist(hfoPsi(a, [-1/sqrt(3), 1/sqrt(3)][i]), i, 1, 2), a, 0, 1), cur, dd2],
+    cur : makelist(arraymake(parse_string(sconcat("fq_", tag)), [i-1]), i, 1, nS),
+    for e : 1 thru length(dimsS) do
+      cur : hfoWrite(fh, if e = length(dimsS) then sconcat("Ghat_", tag) else sconcat("gq_", tag, "_", e),
+        first(hfoSweep(if e <= cdim then Et2 else Et3, cur, dimsS, e))),
+    cur)
+)$
+hfoVPsi(a, x) := [1/sqrt(2), sqrt(3/2)*x, 3*sqrt(5)*(x^2-1/3)/2^(3/2)][a+1]$
+
+/* Drag speed alpha at the configuration nodes of the face v_d = vs (array alpha_<tag>). */
+hfoLboAlpha(fh, tag, d, cdim, vs) := block([varsC, bC, varsV, bV, varsP, bP, NC, nodes, q, c, lab],
+  [varsC, bC, varsV, bV, varsP, bP] : loadVlasovBasis("tensor", cdim, 1, 1), NC : length(bC),
+  nodes : gaussOrd(2, cdim), lab : hfoLabels[d],
+  printf(fh, "  double alpha_~a[~a]; ~%", tag, length(nodes)),
+  for q : 1 thru length(nodes) do block([bq : makelist(subst(makelist(varsC[e] = nodes[q][e], e, 1, cdim), bC[c]), c, 1, NC)],
+    printf(fh, "  alpha_~a[~a] = ~a; ~%", tag, q-1, float(expand(
+      sum(bq[c]*arraymake(nuSum, [c-1]), c, 1, NC)*(0.5*arraymake(dxv, [cdim+d-1])*vs + arraymake(w, [cdim+d-1]))
+      - sum(bq[c]*arraymake(parse_string(sconcat("sumNuU", lab)), [c-1]), c, 1, NC)))))
+)$
+
+calcLBODragSurfFactored(dir, fh, funcNm, cdim, vdim) := block([fac, NP, NC, pc, pt, cf, tabs, Gl, Gr, k, dimsS, lab],
+  fac : hfoFactor(cdim, vdim), [NP, NC, pc, pt, cf] : firstn(fac, 5), tabs : hfoTables(), lab : hfoLabels[dir],
+  dimsS : append(makelist(2, e, 1, cdim), makelist(3, e, 1, vdim-1)),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *nuSum, const double *nuPrimMomsSum, const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // Drag on the velocity faces v_~a = -1, +1: f upwinded at the face quadrature nodes (evaluated one ~%", lab),
+  printf(fh, "  // direction at a time) times the drag speed, projected back. ~%"),
+  printf(fh, "  const double rdv2 = 2.0/dxv[~a]; ~%", cdim+dir-1),
+  printf(fh, "  const double *sumNuU~a = &nuPrimMomsSum[~a]; ~%", lab, NC*(dir-1)),
+  hfoLboAlpha(fh, "l", dir, cdim, -1), hfoLboAlpha(fh, "r", dir, cdim, 1),
+  Gl : hfoLboFace(fh, "l", dir, cdim, vdim, fac, tabs, fl, fc, -1),
+  Gr : hfoLboFace(fh, "r", dir, cdim, vdim, fac, tabs, fc, fr, 1),
+  for k : 1 thru NP do block([ii : hfoFlat(append(pc[k], delete_at(pt[k], dir)), dimsS) + 1],
+    printf(fh, "  out[~a] += ~a; ~%", k-1, float(expand(parse_string("rdv2")*cf[k]*(hfoVPsi(pt[k][dir], 1)*Gr[ii] - hfoVPsi(pt[k][dir], -1)*Gl[ii]))))),
+  printf(fh, "~%  return 0.;~%~%} ~%")
+)$
+
+/* Boundary version (zero flux through the domain edge): edge = -1 updates the skin cell through its +1
+   face (fSkin on the left, fEdge on the right), edge = +1 through its -1 face. */
+calcLBODragBoundarySurfFactored(dir, fh, funcNm, cdim, vdim) := block([fac, NP, NC, pc, pt, cf, tabs, G, k, dimsS, lab],
+  fac : hfoFactor(cdim, vdim), [NP, NC, pc, pt, cf] : firstn(fac, 5), tabs : hfoTables(), lab : hfoLabels[dir],
+  dimsS : append(makelist(2, e, 1, cdim), makelist(3, e, 1, vdim-1)),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *nuSum, const double *nuPrimMomsSum, const int edge, const double *fSkin, const double *fEdge, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  const double rdv2 = 2.0/dxv[~a]; ~%", cdim+dir-1),
+  printf(fh, "  const double *sumNuU~a = &nuPrimMomsSum[~a]; ~%", lab, NC*(dir-1)),
+  printf(fh, "  if (edge == -1) { ~%"),
+  hfoLboAlpha(fh, "e", dir, cdim, 1),
+  G : hfoLboFace(fh, "e", dir, cdim, vdim, fac, tabs, fSkin, fEdge, 1),
+  for k : 1 thru NP do block([ii : hfoFlat(append(pc[k], delete_at(pt[k], dir)), dimsS) + 1],
+    printf(fh, "  out[~a] += ~a; ~%", k-1, float(expand(parse_string("rdv2")*cf[k]*hfoVPsi(pt[k][dir], 1)*G[ii])))),
+  printf(fh, "  } else { ~%"),
+  hfoLboAlpha(fh, "e", dir, cdim, -1),
+  G : hfoLboFace(fh, "e", dir, cdim, vdim, fac, tabs, fEdge, fSkin, -1),
+  for k : 1 thru NP do block([ii : hfoFlat(append(pc[k], delete_at(pt[k], dir)), dimsS) + 1],
+    printf(fh, "  out[~a] += ~a; ~%", k-1, float(expand(-parse_string("rdv2")*cf[k]*hfoVPsi(pt[k][dir], -1)*G[ii])))),
+  printf(fh, "  } ~%~%  return 0.;~%~%} ~%")
+)$

@@ -1,0 +1,63 @@
+/* Generate the header file for advection equation kernels. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 3$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 3$
+minCdim_Tensor : 2$
+maxCdim_Tensor : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+cvars : [x, y, z]$
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+printPrototype(deco, ci, vi, bStr, pi) := block([si],
+
+  printf(fh, "~adouble advection_vol_~ax_~a_p~a(const double *w, const double *dxv, const double *u, const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
+  for si : 1 thru ci do (
+    printf(fh, "~adouble advection_surf~a_~ax_~a_p~a(const double *w, const double *dxv, const double *ul, const double *uc, const double *ur, const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, bStr, pi)
+  ),
+
+  printf(fh, "~%")
+)$
+
+/* ............ Write out the C header file ............ */
+fh : openw("~/max-out/gkyl_advection_kernels.h")$
+
+printf(fh, "#pragma once ~%")$
+printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+
+decorator : "GKYL_CU_DH "$
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+
+    /* p=3 kernels are limited to 1x and 2x: the core basis has no 3x p=3 nodal functions. */
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do if not (polyOrder > 2 and c = 3) then (
+      printPrototype(decorator, c, v, bName[bInd], polyOrder)
+    )
+  )
+);
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$
+/* ............ Finished writing out the C header file ............ */

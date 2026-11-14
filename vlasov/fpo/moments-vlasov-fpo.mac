@@ -1,0 +1,457 @@
+/* Functions (called by ms-moments-fpo-vlasov.mac) that compute the
+   needed volume and boundary correction moments to construct a conservative
+   Fokker-Planck operator for the Vlasov-Maxwell system.
+
+   In the volume, these moments are: a + div(D) (3-components), a . v + div(D . v) 
+   For boundary corrections, we compute an 8 component array, 4 components of which
+   are identical to the LBO corrects and the other 4 components involve evaluation of
+   the diffusion tensor at the edge of velocity space: 
+   if the lower velocity space edge first correction is -f_(vmin) or -(vf)_(vmin),
+   second correction is - D_ii f_(vmin) or -(v_i D_ii f)_(vmin)
+   if the upper velocity space edge first correction is f_(vmax) or (vf)_(vmax).
+   second correction is - D_ii f_(vmax) or -(v_i D_ii f)_(vmax)
+   where D_ii is the diagonal component at the v surface (e.g., Dxx at vx surface). */
+
+load("vlasov/fpo/fpo-utils.mac");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+fpprec : 24$
+
+volExpr(cdim, vdim) := prod(dxv[cdim+i-1], i, 1, vdim)$
+
+vTrans  : [vx*dv1/2+wx1, vy*dv2/2+wx2, vz*dv3/2+wx3]$
+wTrans  : [wx1, wx2, wx3]$
+dvTrans : [vx*dv1/2, vy*dv2/2, vz*dv3/2]$
+vvarsAll : [vx, vy, vz]$
+
+/* FPO moments (4-components) */
+/* a + div(D) (3-components), a . v + div(D . v) */
+calcFPOMoms(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,f_e,
+   ax_e,Dxx_e,Dxy_e,Dxz_e,
+   ay_e,Dyx_e,Dyy_e,Dyz_e,
+   az_e,Dzx_e,Dzy_e,Dzz_e,clst,
+   temp_1_e,temp_2_e,temp_3_e,temp_4_e,temp_5_e,temp_6_e,
+   temp_7_e,temp_8_e,temp_9_e,temp_10_e,temp_11_e,temp_12_e,
+   temp_1_c,temp_2_c,temp_3_c,temp_4_c,temp_5_c,temp_6_c,
+   temp_7_c,temp_8_c,temp_9_c,temp_10_c,temp_11_c,temp_12_c,corr_c],
+
+   /* if (polyOrder = 1) then (basisFun : "hyb"), */
+  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
+  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NP : length(bP),
+  NC : length(bC),
+  
+  fpprec : 24,
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const double *dxv, const int *idx, const double *a_i, const double *D_ij,  const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[~a]:   cell center in each direction. ~%", cdim+vdim),
+  printf(fh, "  // dxv[~a]: cell length in each direction. ~%", cdim+vdim),
+  printf(fh, "  // idx[~a]: cell index in each direction. ~%", cdim+vdim),
+  printf(fh, "  // a_i:     Drag coefficient. ~%"),
+  printf(fh, "  // D_ij:    Diffusion tensor. ~%"),
+  printf(fh, "  // f[~a]:   Input distribution function. ~%", NP),
+  printf(fh, "  // out:     Output moments a + div(D) (3-components), a . v + div(D . v). ~%"),
+  printf(fh, " ~%"),
+  printf(fh, "  const double volFact = ~a/~a; ~%", volExpr(cdim, vdim), 2^vdim),
+  for i : 1 thru vdim do (
+    printf(fh, "  const double wx~a = w[~a], dv~a = dxv[~a]; ~%", i, cdim+i-1, i, cdim+i-1)
+  ),
+
+  /* Access components of drag coefficient a_i and diffusion tensor D_ij */
+  printf(fh, "  const double *ax = &a_i[~a]; ~%", 0),
+  printf(fh, "  const double *ay = &a_i[~a]; ~%", NP),
+  printf(fh, "  const double *az = &a_i[~a]; ~%", 2*NP),
+  printf(fh, "  const double *Dxx = &D_ij[~a]; ~%", 0),
+  printf(fh, "  const double *Dxy = &D_ij[~a]; ~%", NP),
+  printf(fh, "  const double *Dxz = &D_ij[~a]; ~%", 2*NP),
+  printf(fh, "  const double *Dyx = &D_ij[~a]; ~%", 3*NP),
+  printf(fh, "  const double *Dyy = &D_ij[~a]; ~%", 4*NP),
+  printf(fh, "  const double *Dyz = &D_ij[~a]; ~%", 5*NP),
+  printf(fh, "  const double *Dzx = &D_ij[~a]; ~%", 6*NP),
+  printf(fh, "  const double *Dzy = &D_ij[~a]; ~%", 7*NP),
+  printf(fh, "  const double *Dzz = &D_ij[~a]; ~%", 8*NP),  
+  printf(fh, "~%"),
+
+  printf(fh, "  double *ax_corr = &out[~a]; ~%", 0),
+  printf(fh, "  double *ay_corr = &out[~a]; ~%", NC),
+  printf(fh, "  double *az_corr = &out[~a]; ~%", 2*NC),
+  printf(fh, "  double *energy_corr = &out[~a]; ~%", 3*NC),
+  printf(fh, "~%"),
+
+  f_e : doExpand1(f, bP),
+
+  ax_e : doExpand1(ax, bP),
+  Dxx_e : doExpand1(Dxx, bP),
+  Dxy_e : doExpand1(Dxy, bP),
+  Dxz_e : doExpand1(Dxz, bP),
+
+  ay_e : doExpand1(ay, bP),
+  Dyx_e : doExpand1(Dyx, bP),
+  Dyy_e : doExpand1(Dyy, bP),
+  Dyz_e : doExpand1(Dyz, bP),
+
+  az_e : doExpand1(az, bP),
+  Dzx_e : doExpand1(Dzx, bP),
+  Dzy_e : doExpand1(Dzy, bP),
+  Dzz_e : doExpand1(Dzz, bP),
+
+  /* Temporary variables to avoid long expressions in momentum and energy corrections */
+  printf(fh, "  double temp_1[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_2[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_3[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_4[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_5[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_6[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_7[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_8[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_9[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_10[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_11[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp_12[~a] = {0.0}; ~%", NC),
+
+  temp_1_e : doExpand1(temp_1, bC),
+  temp_2_e : doExpand1(temp_2, bC),
+  temp_3_e : doExpand1(temp_3, bC),
+  temp_4_e : doExpand1(temp_4, bC),
+  temp_5_e : doExpand1(temp_5, bC),
+  temp_6_e : doExpand1(temp_6, bC),
+  temp_7_e : doExpand1(temp_7, bC),
+  temp_8_e : doExpand1(temp_8, bC), 
+  temp_9_e : doExpand1(temp_9, bC),
+  temp_10_e : doExpand1(temp_10, bC),
+  temp_11_e : doExpand1(temp_11, bC),
+  temp_12_e : doExpand1(temp_12, bC),
+  clst : [volFact, wx1, wx2, wx3, dv1, dv2, dv3],
+
+  ai_corr_lst : [ax_corr, ay_corr, az_corr],
+  ai_e_lst : [ax_e, ay_e, az_e],
+  Dij_e_lst : [[Dxx_e, Dxy_e, Dxz_e], [Dyx_e, Dyy_e, Dyz_e], [Dzx_e, Dzy_e, Dzz_e]],
+
+  /* momentum corrections = (ai + d/dvx (Dxi) + d/dvy (Dyi) + d/dvz (Dzi)) f */ 
+  for d : 1 thru vdim do (
+    ai_e : ai_e_lst[d],
+    Dxi_e : Dij_e_lst[1][d],
+    Dyi_e : Dij_e_lst[2][d],
+    Dzi_e : Dij_e_lst[3][d],
+
+    temp_1_c : calcInnerProdList(varsP, 1, bC, ai_e*f_e),
+    temp_2_c : calcInnerProdList(varsP, 2/dv1, bC, diff(Dxi_e, vx)*f_e),
+    temp_3_c : calcInnerProdList(varsP, 2/dv2, bC, diff(Dyi_e, vy)*f_e),
+    temp_4_c : calcInnerProdList(varsP, 2/dv3, bC, diff(Dzi_e, vz)*f_e),
+
+    factorAndWriteCExprsCollect1(temp_1, temp_1_c, clst), 
+    factorAndWriteCExprsCollect1(temp_2, temp_2_c, clst),
+    factorAndWriteCExprsCollect1(temp_3, temp_3_c, clst),
+    factorAndWriteCExprsCollect1(temp_4, temp_4_c, clst),
+
+    t : [temp_2_e, temp_3_e, temp_4_e],
+
+    /*
+    corr_c : calcInnerProdList(varsC, 1, bC, temp_1_e + temp_2_e + temp_3_e + temp_4_e),
+    corr_c : calcInnerProdList(varsC, 1, bC, temp_1_e + t[d]),
+    */
+    corr_c : calcInnerProdList(varsC, 1, bC, temp_1_e + temp_2_e + temp_3_e + temp_4_e),
+    factorAndWriteCIncrExprsCollect1(ai_corr_lst[d], volFact*corr_c, clst),
+    printf(fh, "~%") 
+  ),
+
+  /* energy correction = (a . v + d/dvi (Dij . vj) + d/dvi (Dij . vj) + d/dvi (Dij . vj)) f */
+  temp_1_c : calcInnerProdList(varsP, 1, bC, vTrans[1]*ax_e*f_e),
+  temp_2_c : calcInnerProdList(varsP, 1, bC, vTrans[2]*ay_e*f_e),
+  temp_3_c : calcInnerProdList(varsP, 1, bC, vTrans[3]*az_e*f_e),
+
+  temp_4_c : calcInnerProdList(varsP, 2/dv1, bC, diff(vTrans[1]*Dxx_e, vx)*f_e),
+  temp_5_c : calcInnerProdList(varsP, 2/dv1, bC, diff(vTrans[2]*Dxy_e, vx)*f_e),
+  temp_6_c : calcInnerProdList(varsP, 2/dv1, bC, diff(vTrans[3]*Dxz_e, vx)*f_e),
+
+  temp_7_c : calcInnerProdList(varsP, 2/dv2, bC, diff(vTrans[1]*Dyx_e, vy)*f_e),
+  temp_8_c : calcInnerProdList(varsP, 2/dv2, bC, diff(vTrans[2]*Dyy_e, vy)*f_e),
+  temp_9_c : calcInnerProdList(varsP, 2/dv2, bC, diff(vTrans[3]*Dyz_e, vy)*f_e),
+
+  temp_10_c : calcInnerProdList(varsP, 2/dv3, bC, diff(vTrans[1]*Dzx_e, vz)*f_e),
+  temp_11_c : calcInnerProdList(varsP, 2/dv3, bC, diff(vTrans[2]*Dzy_e, vz)*f_e),
+  temp_12_c : calcInnerProdList(varsP, 2/dv3, bC, diff(vTrans[3]*Dzz_e, vz)*f_e),
+
+
+  factorAndWriteCExprsCollect1(temp_1, temp_1_c, clst), 
+  factorAndWriteCExprsCollect1(temp_2, temp_2_c, clst), 
+  factorAndWriteCExprsCollect1(temp_3, temp_3_c, clst), 
+  factorAndWriteCExprsCollect1(temp_4, temp_4_c, clst), 
+  factorAndWriteCExprsCollect1(temp_5, temp_5_c, clst), 
+  factorAndWriteCExprsCollect1(temp_6, temp_6_c, clst), 
+  factorAndWriteCExprsCollect1(temp_7, temp_7_c, clst), 
+  factorAndWriteCExprsCollect1(temp_8, temp_8_c, clst), 
+  factorAndWriteCExprsCollect1(temp_9, temp_9_c, clst), 
+  factorAndWriteCExprsCollect1(temp_10, temp_10_c, clst), 
+  factorAndWriteCExprsCollect1(temp_11, temp_11_c, clst), 
+  factorAndWriteCExprsCollect1(temp_12, temp_12_c, clst), 
+
+  corr_c : calcInnerProdList(varsC, 1, bC, 
+    temp_1_e + temp_2_e + temp_3_e + temp_4_e + temp_5_e + temp_6_e 
+  + temp_7_e + temp_8_e + temp_9_e + temp_10_e + temp_11_e + temp_12_e),
+  factorAndWriteCIncrExprsCollect1(energy_corr, volFact*corr_c, clst),
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+)$
+
+
+calcFPOBoundaryIntegral(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,
+   vv,surfVars,dv,
+   fbIn_lower_e,fbIn_upper_e,D_ij_lower_e,D_ij_upper_e,
+   mBlo_e,mBup_e,Dlo_e,Dup_e,fBlo_c,fBup_c,Dlo_c,Dup_c,
+   dvSurf,surfExpr,clst, t],
+    
+   /* if (polyOrder = 1) then (basisFun : "hyb"), */
+
+  /* Load basis of dimensionality requested. */
+  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
+  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NP : length(bP),
+  NC : length(bC),
+
+  fpprec : 24,       
+  printf(fh, "GKYL_CU_DH void ~a(const double *w, const int *idx, enum gkyl_vel_edge edge, const double *vBoundary, const double *dxv, const double *D_ij, const double *fIn, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // idx[~a]:   cell index in each direction. ~%", cdim+vdim),
+  printf(fh, "  // edge:      indicator of which velocity grid edge is being considered (VX/VPAR, VY/MU, VZ). ~%"),
+  printf(fh, "  // vBoundary: velocity at the boundary of the velocity grid. ~%"),
+  printf(fh, "  // dxv[~a]:   cell length in each direction. ~%", cdim+vdim),
+  printf(fh, "  // D_ij:      Diffusion tensor. ~%"),
+  printf(fh, "  // fIn[~a]:   Distribution function at lower/upper velocity boundaries. ~%", NP),
+  printf(fh, "  // out:       Boundary corrections. ~%"),
+  printf(fh, " ~%"),
+  for i : 1 thru vdim do (
+    printf(fh, "  const double wx~a = w[~a], dv~a = dxv[~a]; ~%", i, cdim+i-1, i, cdim+i-1)
+  ),
+
+  printf(fh, "  const double *Dxx = &D_ij[~a]; ~%", 0),
+  printf(fh, "  const double *Dxy = &D_ij[~a]; ~%", NP),
+  printf(fh, "  const double *Dxz = &D_ij[~a]; ~%", 2*NP),
+  printf(fh, "  const double *Dyx = &D_ij[~a]; ~%", 3*NP),
+  printf(fh, "  const double *Dyy = &D_ij[~a]; ~%", 4*NP),
+  printf(fh, "  const double *Dyz = &D_ij[~a]; ~%", 5*NP),
+  printf(fh, "  const double *Dzx = &D_ij[~a]; ~%", 6*NP),
+  printf(fh, "  const double *Dzy = &D_ij[~a]; ~%", 7*NP),
+  printf(fh, "  const double *Dzz = &D_ij[~a]; ~%", 8*NP),  
+  printf(fh, "~%"),
+  printf(fh, "  double dS = 0.0; ~%"),
+  printf(fh, " ~%"),
+
+  /* if atLower=true first correction is -f_(vmin) or -(vf)_(vmin),
+     second correction is - D_ii f_(vmin) or -(v_i D_ii f)_(vmin)
+
+     if atLower=false this is f_(vmax) or (vf)_(vmax).
+     second correction is D_ii f_(vmax) or (v_i D_ii f)_(vmax)
+     
+     where D_ii is the diagonal component at the v surface (e.g., Dxx at vx surface).
+
+     This evaluation is integrated over the velocity boundary surface, 
+     and projected onto the configuration space basis function. 
+
+     We store this as all 4 of the first corrections, then all 4 of 
+     the second corrections involving the diffusion tensor. */
+  printf(fh, "  double *ax_corr = &out[~a]; ~%", 0*NC),
+  printf(fh, "  double *ay_corr = &out[~a]; ~%", 1*NC),
+  printf(fh, "  double *az_corr = &out[~a]; ~%", 2*NC),
+  printf(fh, "  double *energy_corr = &out[~a]; ~%", 3*NC),
+  printf(fh, "  double *ax_D_ij_corr = &out[~a]; ~%", 4*NC),
+  printf(fh, "  double *ay_D_ij_corr = &out[~a]; ~%", 5*NC),
+  printf(fh, "  double *az_D_ij_corr = &out[~a]; ~%", 6*NC),
+  printf(fh, "  double *energy_D_ij_corr = &out[~a]; ~%", 7*NC),
+  printf(fh, "~%"),
+
+  printf(fh, "  double temp1[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp2[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp3[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp4[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp5[~a] = {0.0}; ~%", NC),
+  printf(fh, "  double temp6[~a] = {0.0}; ~%", NC),
+  printf(fh, "~%"),
+
+  Dxx_e : doExpand1(Dxx, bP),
+  Dxy_e : doExpand1(Dxy, bP),
+  Dxz_e : doExpand1(Dxz, bP),
+  Dyx_e : doExpand1(Dyx, bP),
+  Dyy_e : doExpand1(Dyy, bP),
+  Dyz_e : doExpand1(Dyz, bP),
+  Dzx_e : doExpand1(Dzx, bP),
+  Dzy_e : doExpand1(Dzy, bP),
+  Dzz_e : doExpand1(Dzz, bP),
+  Dij_e_lst : [[Dxx_e, Dxy_e, Dxz_e], [Dyx_e, Dyy_e, Dyz_e], [Dzx_e, Dzy_e, Dzz_e]],
+
+  for dir : 1 thru vdim do (
+    vv       : vvarsAll[dir],
+    surfVars : delete(vv,varsP),
+    dv       : makelist(dxv[cdim+i], i, 0, vdim-1),
+
+    /* 
+      Lists of velocity components, indexed first by dir.
+      Velocity in dir direction should be vBoundary upper/lower
+    */
+    vel_ij_lower_lst : [
+      [vBoundary[dir-1], vTrans[2], vTrans[3]], 
+      [vTrans[1], vBoundary[dir-1], vTrans[3]],
+      [vTrans[1], vTrans[2], vBoundary[dir-1]]
+    ],
+    vel_ij_upper_lst : [
+      [vBoundary[dir+vdim-1], vTrans[2], vTrans[3]], 
+      [vTrans[1], vBoundary[dir+vdim-1], vTrans[3]],
+      [vTrans[1], vTrans[2], vBoundary[dir+vdim-1]]
+    ],
+
+    /* Expand the distribution function in the cells at the
+       lower and upper boundaries of the velocity domain. */
+    f_bound_lower_e : subst(vv=-1, doExpand1(fIn, bP)),
+    f_bound_upper_e : subst(vv=1, doExpand1(fIn, bP)),
+
+    /* Expand components of the diffusion tensor in the lower
+       and upper boundaries of the velocity domain */ 
+    Dix_bound_lower_e : subst(vv=-1, Dij_e_lst[dir][1]),
+    Diy_bound_lower_e : subst(vv=-1, Dij_e_lst[dir][2]),
+    Diz_bound_lower_e : subst(vv=-1, Dij_e_lst[dir][3]),
+
+    Dix_bound_upper_e : subst(vv=1, Dij_e_lst[dir][1]),
+    Diy_bound_upper_e : subst(vv=1, Dij_e_lst[dir][2]),
+    Diz_bound_upper_e : subst(vv=1, Dij_e_lst[dir][3]),
+
+    Dxi_bound_lower_e : subst(vv=-1, Dij_e_lst[1][dir]),
+    Dyi_bound_lower_e : subst(vv=-1, Dij_e_lst[2][dir]),
+    Dzi_bound_lower_e : subst(vv=-1, Dij_e_lst[3][dir]),
+
+    Dxi_bound_upper_e : subst(vv=1, Dij_e_lst[1][dir]),
+    Dyi_bound_upper_e : subst(vv=1, Dij_e_lst[2][dir]),
+    Dzi_bound_upper_e : subst(vv=1, Dij_e_lst[3][dir]),
+
+    Dii_bound_lower_e : subst(vv=-1, Dij_e_lst[dir][dir]),
+    Dii_bound_upper_e : subst(vv=1, Dij_e_lst[dir][dir]),
+
+    /* Surface integrals of f_lo, f_up */
+    f_bound_lower_c : calcInnerProdList(surfVars, 1, bC, f_bound_lower_e),
+    f_bound_upper_c : calcInnerProdList(surfVars, 1, bC, f_bound_upper_e),
+
+    /* Surface integrals of (D_ij*f)_lo, (D_ij*f)_up  */
+    temp1_lower_c : calcInnerProdList(surfVars, f_bound_lower_e, bC, Dxi_bound_lower_e),
+    temp2_lower_c : calcInnerProdList(surfVars, f_bound_lower_e, bC, Dyi_bound_lower_e),
+    temp3_lower_c : calcInnerProdList(surfVars, f_bound_lower_e, bC, Dzi_bound_lower_e),
+
+    temp1_upper_c : calcInnerProdList(surfVars, f_bound_upper_e, bC, Dxi_bound_upper_e),
+    temp2_upper_c : calcInnerProdList(surfVars, f_bound_upper_e, bC, Dyi_bound_upper_e),
+    temp3_upper_c : calcInnerProdList(surfVars, f_bound_upper_e, bC, Dzi_bound_upper_e),
+
+    /* Surface integrals of (v_i D_ij f)_lo and (v_i D_ij f)_up */ 
+    temp4_lower_c : calcInnerProdList(surfVars, f_bound_lower_e, bC, 
+      vel_ij_lower_lst[dir][1]*Dxi_bound_lower_e),
+    temp5_lower_c : calcInnerProdList(surfVars, f_bound_lower_e, bC, 
+      vel_ij_lower_lst[dir][2]*Dyi_bound_lower_e),
+    temp6_lower_c : calcInnerProdList(surfVars, f_bound_lower_e, bC, 
+      vel_ij_lower_lst[dir][3]*Dzi_bound_lower_e),
+
+    temp4_upper_c : calcInnerProdList(surfVars, f_bound_upper_e, bC, 
+      vel_ij_upper_lst[dir][1]*Dxi_bound_upper_e),
+    temp5_upper_c : calcInnerProdList(surfVars, f_bound_upper_e, bC, 
+      vel_ij_upper_lst[dir][2]*Dyi_bound_upper_e),
+    temp6_upper_c : calcInnerProdList(surfVars, f_bound_upper_e, bC, 
+      vel_ij_upper_lst[dir][3]*Dzi_bound_upper_e),
+
+    /* Sum over temp variables for Dij boundary corrections */
+    fviDij_sum_lst : makelist((temp4[i] + temp5[i] + temp6[i]), i, 0, NC-1),
+
+    /* Surface integral above was done in [-1,1] computational space. Surface
+       factor needs to be multiplied to obtain result from physical grid. */
+    dvSurf   : delete(dxv[cdim+dir-1],dv),
+    surfExpr : float(prod(dvSurf[i],i,1,vdim-1)),
+    printf(fh, "  dS = ~a; ~%", float(1/(2^(vdim-1)))*surfExpr),
+    printf(fh, " ~%"),
+
+    /* Cell-center array does not include the value at the edge of interest */
+    wSurf : delete(wTrans[dir], wTrans),
+    
+    clst : [dS, dv1, dv2, dv3, vBoundary[0], vBoundary[1], vBoundary[2], vBoundary[3], vBoundary[4], vBoundary[5]],
+
+    /* Lists of components for momentum equations boundary corrections */
+    ai_corr_lst : [ax_corr, ay_corr, az_corr],
+    ai_D_ij_corr_lst : [ax_D_ij_corr, ay_D_ij_corr, az_D_ij_corr],
+
+    printf(fh, "  if (edge == GKYL_~a_LOWER) {~%", supcase(string(vvarsAll[dir]))),
+    printf(fh, " ~%"),
+    /* 
+      Retrieve transverse velocities (input cell-centered values do not include edge value)
+      e.g. vx boundary: w = (x, vy, vz)
+    */
+    idx : 1,
+    for i : 1 thru vdim do (
+      if (i # dir) then (
+        printf(fh, "  const double ~a = w[~a]; ~%", wTrans[i], idx+cdim-1),
+        idx : idx+1
+      )
+    ),
+
+    factorAndWriteCExprsCollect1(temp1, temp1_lower_c, clst),
+    factorAndWriteCExprsCollect1(temp2, temp2_lower_c, clst),
+    factorAndWriteCExprsCollect1(temp3, temp3_lower_c, clst),
+    factorAndWriteCExprsCollect1(temp4, temp4_lower_c, clst),
+    factorAndWriteCExprsCollect1(temp5, temp5_lower_c, clst),
+    factorAndWriteCExprsCollect1(temp6, temp6_lower_c, clst),
+
+    temp1_lst : makelist(temp1[i], i, 0, NC-1),
+    temp2_lst : makelist(temp2[i], i, 0, NC-1),
+    temp3_lst : makelist(temp3[i], i, 0, NC-1),
+
+    printf(fh, " ~%"),
+    factorAndWriteCIncrExprsCollect1(ai_corr_lst[dir], -dS*f_bound_lower_c, clst),
+    printf(fh, " ~%"),
+    factorAndWriteCIncrExprsCollect1(ai_D_ij_corr_lst[1], -dS*temp1_lower_c, clst), 
+    factorAndWriteCIncrExprsCollect1(ai_D_ij_corr_lst[2], -dS*temp2_lower_c, clst), 
+    factorAndWriteCIncrExprsCollect1(ai_D_ij_corr_lst[3], -dS*temp3_lower_c, clst), 
+    printf(fh, " ~%"),
+
+    factorAndWriteCIncrExprsCollect1(energy_corr, -dS*(vBoundary[dir-1]*f_bound_lower_c), clst),
+    printf(fh, " ~%"),
+    factorAndWriteCIncrExprsCollect1(energy_D_ij_corr, -dS*fviDij_sum_lst, clst),
+    printf(fh, " ~%"),
+
+    printf(fh, "  } else if (edge == GKYL_~a_UPPER) {~%", supcase(string(vvarsAll[dir]))),
+    printf(fh, " ~%"),
+    idx : 1,
+    for i : 1 thru vdim do (
+      if (i # dir) then (
+        printf(fh, "  const double ~a = w[~a]; ~%", wTrans[i], idx+cdim-1),
+        idx : idx+1
+      )
+    ),
+
+    factorAndWriteCExprsCollect1(temp1, temp1_upper_c, clst),
+    factorAndWriteCExprsCollect1(temp2, temp2_upper_c, clst),
+    factorAndWriteCExprsCollect1(temp3, temp3_upper_c, clst),
+    factorAndWriteCExprsCollect1(temp4, temp4_upper_c, clst),
+    factorAndWriteCExprsCollect1(temp5, temp5_upper_c, clst),
+    factorAndWriteCExprsCollect1(temp6, temp6_upper_c, clst),
+
+    printf(fh, " ~%"),
+    factorAndWriteCIncrExprsCollect1(ai_corr_lst[dir], dS*f_bound_upper_c, clst),
+    printf(fh, " ~%"),
+    factorAndWriteCIncrExprsCollect1(ai_D_ij_corr_lst[1], dS*temp1_upper_c, clst),
+    factorAndWriteCIncrExprsCollect1(ai_D_ij_corr_lst[2], dS*temp2_upper_c, clst),
+    factorAndWriteCIncrExprsCollect1(ai_D_ij_corr_lst[3], dS*temp3_upper_c, clst),
+    printf(fh, " ~%"),
+
+    factorAndWriteCIncrExprsCollect1(energy_corr, dS*(vBoundary[dir+vdim-1]*f_bound_upper_c), clst),
+    printf(fh, " ~%"),
+    factorAndWriteCIncrExprsCollect1(energy_D_ij_corr, dS*fviDij_sum_lst, clst),
+    printf(fh, " ~%"),
+
+    printf(fh, "  }~%"),
+    printf(fh, " ~%")
+  ),
+  printf(fh, "} ~%"),
+  printf(fh, " ~%")
+)$
+

@@ -1,0 +1,96 @@
+/*
+  Generate the kernels header file for the updater which translates
+  the DG coefficients of a lower dimensional donor field to a higher
+  dim target field.
+*/
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor order basis. No need to generate p=1. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+/* Vdim possibilities for each of Cdim=[1,2,3]. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+varsCall : [x,y,z]$
+
+printPrototypes(fh) := block([bInd,cdim,maxPolyOrderB,polyOrder,cdim_tar,gkV,vdim,cdim_low],
+
+  for bInd : 1 thru length(bName) do (
+    /* Print declaration of conf-space kernels. */
+    for cdim : minCdim[bInd] thru maxCdim[bInd] do (
+  
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (cdim=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x */
+      for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
+        for cdim_tar : cdim-1 thru cdim+1 do (
+          if ((cdim_tar > 0 and cdim_tar < 4) and (cdim_tar # cdim)) then (
+
+            nevals : 1,
+            ndirs : 1,
+            dirStrs : [[""]],
+            if (cdim_tar < cdim) then (
+              ndirs : cdim,
+              nevals : 3,
+              edgeStrs : ["lo","mid","up"],
+              dirStrs : makelist(makelist(sconcat("_dir",varsCall[i],"_",edgeStrs[j]),j,1,nevals),i,1,ndirs)
+            ),
+
+            for dir : 1 thru ndirs do (
+              for evI : 1 thru nevals do (
+                printf(fh, "GKYL_CU_DH void translate_dim_~ax_~a_p~a_to_~ax_p~a~a(const double *fdo, double *ftar);~%", cdim, bName[bInd], polyOrder, cdim_tar, polyOrder, dirStrs[dir][evI])
+              )
+            )
+          )
+        ),
+        printf(fh, "~%")
+      )
+    ),
+
+    /* Print declaration of gyrokinetic kernels. */
+    for cdim : max(2,minCdim[bInd]) thru maxCdim[bInd] do (
+      for gkV : 1 thru length(gkVdims[cdim]) do (
+        vdim : gkVdims[cdim][gkV],
+  
+        maxPolyOrderB : maxPolyOrder[bInd],
+        if (cdim=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x2v */
+        for polyOrder : minPolyOrder[bInd] thru maxPolyOrderB do (
+
+          for cdim_low : 1 thru cdim-1 do (
+            printf(fh, "GKYL_CU_DH void translate_dim_gyrokinetic_~ax~av_~a_p~a_from_~ax~av_p~a(const double *flow, double *fout);~%", cdim, vdim, bName[bInd], polyOrder, cdim_low, vdim, polyOrder)
+          ),
+          printf(fh, "~%")
+        )
+      )
+    )
+  )
+)$
+
+fh : openw("~/max-out/gkyl_translate_dim_kernels.h")$
+printf(fh, "#pragma once~%")$
+printf(fh, "~%")$
+printf(fh, "#include <gkyl_util.h>~%")$
+printf(fh, "~%")$
+printf(fh, "EXTERN_C_BEG~%")$
+printf(fh, "~%")$
+printPrototypes(fh)$
+printf(fh, "~%")$
+printf(fh, "EXTERN_C_END~%")$
+close(fh)$

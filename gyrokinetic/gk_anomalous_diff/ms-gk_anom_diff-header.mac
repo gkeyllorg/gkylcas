@@ -1,0 +1,86 @@
+kill(all)$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 2$
+maxCdim_Ser : 2$
+
+/* Tensor order basis. No need to generate p=1. */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+vDims : [[1,2], [2], [2]]$
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser     , minCdim_Tensor     ]$
+maxCdim      : [maxCdim_Ser     , maxCdim_Tensor     ]$
+dirVars      : [[[x,vpar],[x,vpar,mu]],[[null],[x,y,vpar,mu]],[[null],[x,y,z,vpar,mu]]]$
+
+varsPerDim : [[x],[x,y],[x,y,z]]$
+
+bound_side : ["lower","upper"]$
+bound_surf_bc_type : ["zero_flux","bound_local"]$
+bound_diag_bc_type : ["bound_local","bound_recovery"]$
+
+fh : openw("~/max-out/gkyl_gk_anomalous_diffusion_kernels.h")$
+printf(fh, "#pragma once~%")$
+printf(fh, "#include <math.h>~%")$
+printf(fh, "#include <gkyl_util.h>~%")$
+printf(fh, "~%")$
+printf(fh, "EXTERN_C_BEG~%")$
+printf(fh, "~%")$
+
+for bInd : 1 thru length(bName) do (
+  for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+    for cdim : minCdim[bInd] thru maxCdim[bInd] do (
+      /* Write volume kernel declaration. */
+      vars : varsPerDim[cdim],
+
+      for vdim in vDims[cdim] do (
+
+        funcName : sconcat("gk_anomalous_diffusion_vol_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder),
+        funcSign : sconcat("GKYL_CU_DH double ",funcName,"(const double *w, const double *dx, const double *nu, const double *jacobgeo_inv, const double *Jfin, double* GKYL_RESTRICT out);~%"),
+        printf(fh, funcSign),
+        printf(fh, "~%"),
+
+        /* Write surface and boundary surface kernel declaration. */
+        dir : 1,
+        dirVar : dirVars[cdim][vdim][dir], 
+
+        funcName : sconcat("gk_anomalous_diffusion_surf", dirVar,"_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder),
+        funcSign : sconcat("GKYL_CU_DH double ",funcName,"(const double *wc, const double *dxc, const double *nul, const double *nuc, const double *nur, const double *jacobgeo_invl, const double *jacobgeo_invc, const double *jacobgeo_invr, const double *Jfl, const double *Jfc, const double *Jfr, double* GKYL_RESTRICT out);~%"),
+        printf(fh, funcSign),
+
+        for side in bound_side do (
+          for bc in bound_surf_bc_type do (
+            funcName : sconcat("gk_anomalous_diffusion_boundary_surf", dirVar,"_", side, "_", bc, "_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder),
+            funcSign : sconcat("GKYL_CU_DH double ",funcName,"(const double *wSkin, const double *dxSkin, const double *nuEdge, const double *nuSkin, const double *jacobgeo_invEdge, const double *jacobgeo_invSkin, int edge, const double *JfEdge, const double *JfSkin, double* GKYL_RESTRICT out);~%"),
+            printf(fh, funcSign)
+          ),
+
+          for bc in bound_diag_bc_type do (
+            funcName : sconcat("gk_anomalous_diffusion_boundary_diag", dirVar,"_", side, "_", bc, "_", cdim, "x", vdim, "v_", bName[bInd], "_p", polyOrder),
+            funcSign : sconcat("GKYL_CU_DH double ",funcName,"(const double *wSkin, const double *dxSkin, const double *nuSkin, const double *nuGhost, const double *jacobgeo_invSkin, const double *jacobgeo_invGhost, int edge, const double *JfSkin, const double *JfGhost, double* GKYL_RESTRICT out);~%"),
+            printf(fh, funcSign)
+          )
+        ),
+
+        printf(fh, "~%")
+      )
+    )
+  )
+)$
+
+printf(fh, "~%")$
+printf(fh, "EXTERN_C_END~%")$
+close(fh)$

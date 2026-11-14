@@ -1,0 +1,73 @@
+/* Generate kernels for the various elements of a direct
+   solve of the simple Poisson equation
+       - L(phi) = rho
+   where L is the Laplacian, using the (continuous Galerkin)
+   finite element method (FEM). */
+
+load(stringproc)$
+load("moments/fem-poisson/fem-poisson-num_nodes.mac")$
+load("moments/fem-poisson/fem-poisson-local_to_global.mac")$
+/*
+load("fem-calc/femNonzeroEntries")$
+*/
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+maxPolyOrder_Ser : 1$
+minCdim_Ser : 1$
+maxCdim_Ser : 2$
+
+/* Tensor product basis. */
+maxPolyOrder_Tensor : 1$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+
+  /**
+  fname : sconcat("~/max-out/FemPoissonSetup", bName[bInd], ".c"),
+  fh    : openw(fname),
+
+  printf(fh, "#include <FemPoissonModDecl.h> ~%"),
+  printf(fh, " ~%"),
+
+  /* Estimate the number of non-zero entries per row. */
+  funcName : sconcat("FemPoissonNonzeroEntries", bName[bInd]),
+  disp(printf(false,sconcat("Working on FemPoissonNonzeroEntries", bName[bInd]))),
+  calcFemPoissonNonzeroEntries(fh, funcName, maxCdim[bInd], bName[bInd], maxPolyOrder[bInd]),
+  close(fh),
+  **/
+
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    fname : sconcat("~/max-out/fem_poisson_", c, "x_", bName[bInd], ".c"),
+    fh    : openw(fname),
+  
+    disp(printf(false,sconcat("Creating ~ax ", bName[bInd]),c)),
+  
+    printf(fh, "#include <gkyl_fem_poisson.h> ~%"),
+    printf(fh, " ~%"),
+    
+    /* Number of nodes in linear problem. */
+    funcName : sconcat("fem_poisson_num_nodes_global_", c, "x_", bName[bInd]),
+    disp(printf(false,sconcat("Working on fem_poisson_num_nodes_global_", c, "x_", bName[bInd]))),
+    generate_fem_poisson_num_nodes(fh, funcName, c, bName[bInd], maxPolyOrder[bInd]),
+
+    /* Translation from local indices to global matrix indices. */
+    funcName : sconcat("fem_poisson_local_to_global_", c, "x_", bName[bInd]),
+    disp(printf(false,sconcat("Working on fem_poisson_local_to_global_", c, "x_", bName[bInd]))),
+    generate_local_to_global(fh, funcName, c, bName[bInd], maxPolyOrder[bInd]),
+
+    close(fh)
+    
+  )
+  
+  
+)$

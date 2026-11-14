@@ -1,0 +1,71 @@
+/* Generate the header file for the boundary correction in Vlasov LBO. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 2$ /* pure ser p=1 unsupported for the LBO */
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* but see v loop below. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor order basis. */
+minPolyOrder_Tensor : 1$ /* tensor p=1 IS the tensor hybrid */
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* but see v loop below. */
+maxCdim_Tensor : 3$
+maxVdim_Tensor : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+printPrototype(deco, ci, vi, bStr, pi) := block([],
+  /* Boundary corrections for moments in LBO collision terms. */
+  printf(fh, "~avoid mom_bcorr_lbo_vlasov_~ax~av_~a_p~a(const int *idx, enum gkyl_vel_edge edge, const double *vBoundary, const double *dxv, const double *fIn, double* GKYL_RESTRICT out); ~%", deco, ci, vi, bStr, pi),
+  printf(fh, "~%")  
+)$
+
+/* ............ Write out the C header file ............ */
+
+fh : openw("~/max-out/gkyl_mom_bcorr_lbo_vlasov_kernels.h")$
+printf(fh, "#pragma once~%")$
+printf(fh, "#include <math.h>~%")$
+printf(fh, "#include <gkyl_eqn_type.h>~%")$
+printf(fh, "#include <gkyl_util.h>~%")$
+printf(fh, "~%")$
+printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+
+decorator : "GKYL_CU_DH "$
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    minVdim : c, 
+    if (c < 3) then minVdim : 1, 
+    for v : minVdim thru maxVdim[bInd] do (
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (v=1) then maxPolyOrderB : 3, /* Generate p=3 kernels if vdim = 1 */
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      /* 2x3v tensor p=2 is generated as part of the optional 2x3v tensor p=2
+         kernel set (BUILD_VLASOV_TEN_2X3V_P2 in gkeyll). */
+
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        printPrototype(decorator, c, v, bName[bInd], polyOrder)
+      )
+    )  
+  )
+);
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$
+
+/* ............ Finished writing out the C header file ............ */

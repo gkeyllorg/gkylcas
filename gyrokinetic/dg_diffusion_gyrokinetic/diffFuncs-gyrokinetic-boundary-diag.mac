@@ -1,0 +1,142 @@
+load("core/modal-basis.mac")$
+load("core/recovery.mac")$
+load("util_maxima/out-scripts.mac")$
+fpprec : 24$
+
+/* NOTE: this is based on the maxima for boundary_surf, but note that the use
+   of fSkin and fEdge are different because we assume that this kernel
+   is called in the ghost cell (so fEdge is actually the skin f, and fSkin is the ghost f). */
+
+/* For higher order diffusion and spatially varying diffusion coefficient, it
+   is not clear where the coefficient should appear, e.g. d_xxx( D d_x(f) )
+   or d_xx( D d_xx(f)); different models appear in the literature. Since we don't
+   a good physical justfication for either we just arbitrarily pick one. */
+
+genDGdiffGyrokineticKernelBoundaryDiag(fh, funcNm, cdim, vdim, basisType, polyOrder, dir, diffOrder) := block(
+  [constCoeff,dim,bType,vars,basis,varsC,basisC,vSub,numBasis,surfVar,surfIntVars,
+   coeffType,coeff_e,coeff_c,qSkin_c,qGhost_c,qSkin_e,qGhost_2,jacobgeo_inv_e,
+   fSkin_c,fGhost_c,fSkin_e,fGhost_e,hOrder,bcRecCond,i,fRecr_e,fRecl_e,
+   boundSurf_incr_c,diff_out],
+
+  printf(fh, "#include <gkyl_dg_diffusion_gyrokinetic_kernels.h>~%~%"),
+
+  diffCoeffType : [true, false],
+  /* Let's not generate inhomogeneous hyperdiff for now. */
+  if (diffOrder>2) then (diffCoeffType : [true]),
+
+  for constCoeff in diffCoeffType do (
+      
+    dim : cdim+vdim,
+
+    bType : basisType,
+    [varsC, basisC, vars, basis, vSub] : loadGkBasis(basisType, cdim, vdim, polyOrder),
+    if polyOrder=1 then bType : "gkhyb",  /* Force p=1 to mean hybrid. */
+    numBasis : length(basis),
+    surfVar  : vars[dir],
+    surfIntVars : delete(surfVar,vars),
+  
+    if constCoeff then (
+      coeffType : "const",
+      coeff_e : coeff[dir-1]
+    ) else (
+      coeffType : "var",
+      /* Here we assume diffusion coefficient only depends on position space,
+         but it coule be easily changed to vary with velocity space too. */
+      numBasisC : length(basisC),
+      coeff_c : makelist(coeff[(dir-1)*numBasisC+i-1],i,1,numBasisC),
+      coeff_e : doExpand(coeff_c, basisC)
+    ),
+  
+    printf(fh, "GKYL_CU_DH double ~a_~acoeff(const double *w, const double *dx, const double *coeff, const double *jacobgeo_inv, int edge, const double *qSkin, const double *qGhost, double* GKYL_RESTRICT out) ~%", funcNm, coeffType),
+    printf(fh, "{~%"),
+    printf(fh, "  // w[NDIM]: Cell-center coordinate.~%"),
+    printf(fh, "  // dxv[NDIM]: Cell length.~%"),
+    printf(fh, "  // coeff: Diffusion coefficient.~%"),
+    printf(fh, "  // jacobgeo_inv: one divided by the configuration space Jacobian.~%"),
+    printf(fh, "  // edge: -1 for lower boundary, +1 for upper boundary.~%"),
+    printf(fh, "  // qGhost/qSkin: scalar field in skin and egde cells.~%"),
+    printf(fh, "  // out: Incremented output.~%~%"),
+
+    printf(fh, "  const double rdx2Sq = pow(2./dx[~a],~a.);~%", dir-1, diffOrder),
+    printf(fh, "~%"),
+
+    qSkin_c : makelist(qSkin[i-1], i, 1, numBasis),
+    qGhost_c : makelist(qGhost[i-1], i, 1, numBasis),
+    qSkin_e : doExpand(qSkin_c, basis),
+    qGhost_e : doExpand(qGhost_c, basis),
+
+    if constCoeff then (
+      fGhost_c : makelist(qGhost[i-1], i, 1, numBasis),
+      fSkin_c : makelist(qSkin[i-1], i, 1, numBasis)
+    ) else (
+      /* Divide jacobGeo*f by jacobGeo. */
+      jacobgeo_inv_e : doExpand1(jacobgeo_inv, basisC),
+  
+      fGhost_c : calcInnerProdList(vars, jacobgeo_inv_e, basis, qGhost_e),
+      fSkin_c : calcInnerProdList(vars, jacobgeo_inv_e, basis, qSkin_e),
+
+      /* Divide jacobGeo*f by jacobGeo. */
+      printf(fh, "  double fGhost[~a];~%", numBasis),
+      writeCExprsNoExpand1(fGhost, fGhost_c),
+      fGhost_c : makelist(fGhost[i-1], i, 1, numBasis),
+      printf(fh, "~%"),
+      printf(fh, "  double fSkin[~a];~%", numBasis),
+      writeCExprsNoExpand1(fSkin, fSkin_c),
+      fSkin_c : makelist(fSkin[i-1], i, 1, numBasis),
+      printf(fh, "~%")
+    ),
+
+    fGhost_e : doExpand(fGhost_c, basis),
+    fSkin_e : doExpand(fSkin_c, basis),
+
+    hOrder  : 2*polyOrder+1,
+  
+    bcRecCond : makelist([val=0,der=2*i-1],i,1,diffOrder/2),
+
+    printf(fh, "  double boundSurf_incr[~a] = {0.0}; ~%", numBasis),
+    printf(fh, "~%"),
+
+    printf(fh, "  if (edge == -1) { ~%~%"),
+
+    /* Contribution from the boundary surface from integration by parts
+       diffOrder times. Extra - sign in diffOrder=4 not included yet. */
+    fRecl_e  : calcRecov2CellGen(bType, surfVar, vars, polyOrder, apply(bcs,args(bcRecCond)), dg(fSkin_c)),
+
+    boundSurf_incr_c :
+       sum( calcInnerProdList(surfIntVars, -(-1)^(i-1), subst(surfVar=-1,diff(basis,surfVar,i-1)),
+                              subst(surfVar=0,diff(coeff_e*diff(fRecl_e,surfVar,diffOrder/2),surfVar,diffOrder/2-i)))
+           +calcInnerProdList(surfIntVars, -(-1)^(diffOrder/2+i-1), subst(surfVar=-1,diff(diff(basis,surfVar,diffOrder/2)*coeff_e,surfVar,i-1)),
+                              subst(surfVar=0,diff(fRecl_e,surfVar,diffOrder/2-i))),
+           i,1,diffOrder/2),
+
+    writeCExprs1(boundSurf_incr, boundSurf_incr_c),
+    printf(fh, "~%"),
+  
+    /* otherwise edge == +1, we are doing the right edge boundary and the skin cell needs to be evaluated at -1 */
+    printf(fh, "  } else { ~%~%"),
+
+    /* Contribution from the boundary surface from integration by parts
+       diffOrder times. Extra - sign in diffOrder=4 not included yet. */
+    fRecr_e  : calcRecov2CellGen(bType, surfVar, vars, polyOrder, dg(fSkin_c), apply(bcs,args(bcRecCond))),
+
+    boundSurf_incr_c :
+       sum( calcInnerProdList(surfIntVars, (-1)^(i-1), subst(surfVar=1,diff(basis,surfVar,i-1)),
+                              subst(surfVar=0,diff(coeff_e*diff(fRecr_e,surfVar,diffOrder/2),surfVar,diffOrder/2-i)))
+           +calcInnerProdList(surfIntVars, (-1)^(diffOrder/2+i-1), subst(surfVar=1,diff(diff(basis,surfVar,diffOrder/2)*coeff_e,surfVar,i-1)),
+                              subst(surfVar=0,diff(fRecr_e,surfVar,diffOrder/2-i))),
+           i,1,diffOrder/2),
+  
+    writeCExprs1(boundSurf_incr, boundSurf_incr_c),
+    printf(fh, "~%"),
+
+    printf(fh, "  }~%"),
+    printf(fh, "~%"),
+
+    diff_out : makelist(boundSurf_incr[i-1],i,1,numBasis),
+    writeCIncrExprsNoExpand1(out, ((-1)^(diffOrder/2+1))*rdx2Sq*diff_out),
+    printf(fh, "~%"),
+  
+    printf(fh, "  return 0.;~%"),
+    printf(fh, "}~%~%")
+  )
+)$

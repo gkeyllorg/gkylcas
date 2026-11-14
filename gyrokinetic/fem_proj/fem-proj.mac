@@ -1,0 +1,173 @@
+/* Independent consistent FEM mass projection. */
+load("core/nodal_operations/nodal_functions.mac")$
+load("moments/fem/fem-util.mac")$
+load("util_maxima/out-scripts.mac")$
+load(stringproc)$
+load("gyrokinetic/fem_proj/fem-proj-local_to_global.mac")$
+
+/* Global serendipity node count, including periodic identification. */
+generate_fem_proj_num_nodes(fh, funcNm, dim, order) := block(
+  [d, j],
+
+  printf(fh, "long ~a_num_nodes(const int *cells, const bool *periodic) {~%", funcNm),
+  printf(fh, "  long count = 1;~%"),
+  for d : 1 thru dim do (
+    printf(fh, "  count *= cells[~a]+!periodic[~a];~%", d-1, d-1)
+  ),
+  if order = 2 then (
+    for d : 1 thru dim do (
+      printf(fh, "  count += (long)cells[~a]", d-1),
+      for j : 1 thru dim do if j # d then (
+        printf(fh, "*(cells[~a]+!periodic[~a])", j-1, j-1)
+      ),
+      printf(fh, ";~%")
+    )
+  ),
+  printf(fh, "  return count;~%}~%~%")
+)$
+
+/* Active face types: 0=unconstrained, 1=constant Dirichlet, 2=varying Dirichlet.
+   Face order is lower x, upper x, lower y, upper y, etc. */
+fem_proj_face_types(dim, code, radix) := makelist(mod(floor(code/radix^(face-1)),radix),face,1,2*dim)$
+
+/* Location/BC suffixes; both faces appear for a one-cell direction. */
+fem_proj_bc_suffix(types) := block(
+  [suffix : "", coord : ["x", "y", "z"], lo, up, d],
+
+  for d : 1 thru length(types)/2 do (
+    lo : types[2*d-1], up : types[2*d],
+    if lo=0 and up=0 then suffix : sconcat(suffix,"_in",coord[d]),
+    if lo#0 then suffix : sconcat(suffix,"_lo",coord[d],
+      if lo=1 then "_dirichlet" else "_dirichletvar",coord[d]),
+    if up#0 then suffix : sconcat(suffix,"_up",coord[d],
+      if up=1 then "_dirichlet" else "_dirichletvar",coord[d])
+  ),
+
+  return(suffix)
+)$
+
+/* First constrained face incident to this node, or zero for a free node.
+   Prescriptions at intersecting faces must agree. */
+fem_proj_node_face(node, types) := block([d, face : 0],
+  for d : 1 thru length(node) do if face=0 then (
+    if node[d]=-1 and types[2*d-1]#0 then face : 2*d-1,
+    if node[d]=1 and types[2*d]#0 then face : 2*d
+  ),
+  return(face)
+)$
+
+/* Assemble the consistent mass matrix, specializing constrained rows at generation.
+   Repeated global indices are allowed (e.g. one-cell periodic directions). */
+generate_fem_proj_mass(fh, funcNm, dim, basisFun, order, weighted) := block(
+  [vars, modal, nodal, nodes, nb,
+   fun, mass_c, entry, coef, weight, types, code, face, i, j, k],
+
+  [vars,modal] : loadBasis(basisFun,dim,order),
+
+  nodal : getNodalBasis(basisFun,dim,order),
+  nodes : args(getNodes(basisFun,dim,order)), nb : length(nodal),
+
+  mass_c : zeromatrix(nb,nb),
+  for i : 1 thru nb do for j : 1 thru nb do (
+    entry : 0,
+    if weighted then (
+      for k : 1 thru nb do (
+        coef : radcan(innerProd(vars,modal[k],nodal[i],nodal[j])),
+        entry : entry+coef*weight[k-1]
+      )
+    ) else entry : radcan(innerProd(vars,1,nodal[i],nodal[j])),
+    mass_c[i,j] : float(expand(entry))
+  ),
+
+  for code : 0 thru 2^(2*dim)-1 do (
+    types : fem_proj_face_types(dim,code,2),
+
+    fun : sconcat(funcNm,if weighted then "_mass_weighted" else "_mass_noweight",fem_proj_bc_suffix(types)),
+    printf(fh,"void ~a(const double *weight, const long *global_idx, gkyl_mat_triples *matrix) {~%",fun),
+
+    for i : 1 thru nb do (
+      face : fem_proj_node_face(nodes[i],types),
+      if face#0 then (
+        /* Do not write zeros: local columns may alias the diagonal globally. */
+        printf(fh,"  gkyl_mat_triples_insert(matrix, global_idx[~a], global_idx[~a], 1.0);~%",i-1,i-1)
+      ) else (
+        for j : 1 thru nb do if mass_c[i,j]#0 then
+          printf(fh,"  gkyl_mat_triples_accum(matrix, global_idx[~a], global_idx[~a], ~a);~%",i-1,j-1,mass_c[i,j])
+      )
+    ),
+    printf(fh,"}~%~%")
+  )
+)$
+
+/* Assemble the RHS, specializing volume additions and Dirichlet assignments.
+   All cells sharing a constrained global node assign its prescribed value. */
+generate_fem_proj_src(fh, funcNm, dim, basisFun, order, weighted) := block(
+  [vars, modal, nodal, nodes, nb,
+   fun, src_c, modToNod, nodToMod, boundary_c, entry, coef, weight, rhs, boundary_values, bc_values,
+   types, code, face, i, j, k],
+
+  [vars,modal] : loadBasis(basisFun,dim,order),
+
+  nodal : getNodalBasis(basisFun,dim,order),
+  nodes : args(getNodes(basisFun,dim,order)), nb : length(nodal),
+
+  /* Boundary values are point evaluations of the modal expansion. */
+  modToNod : calcModToNod(basisFun,dim,order),
+  boundary_c : float(expand(list_matrix_entries(
+    modToNod . columnvector(makelist(boundary_values[j-1],j,1,nb))))),
+
+  if weighted then (
+    /* Integrate the weighted product exactly, without nodal interpolation. */
+    src_c : [],
+    for i : 1 thru nb do (
+      entry : 0,
+      for j : 1 thru nb do for k : 1 thru nb do (
+        coef : radcan(innerProd(vars,modal[k],nodal[i],modal[j])),
+        entry : entry+coef*rhs[j-1]*weight[k-1]
+      ),
+      src_c : endcons(float(expand(entry)),src_c)
+    )
+  ) else (
+    /* Orthonormal modal basis: the weak load is transpose(nodToMod) . rhs. */
+    nodToMod : radcan(calcNodToMod(basisFun,dim,order)),
+    src_c : float(expand(list_matrix_entries(
+      transpose(nodToMod) . columnvector(makelist(rhs[j-1],j,1,nb)))))
+  ),
+
+  for code : 0 thru 3^(2*dim)-1 do (
+    types : fem_proj_face_types(dim,code,3),
+    fun : sconcat(funcNm,if weighted then "_src_weighted" else "_src_noweight",fem_proj_bc_suffix(types)),
+    printf(fh,"GKYL_CU_DH void ~a(const double *weight, const double *rhs, const double *bc_values, const double *boundary_values, const long *global_idx, double *out) {~%",fun),
+    for i : 1 thru nb do (
+      face : fem_proj_node_face(nodes[i],types),
+      if face=0 then (
+        entry : src_c[i],
+        printf(fh,"#ifdef __CUDA_ARCH__~%  atomicAdd(&out[global_idx[~a]], ~a);~%#else~%  out[global_idx[~a]] += ~a;~%#endif~%",i-1,entry,i-1,entry)
+      ) else (
+        if types[face]=1 then entry : bc_values[face-1]
+        else entry : boundary_c[i],
+        printf(fh,"#ifdef __CUDA_ARCH__~%  atomicExch((unsigned long long int*) &out[global_idx[~a]], __double_as_longlong(~a));~%#else~%  out[global_idx[~a]] = ~a;~%#endif~%",i-1,entry,i-1,entry)
+      )
+    ),
+    printf(fh,"}~%~%")
+  )
+)$
+
+/* Reconstruct modal DG coefficients from the continuous nodal solution. */
+generate_fem_proj_sol(fh, funcNm, dim, basisFun, order) := block(
+  [nod2mod, nb, out_c, entry, input, out, i, j],
+
+  nod2mod : calcNodToMod(basisFun,dim,order),
+  nb : length(nod2mod),
+
+  printf(fh, "GKYL_CU_DH void ~a_sol(const double *input, double *out) {~%", funcNm),
+  out_c : [],
+  for i : 1 thru nb do (
+    entry : 0,
+    for j : 1 thru nb do entry : entry + nod2mod[i][j]*input[j-1],
+    out_c : endcons(entry, out_c)
+  ),
+
+  writeCExprsWithZeros1(out, out_c),
+  printf(fh, "}~%~%")
+)$

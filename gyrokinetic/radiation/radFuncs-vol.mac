@@ -1,0 +1,83 @@
+/* 
+   Create kernels for the volume term of the radiation drag operator.
+*/
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load(stringproc)$
+fpprec : 24$
+
+calcGkRADDragVolUpdater(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,NP,NC,pOrderVpar,zr,vidx1,vmap_e,vmapSq_e,vmap_prime_e,dir,f_e,nuSum_e,
+   nuUSum_e,incrDrag,cflFreq_mid,alphaDrag_e,expr,i,alphaDrag_NoZero,alphaDrag_NoZero_e],
+
+  printf(fh, "#include <gkyl_rad_gyrokinetic_kernels.h> ~%"),
+
+  pDim : cdim + vdim,
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC),  NP : length(bP),
+  varsV : makelist(varsP[d],d,cdim+1,pDim),
+
+  vidx1 : makelist(i,i,cdim,cdim+vdim-1),
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dxv, const double *vmap_prime, 
+    const double *nvnu, const double *nvsqnu, 
+    const double *f, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // w[~a]: cell-center coordinates. ~%", cdim+vdim),
+  printf(fh, "  // dxv[~a]: cell spacing. ~%", cdim+vdim),
+  printf(fh, "  // vmap_prime: velocity space mapping derivative.~%"),
+  printf(fh, "  // nvnu: Volume expansion of sum_s n_s*nu_s(v) in vparallel direction.~%"),
+  printf(fh, "  // nvsqnu: Volume expansion of sum_s n_s*nu_s(v) in mu direction.~%"),
+  printf(fh, "  // f: input distribution function.~%"),
+  printf(fh, "  // out: incremented output ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  double rdv2[~a]; ~%", vdim),
+  for dir : 1 thru vdim do (
+    printf(fh, "  rdv2[~a] = 2.0/dxv[~a]; ~%", dir-1, vidx1[dir])
+  ),
+  printf(fh, "~%"),
+
+  /* Expand the velocity map fields. */
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  /* Expand distribution function f in phase basis. */
+  f_e : doExpand1(f, bP),
+
+  /* Expand nvnu and nvsqnu in phase space basis.*/
+  nvnu_e : doExpand1(nvnu, bP),
+  nvsqnu_e : doExpand1(nvsqnu, bP),
+
+  /* pre-compute the drag coefficient multiplied by f */
+  printf(fh, "  double nvnu_f[~a] = {0.0}; ~%", NP),
+  printf(fh, "  double nvsqnu_f[~a] = {0.0}; ~%", NP),
+
+  nvnu_f_c   : calcInnerProdList(varsP, 1, bP, nvnu_e*f_e/vmap_prime_e[1]),
+  nvsqnu_f_c : calcInnerProdList(varsP, 1, bP, nvsqnu_e*f_e/vmap_prime_e[2]),
+
+  writeCExprsNoExpand1(nvnu_f, gcfac(float(expand(nvnu_f_c)))),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  writeCExprsNoExpand1(nvsqnu_f, gcfac(float(expand(nvsqnu_f_c)))),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  nvnu_f_e   : doExpand1(nvnu_f, bP), 
+  nvsqnu_f_e : doExpand1(nvsqnu_f, bP), 
+
+  /* compute the final increment integral(grad(psi) . nvnu f) */
+  incr_vpar : calcInnerProdList(varsP, 1, diff(bP,varsV[1]), nvnu_f_e),
+  incr_mu   : calcInnerProdList(varsP, 1, diff(bP,varsV[2]), nvsqnu_f_e),
+
+  clst : [rdv2[0],rdv2[1]],
+  writeCIncrExprsCollect1(out, -rdv2[0]*incr_vpar-rdv2[1]*incr_mu, clst),
+  flush_output(fh),
+
+  printf(fh, "~%"),
+  printf(fh, "  return 0.0; ~%"),
+  printf(fh, "} ~%"),
+  printf(fh, "~%")
+);

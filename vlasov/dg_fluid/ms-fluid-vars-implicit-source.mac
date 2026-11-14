@@ -1,0 +1,61 @@
+load("vlasov/dg_fluid/fluid-vars-implicit-source.mac")$
+load(stringproc)$
+/* This script calls the functions which generate the kernels for the source terms in the
+   fluid equations of different fluid models: isothermal Euler, Euler/5 moment, and 10 moment
+   For all three, momentum source is: q/m*(rho*E + rho*u x B)
+   For Euler/5 moment also have energy source: q/m*(rhou*E)
+   For 10 moment also have pressure source: P x B + (P x B)_sym */
+
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 3$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 2$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      disp(printf(false,sconcat("Creating fluid vars source funcs ",bName[bInd]," ~axp~a"),d,polyOrder)),
+      fname : sconcat("~/max-out/fluid_em_coupling_set_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("fluid_em_coupling_set_",  d, "x_", bName[bInd], "_p", polyOrder),
+      setDGEMSourceSolve(fh, funcName, d, bName[bInd], polyOrder),
+      close(fh),
+
+      fname : sconcat("~/max-out/fluid_em_coupling_copy_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("fluid_em_coupling_copy_",  d, "x_", bName[bInd], "_p", polyOrder),
+      copyDGEMSourceSolve(fh, funcName, d, bName[bInd], polyOrder),
+      close(fh), 
+
+      fname : sconcat("~/max-out/fluid_em_coupling_energy_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("fluid_em_coupling_energy_",  d, "x_", bName[bInd], "_p", polyOrder),
+      DGEMSourceEnergySolve(fh, funcName, d, bName[bInd], polyOrder),
+      close(fh)
+    )
+  )
+);

@@ -1,0 +1,143 @@
+/* 
+  Generate kernels for the surface term 
+  drag contribution for the Rosenbluth/Fokker-Planck Operator
+
+*/
+
+load("vlasov/fpo/fpo-utils.mac")$
+load("core/modal-basis.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/recovery.mac")$
+load("util_maxima/utilities.mac")$
+
+fpprec : 24$
+
+generateFpoVlasovDragSurf(fname, funcNm, cdim, basisFun, polyOrder, pv) := block(
+  [vdim, pdim, varsC, bC, varsP, bP, NC, dirNums, pvdir, surfVars, surfNodes, numNodes,
+  fh, bSurf, numSurf, drag_coeff_surf_L_e, drag_coeff_surf_R_e, fL_e, fC_e, fR_e, fUp_L_e,
+  fUp_R_e, GhatL_c, GhatR_c, GhatL_e, GhatR_e, incrL_c, incrR_c],
+
+  /* if (polyOrder = 1) then ( basisFun : "hyb" ), */
+
+  /* FPO is always 3V */
+  vdim : 3,
+  pdim : cdim+vdim,
+
+  /* Load basis of dimensionality requested. */
+  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
+  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+  NC : length(bP),
+
+  dirNums : [[vx, 1], [vy, 2], [vz, 3]],
+  pvdir : assoc(pv,dirNums),
+
+  /* Phase space variable for direction */
+  surfVars : delete(pv, varsP),
+
+  /*
+    +---+---+---+
+    | L | C | R |
+    +---+---+---+
+  */
+
+  if (basisFun = "hyb") then (
+    surfNodes : gaussOrdHyb(polyOrder+1, cdim, vdim-1)
+  )
+  else (
+    surfNodes : gaussOrd(polyOrder+1, pdim-1)
+  ),
+
+  numNodes : length(surfNodes),
+
+  disp(printf(false, "creating ~a", fname)),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_fpo_vlasov_kernels.h> ~%"),
+  if (basisFun = "hyb") then (
+    printf(fh, "#include <gkyl_basis_hyb_~ax3v_p~a_upwind_quad_to_modal.h> ~%",
+      cdim, polyOrder),
+    printf(fh, "~%~%")
+  )
+  else (
+    printf(fh, "#include <gkyl_basis_~a_~ax_p~a_upwind_quad_to_modal.h> ~%",
+      basisFun, pdim, polyOrder),
+    printf(fh, "~%~%")
+  ),
+
+  bSurf : basisFromVars(basisFun, surfVars, polyOrder),
+  numSurf : length(bSurf),
+
+  printf(fh, "GKYL_CU_DH double ~a(const double* dxv, 
+  const double *alpha_surf_L, const double *alpha_surf_R,
+  const double *sgn_alpha_surf_L, const double *sgn_alpha_surf_R,
+  const int *const_sgn_alpha_L, const int *const_sgn_alpha_R,
+  const double *fL, const double *fC, const double *fR, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+
+  printf(fh, "  // dxv[NDIM]: Cell spacing in each direction. ~%"),
+  printf(fh, "  // alpha_surf_L,R: Surface expansion of drag coefficient on left,right boundary of center cell. ~%"),
+  printf(fh, "  // sgn_alpha_L,R: sign(alpha_surf_l,r) at quadrature points. ~%"),
+  printf(fh, "  // const_sgn_alpha_L,R: Boolean array true if sign(alpha_surf_l,r) is only one sign. ~%"),
+  printf(fh, "  // fL, fC, fR: Distribution function in left, center, and right cells. ~%"),
+  printf(fh, "  // out: Incremented output. ~%~%"),
+  printf(fh, "~%"),
+  printf(fh, "  // Index into drag coefficient surface expansion arrays ~%"),
+  printf(fh, "  const double *drag_coeff_surf_L = &alpha_surf_L[~a]; ~%", (pvdir-1)*numSurf),
+  printf(fh, "  const double *drag_coeff_surf_R = &alpha_surf_R[~a]; ~%", (pvdir-1)*numSurf),
+  printf(fh, "  const double *sgn_drag_coeff_surf_L = &sgn_alpha_surf_L[~a]; ~%", (pvdir-1)*numNodes),
+  printf(fh, "  const double *sgn_drag_coeff_surf_R = &sgn_alpha_surf_R[~a]; ~%", (pvdir-1)*numNodes),
+  printf(fh, "  const int *const_sgn_drag_coeff_L = &const_sgn_alpha_L[~a]; ~%", pvdir-1),
+  printf(fh, "  const int *const_sgn_drag_coeff_R = &const_sgn_alpha_R[~a]; ~%", pvdir-1),
+  printf(fh, "  double dv_inv = 2.0/dxv[~a]; ~%~%", pvdir-1+cdim),
+  printf(fh, "~%"),
+
+  drag_coeff_surf_L_e : doExpand1(drag_coeff_surf_L, bSurf),
+  drag_coeff_surf_R_e : doExpand1(drag_coeff_surf_R, bSurf),
+
+  fL_e : doExpand1(fL, bP),
+  fC_e : doExpand1(fC, bP),
+  fR_e : doExpand1(fR, bP),
+
+  /* 
+    Calculate and write out upwinded distribution function 
+  */
+  calcAndWrite_fUpwind(fh, pv, pdim, polyOrder, surfVars, bSurf, fL_e, fC_e, basisFun, "L"),
+  calcAndWrite_fUpwind(fh, pv, pdim, polyOrder, surfVars, bSurf, fC_e, fR_e, basisFun, "R"),
+
+  fUp_L_e : doExpand1(fUp_L, bSurf),
+  fUp_R_e : doExpand1(fUp_R, bSurf),
+
+  printf(fh, "  double GhatL[~a] = {0.0}; ~%", numSurf),
+  printf(fh, "  double GhatR[~a] = {0.0}; ~%", numSurf),
+
+  GhatL_c : calcInnerProdList(surfVars, 1, bSurf, drag_coeff_surf_L_e*fUp_L_e),
+  GhatR_c : calcInnerProdList(surfVars, 1, bSurf, drag_coeff_surf_R_e*fUp_R_e),
+  factorAndWriteCExprs1(GhatL, GhatL_c),
+  printf(fh, "~%"),
+  factorAndWriteCExprs1(GhatR, GhatR_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+  GhatL_e : doExpand1(GhatL, bSurf),
+  GhatR_e : doExpand1(GhatR, bSurf),
+
+  incrL_c : calcInnerProdList(surfVars, 1.0, subst(pv=-1.0, bP), GhatL_e),
+  incrR_c : calcInnerProdList(surfVars, -1.0, subst(pv=1.0, bP), GhatR_e),
+
+ factorAndWriteCIncrExprsCollect1(out, 0.5*dv_inv*(incrL_c+incrR_c), [dv_inv]), 
+
+  /* 
+      Write out CFL frequency.
+      Drag term estimate: (2p+1)/dv * a_surf[0]/2^((pdim-1)/2)
+  */
+  if ( basisFun = "hyb" ) then ( pOrder : polyOrder + 1 )
+  else ( pOrder : polyOrder ),
+  printf(fh, "  double cflFreq = fmax(fabs(drag_coeff_surf_L[0]), fabs(drag_coeff_surf_R[0])); ~%"),
+  printf(fh, "~%"),
+  printf(fh, "  return ~a*cflFreq; ~%", float(0.5*dv_inv*(2*pOrder+1)*2.0^(-0.5*(pdim-1)))),
+
+
+  printf(fh, "}~%"),
+  flush_output(fh),
+  close(fh)
+)$
+

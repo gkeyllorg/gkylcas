@@ -1,0 +1,84 @@
+/* 
+  Generate kernels to calculate the surface projection of the recovered
+  diffusion tensor at the lower boundary of each direction 
+  (e.g. Dxy evaluated at vx and vy). 
+*/
+load("vlasov/fpo/fpo-utils.mac");
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load("core/recovery.mac");
+
+fpprec : 24$
+
+dirs : [vx, vy, vz]$
+
+generateFpoDiffCoeffSurf(fname, funcNm, cdim, basisFun, polyOrder, pv1) := block(
+  [],
+  /* if (polyOrder = 1) then (basisFun : "hyb"), */
+  /* FPO is only defined in 3V */
+  vdim : 3,
+  pdim : vdim+cdim,
+
+  dirNums : [[vx, 1], [vy, 2], [vz, 3]],
+  pvdir1 : assoc(pv1,dirNums),
+ 
+  /* Load basis of dimensionality requested. */
+  /*  [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder), */
+  [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+  [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder),
+
+  NC : length(bP),
+
+  surfVars : delete(pv1, varsP),
+  bSurf : basisFromVars(basisFun, surfVars, polyOrder),
+  numSurf : length(bSurf),
+
+  disp(printf(false, "creating ~a", fname)),
+
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_fpo_vlasov_kernels.h> ~%~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *diff_coeff_L, const double *diff_coeff_C, double *diff_coeff_surf_C) {~%", funcNm),
+  printf(fh, "  // diff_coeff_L,C: Diffusion tensor in left and center along pv1 direction. ~%"),
+  printf(fh, "  // diff_coeff_surf_C: Output array for surface projection of recovered diffusion tensor at lower edge of right cell. ~%"),
+  printf(fh, "  const double *D_L = 0; ~%"),
+  printf(fh, "  const double *D_C = 0; ~%"),
+  printf(fh, "  double *D_surf_out = 0; ~%"),
+
+  D_L_lst : makelist(D_L[i], i, 0, NC-1),
+  D_C_lst : makelist(D_C[i], i, 0, NC-1),
+
+  /* Iterate over secondary directions */ 
+  for i : 1 thru vdim do (
+    /* Evaluate D_12 at pv1 boundary */
+    pv2 : dirs[i],
+    pvdir2 : assoc(pv2,dirNums),
+    diff_coeff_index_12 : 3*(pvdir1-1) + (pvdir2-1),
+    printf(fh, "~%~%"),
+    printf(fh, "  // D_~a~a evaluated at ~a boundary. ~%", pv1, pv2, pv1),
+    printf(fh, "  D_L = &diff_coeff_L[~a]; ~%", diff_coeff_index_12*NC),
+    printf(fh, "  D_C = &diff_coeff_C[~a]; ~%", diff_coeff_index_12*NC),
+    printf(fh, "  D_surf_out = &diff_coeff_surf_C[~a]; ~%", 2*diff_coeff_index_12*numSurf),
+    printf(fh, "~%"),
+
+    D_rec_p : calcRecov2CellGen(basisFun, pv1, varsP, polyOrder, dg(D_L_lst), dg(D_C_lst)),
+    D_rec_c : calcInnerProdList(surfVars, 1, bSurf, subst(pv1=0.0, D_rec_p)),
+    factorAndWriteCExprs1(D_surf_out, D_rec_c),
+
+    /* Evaluate D_21 at pv1 boundary */
+    diff_coeff_index_21 : 3*(pvdir2-1) + (pvdir1-1),
+    printf(fh, "~%~%"),
+    printf(fh, "  // D_~a~a evaluated at ~a boundary. ~%", pv2, pv1, pv1),
+    printf(fh, "  D_L = &diff_coeff_L[~a]; ~%", diff_coeff_index_21*NC),
+    printf(fh, "  D_C = &diff_coeff_C[~a]; ~%", diff_coeff_index_21*NC),
+    printf(fh, "  D_surf_out = &diff_coeff_surf_C[~a]; ~%", (2*diff_coeff_index_21+1)*numSurf),
+    printf(fh, "~%"),
+
+    D_rec_p : calcRecov2CellGen(basisFun, pv1, varsP, polyOrder, dg(D_L_lst), dg(D_C_lst)),
+    D_rec_c : calcInnerProdList(surfVars, 1, bSurf, subst(pv1=0.0, D_rec_p)),
+    factorAndWriteCExprs1(D_surf_out, D_rec_c),
+    flush_output(fh)
+  ),
+
+  printf(fh, "~%}~%"),
+  close(fh)
+)$

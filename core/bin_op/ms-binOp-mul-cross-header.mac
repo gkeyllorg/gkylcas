@@ -1,0 +1,109 @@
+/* Generate the header file for the kernels perform binary multiplication between
+   two fields, one a configuration space field and one a phase space field, 
+   with option to accumulate to the output or just write out the result. 
+
+   For the accumulation, generate two sets of kernels, one with 
+   parallelization over components and one without. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 3$
+minCdim_Ser : 1$
+minVdim_Ser : 1$    /* see begining of v loop below though. */
+maxCdim_Ser : 3$
+maxVdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+minVdim_Tensor : 1$    /* see begining of v loop below though. */
+maxCdim_Tensor : 2$
+maxVdim_Tensor : 3$
+
+/* Hybrid basis. */
+minCdim_hyb : 1$
+maxCdim_hyb : 3$
+vDims_hyb : [[1,2,3], [1,2,3], [1,2,3]]$  /* Vdim for each of Cdim. */
+
+/* GK hybrid basis. */
+minCdim_gkhyb : 1$
+maxCdim_gkhyb : 3$
+vDims_gkhyb : [[1,2], [2], [2]]$  /* Vdim for each of Cdim. */
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+minVdim      : [minVdim_Ser, minVdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+maxVdim      : [maxVdim_Ser, maxVdim_Tensor]$
+
+bNameHyb   : ["hyb", "gkhyb"]$
+minCdimHyb : [minCdim_hyb, minCdim_gkhyb]$
+maxCdimHyb : [maxCdim_hyb, maxCdim_gkhyb]$
+vDims      : [vDims_hyb, vDims_gkhyb]$
+
+printPrototype(deco, ci, vi, bStr, pi) := block([si],
+  printf(fh, "~avoid binop_cross_mul_~ad_~ad_~a_p~a(const double *f, const double *g, double *fg); ~%", deco, ci, ci+vi, bStr, pi),
+  printf(fh, "~avoid binop_cross_mul_accumulate_~ad_~ad_~a_p~a(double a, const double *f, const double *g, double *fg); ~%", deco, ci, ci+vi, bStr, pi),
+  printf(fh, "~avoid binop_cross_mul_accumulate_comp_par_~ad_~ad_~a_p~a(double a, const double *f, const double *g, double *fg, int linc2); ~%", deco, ci, ci+vi, bStr, pi),
+  printf(fh, "~%") 
+)$
+
+printPrototypeHybrid(deco, ci, vi, bStr) := block([si],
+  printf(fh, "~avoid binop_cross_mul_~ax~av_~a_p1(const double *f, const double *g, double *fg); ~%", deco, ci, vi, bStr),
+  printf(fh, "~avoid binop_cross_mul_accumulate_~ax~av_~a_p1(double a, const double *f, const double *g, double *fg); ~%", deco, ci, vi, bStr),
+  printf(fh, "~avoid binop_cross_mul_accumulate_comp_par_~ax~av_~a_p1(double a, const double *f, const double *g, double *fg, int linc2); ~%", deco, ci, vi, bStr),
+  printf(fh, "~%") 
+)$
+
+decorator : "GKYL_CU_DH "$
+for bInd : 1 thru length(bName) do (
+  fname : sconcat("~/max-out/gkyl_binop_cross_mul_", bName[bInd], ".h"),
+  fh : openw(fname),
+  printf(fh, "#pragma once ~%"),
+  printf(fh, "#include <gkyl_util.h> ~%"),
+  printf(fh, "EXTERN_C_BEG ~%"),
+  printf(fh, "~%"),
+
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for v : minVdim[bInd] thru maxVdim[bInd] do (
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c+v>4 and maxPolyOrderB > 2) then maxPolyOrderB : 2,
+      if (c+v>5 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
+      if (v=1) then maxPolyOrderB : 3,
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        printPrototype(decorator, c, v, bName[bInd], polyOrder)
+      )
+    )
+  ),
+  printf(fh, "EXTERN_C_END ~%"),
+  close(fh)
+)$
+for bInd : 1 thru length(bNameHyb) do (
+  fname : sconcat("~/max-out/gkyl_binop_cross_mul_", bNameHyb[bInd], ".h"),
+  fh : openw(fname),
+  printf(fh, "#pragma once ~%"),
+  printf(fh, "#include <gkyl_util.h> ~%"),
+  printf(fh, "EXTERN_C_BEG ~%"),
+  printf(fh, "~%"),
+
+  for c : minCdimHyb[bInd] thru maxCdimHyb[bInd] do (
+    vmin : xreduce(min,vDims[bInd][c]),
+    vmax : xreduce(max,vDims[bInd][c]),
+    for v : vmin thru vmax do (
+      printPrototypeHybrid(decorator, c, v, bNameHyb[bInd])
+    )
+  ),
+  printf(fh, "EXTERN_C_END ~%"),
+  close(fh)
+);
+/* ............ Finished writing out the C header file ............ */

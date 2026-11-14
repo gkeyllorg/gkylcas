@@ -1,0 +1,121 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+fpprec : 24$
+
+statevec : [rho, rhou0,rhou1,rhou2]$
+dx1  : [dx10, dx11, dx12]$
+
+lhs : [outrho, outrhou0, outrhou1, outrhou2]$
+
+uvar : [uvar0,uvar1,uvar2]$
+
+cidx(cdim)      := makelist(i,i,0,cdim-1)$
+
+calcEulerIsoVolUpdater(fh, funcNm, cdim, basisFun, pOrder) := block([modNm,basisConstant,bP,bC,NC,cid,vid,rhovar, rhou, rhol, rhouxl, rhouyl, rhouzl, rhoul, uvarxl, uvaryl, uvarzl, t1, t2, t3, t4, volTerms, vt, expr, varsC, basisC],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+
+  /* specify a point to evaluate maximum speed at for use in computing CFL */
+  cflPt : makelist(varsC[d]=0, d, 1, length(varsC)),
+
+  printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, const double vth, const double *uvar, const double *statevec, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, pOrder),
+  printf(fh, "  // w[NDIM]: Cell-center coordinates.~%"),
+  printf(fh, "  // dxv[NDIM]: Cell spacing.~%"),
+  printf(fh, "  // vth: Thermal velocity.~%"),
+  printf(fh, "  // uvar: [ux, uy, uz], Fluid flow.~%"),
+  printf(fh, "  // statevec: [rho, rho ux, rho uy, rho uz].~%"),
+  printf(fh, "  // out: Incremented output.~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double *rho = &statevec[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhou0 = &statevec[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhou1 = &statevec[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhou2 = &statevec[~a]; ~%", 3*NC),
+
+  printf(fh, "  const double *uvar0 = &uvar[~a]; ~%", 0*NC),
+  printf(fh, "  const double *uvar1 = &uvar[~a]; ~%", 1*NC),
+  printf(fh, "  const double *uvar2 = &uvar[~a]; ~%", 2*NC),
+
+  printf(fh, "  double *outrho = &out[~a]; ~%", 0*NC),
+  printf(fh, "  double *outrhou0 = &out[~a]; ~%", 1*NC),
+  printf(fh, "  double *outrhou1 = &out[~a]; ~%", 2*NC),
+  printf(fh, "  double *outrhou2 = &out[~a]; ~%", 3*NC),
+
+  cid : cidx(cdim),
+  for dir : 1 thru cdim do (
+    printf(fh, "  double dx1~a = 2./dxv[~a]; ~%", dir-1, dir-1)
+  ),
+  printf(fh, "~%"),
+
+  /* cflFreq_mid is our approximation of sum_i max(abs(alpha_i))/(dx_i/(2p+1)) */
+  printf(fh, "  double cflFreq_mid = 0.0; ~%"),
+
+  printf(fh, "  double vthsq = vth*vth; ~%"), /*maxima will write out vth^2 in c/cpp code, but the ^ operator is the XOR operator, this is a quick workaround*/
+
+  rhovar : [statevec[1]],
+  rhou : [statevec[2],statevec[3],statevec[4]],
+  rhol : doExpand1(rhovar[1], bC),
+
+  rhouxl : doExpand1(rhou[1], bC),
+  rhouyl : doExpand1(rhou[2], bC),
+  rhouzl : doExpand1(rhou[3], bC),
+  rhoul : [rhouxl,rhouyl,rhouzl],
+
+  uvarxl : doExpand1(uvar[1], bC),
+  uvaryl : doExpand1(uvar[2], bC),
+  uvarzl : doExpand1(uvar[3], bC),
+  uvarl : [uvarxl,uvaryl,uvarzl],
+
+  /* compute stable time step, max speed = |u| + vth */
+  for dir : 1 thru cdim do (
+    /* evaluate velocity at center of cell */
+    umid : gcfac(float(expand(subst(cflPt, uvarl[dir])))),
+    printf(fh, "  cflFreq_mid += 0.5*~a*(fabs(~a)+~a); ~%", float(2*polyOrder+1)*dx1[dir], umid, vth)
+  ),
+  printf(fh, "~%"),
+
+  t1 : (t1 : 0, for dir : 1 thru cdim do (
+     t1 : t1 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhol*rhoul[dir])
+     ),
+  t1),
+  if (not(listp(t1))) then (t1 : [t1]), /*edge case where above term is not a list*/
+
+  t2 : (t2 : 0, for dir : 1 thru cdim do (
+     if (dir = 1) then (t2 : t2 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhouxl*uvarxl) + dx1[dir]*vthsq*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhol)),
+     if (dir = 2) then (t2 : t2 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhouxl*uvaryl)),
+     if (dir = 3) then (t2 : t2 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhouxl*uvarzl))
+     ),
+  t2),
+  t3 : (t3 : 0, for dir : 1 thru cdim do (
+     if (dir = 1) then (t3 : t3 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhouyl*uvarxl)),
+     if (dir = 2) then (t3 : t3 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhouyl*uvaryl) + dx1[dir]*vthsq*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhol)),
+     if (dir = 3) then (t3 : t3 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhouyl*uvarzl))
+     ),
+  t3),
+  t4 : (t4 : 0, for dir : 1 thru cdim do (
+     if (dir = 1) then (t4 : t4 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhouzl*uvarxl)),
+     if (dir = 2) then (t4 : t4 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhouzl*uvaryl)),
+     if (dir = 3) then (t4 : t4 + dx1[dir]*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhouzl*uvarzl) + dx1[dir]*vthsq*calcInnerProdList(varsC,1,diff(bC, varsC[dir]),rhol))
+     ),
+  t4),
+
+  volTerms : [t1,t2,t3,t4],
+  for m : 1 thru 4 do (
+    vt : volTerms[m],
+    writeCIncrExprs1(lhs[m], vt),
+    printf(fh, "~%")
+  ),
+
+  printf(fh,"  return cflFreq_mid; ~%"),
+
+  printf(fh, "} ~%")
+
+)$

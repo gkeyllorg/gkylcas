@@ -1,0 +1,383 @@
+
+/* Obtain the ordinates (nodes) for n-point
+   Gaussian quadrature in one dimension. */
+gaussOrd1D(n) := block([p, v, ords, sords],
+  /* Some precision error in root-finder, switching to analytic formula for the moment for small n */
+  if (n = 2) then (
+    sords : [-1/sqrt(3),1/sqrt(3)]
+  ) else if (n = 3) then (
+    sords : [-sqrt(3/5),0,sqrt(3/5)]
+  /* ) else if (n = 4) then (
+    sords : [-sqrt(3/7 + 2/7*sqrt(6/5)),-sqrt(3/7 - 2/7*sqrt(6/5)),sqrt(3/7 - 2/7*sqrt(6/5)),sqrt(3/7 + 2/7*sqrt(6/5))]
+  ) else if (n = 5) then (
+    sords : [-1/3*sqrt(5+2*sqrt(10/7)),-1/3*sqrt(5-2*sqrt(10/7)),0,1/3*sqrt(5-2*sqrt(10/7)),1/3*sqrt(5+2*sqrt(10/7))] */
+  ) else (
+    p : expand(legendre_p(n, x)),
+    /* NOTE: Best to use realroots() function here instead and set precision to 1e-50 */
+    v : map(rhs, realroots(p,1e-50)),
+    ords : map(bfloat, v),
+    /* Sort ords so ords are in ascending order. Have to
+       do it the same way it is done in gaussOrdWeight1D. */
+    sords : copylist(ords),
+    sords : float(sort(ords, lambda([a,b], ords[sublist_indices(ords, lambda([x],x=a))[1]]
+                                          <ords[sublist_indices(ords, lambda([x],x=b))[1]])))
+  ),
+  return(sords)
+)$
+
+/* Obtain the weights and ordinates (nodes) for n-point
+   Gaussian quadrature in one dimension. */
+gaussOrdWeight1D(n) := block([p, q, v, w, ords, weights, sords, sweights],
+  /* Some precision error in root-finder, switching to analytic formula for the moment for small n */
+  if (n = 2) then (
+    sords    : [-1/sqrt(3),1/sqrt(3)],
+    sweights : [1, 1]
+  ) else if (n = 3) then (
+    sords    : [-sqrt(3/5),0,sqrt(3/5)],
+    sweights : [5/9, 8/9, 5/9]
+  ) else if (n = 4) then (
+    sords    : [-sqrt(3/7 + 2/7*sqrt(6/5)),-sqrt(3/7 - 2/7*sqrt(6/5)),sqrt(3/7 - 2/7*sqrt(6/5)),sqrt(3/7 + 2/7*sqrt(6/5))],
+    sweights : [(18-sqrt(30))/36, (18+sqrt(30))/36, (18+sqrt(30))/36, (18-sqrt(30))/36 ]
+  ) else if (n = 5) then (
+    sords    : [-1/3*sqrt(5+2*sqrt(10/7)),-1/3*sqrt(5-2*sqrt(10/7)),0,1/3*sqrt(5-2*sqrt(10/7)),1/3*sqrt(5+2*sqrt(10/7))],
+    sweights : [(322-13*sqrt(70))/900, (322+13*sqrt(70))/900, 128/225, (322+13*sqrt(70))/900, (322-13*sqrt(70))/900]
+  ) else (
+    p: expand(legendre_p(n, x)),
+    q: expand(n/2*diff(p, x)*legendre_p(n - 1, x)),
+    v: map(rhs, realroots(p,1e-50)),
+    w: map(lambda([z], 1/subst([x = z], q)), v),
+    ords    : map(bfloat, v),
+    weights : map(bfloat, w),
+    /* Sort ords and weights so ords are in ascending order. */
+    sords    : copylist(ords),  sweights : copylist(weights),
+    sords    : float(sort(ords, lambda([a,b], ords[sublist_indices(ords, lambda([x],x=a))[1]]
+                                             <ords[sublist_indices(ords, lambda([x],x=b))[1]]))),
+    sweights : float(sort(weights, lambda([a,b], ords[sublist_indices(ords, lambda([x],x=a))[1]]
+                                                <ords[sublist_indices(ords, lambda([x],x=b))[1]])))
+  ),
+  return([sords, sweights])
+)$
+
+/* Obtain the ordinates (nodes) for Gaussian
+   quadrature in dim dimensions using points and weights
+   made of Cartesian products of those for n-point quadrature in 1D. */
+gaussOrd(n,dim) := block([ord1D,ord,labOrd1D,labOrd,d,i,flatOrd],
+  ord1D : gaussOrd1D(n),
+
+  ord : copylist(ord1D),
+    
+  if dim=1 then(
+    ord : makelist([ord[i]],i,1,length(ord))
+  ) else (
+    /* MF: this may seem more complicated than it needs to be, but I
+           kept it this way to ensure nodes are ordered in the same
+           way as those returned by gaussOrdWeight. */ 
+    
+    /* In order to use cartesian_product below we need to make
+      the weights distinct. Use a distinct label.
+      Unfortunately this doesn't guarantee the weights are ordered
+      so they match the ordinates. Try labeling the ordinates too. */
+    labOrd1D : makelist([string(i),ord1D[i]],i,1,length(ord1D)),        
+        
+    labOrd : copylist(labOrd1D),
+    
+    labOrd1D : setify(labOrd1D),
+    for d : 2 thru dim do (
+      labOrd : listify(cartesian_product(labOrd1D,setify(labOrd)))
+    ),
+
+    ord : makelist(0,i,1,length(labOrd)),
+    for i : 1 thru length(labOrd) do (
+      flatOrd : makelist(flatten(labOrd[i])[2*j],j,1,length(flatten(labOrd[i]))/2),
+      ord[i]  : copylist(flatOrd)
+    )
+  ),
+  return(ord)
+)$
+
+/* Obtain the weights and ordinates (nodes) for Gaussian
+   quadrature in dim dimensions using points and weights
+   made of Cartesian products of those for n-point quadrature in 1D.
+   For hybrid basis please use gaussOrdWeightHyb below. */
+gaussOrdWeight(n,dim) := block([ord1D,weight1D,ord,weight,labWeight1D,
+                                labOrd1D,labWeight,labOrd,d,i,flatOrd,flatFac],
+  [ord1D, weight1D] : gaussOrdWeight1D(n),
+
+  ord : copylist(ord1D),
+    
+  if dim=1 then(
+    ord    : makelist([ord[i]],i,1,length(ord)),
+    weight : copylist(weight1D)
+  ) else (
+    
+    /* In order to use cartesian_product below we need to make
+      the weights distinct. Use a distinct label.
+      Unfortunately this doesn't guarantee the weights are ordered
+      so they match the ordinates. Try labeling the ordinates too. */
+    labWeight1D : makelist([string(i),weight1D[i]],i,1,length(weight1D)),
+    labOrd1D    : makelist([string(i),ord1D[i]],i,1,length(ord1D)),        
+        
+    labWeight : copylist(labWeight1D),
+    labOrd    : copylist(labOrd1D),
+    
+    labWeight1D : setify(labWeight1D),
+    labOrd1D    : setify(labOrd1D),
+    for d : 2 thru dim do (
+      labWeight : listify(cartesian_product(setify(labWeight),labWeight1D)),
+      labOrd : listify(cartesian_product(setify(labOrd),labOrd1D))
+    ),
+
+    ord    : makelist(0,i,1,length(labOrd)),
+    weight : makelist(0,i,1,length(labWeight)),
+    for i : 1 thru length(labWeight) do (
+      flatOrd : makelist(flatten(labOrd[i])[2*j],j,1,length(flatten(labOrd[i]))/2),
+      ord[i]  : copylist(flatOrd),
+      flatFac   : makelist(flatten(labWeight[i])[2*j],j,1,length(flatten(labWeight[i]))/2),
+      weight[i] : apply("*",float(flatFac))
+    )
+  ),
+  return([ord,weight])
+)$
+
+/* Like gaussOrdWeight above but for Vlasov hybrid basis.
+   For GK hybrid basis please use gaussOrdWeightGkHyb below. */
+gaussOrdWeightHyb(n,cdim,vdim) := block(
+  [ord1Dc,weight1Dc,ord1Dv,weight1Dv,ordc,weightc,ordv,weightv,ord,weight,
+   labWeight1Dc,labOrd1Dc,labWeightc,labOrdc,labWeight1Dv,labOrd1Dv,labWeightv,labOrdv,
+   labWeight,labOrd,d,i,flatOrd,flatFac,nc,nv],
+
+  nc : n,   /* Number of quad points in configuration space. */
+  nv : n+1, /* Number of quad points in velocity space. */
+  [ord1Dc, weight1Dc] : gaussOrdWeight1D(nc),
+  [ord1Dv, weight1Dv] : gaussOrdWeight1D(nv),
+
+  ordc : copylist(ord1Dc),
+  ordv : copylist(ord1Dv),
+    
+  if cdim=0 then (
+    [ord, weight] : gaussOrdWeight(nv,vdim)
+  ) elseif vdim=0 then (
+    [ord, weight] : gaussOrdWeight(nc,cdim)
+  ) else (
+    
+    /* In order to use cartesian_product below we need to make
+      the weights distinct. Use a distinct label.
+      Unfortunately this doesn't guarantee the weights are ordered
+      so they match the ordinates. Try labeling the ordinates too. */
+    labWeight1Dc : makelist([string(i),weight1Dc[i]],i,1,length(weight1Dc)),
+    labWeight1Dv : makelist([string(i),weight1Dv[i]],i,1,length(weight1Dv)),
+    labOrd1Dc    : makelist([string(i),ord1Dc[i]],i,1,length(ord1Dc)),        
+    labOrd1Dv    : makelist([string(i),ord1Dv[i]],i,1,length(ord1Dv)),        
+        
+    labWeightc : copylist(labWeight1Dc),
+    labWeightv : copylist(labWeight1Dv),
+    labOrdc    : copylist(labOrd1Dc),
+    labOrdv    : copylist(labOrd1Dv),
+    
+    labWeight1Dc : setify(labWeight1Dc),
+    labOrd1Dc    : setify(labOrd1Dc),
+    for d : 2 thru cdim do (
+      labWeightc : listify(cartesian_product(setify(labWeightc),labWeight1Dc)),
+      labOrdc    : listify(cartesian_product(setify(labOrdc),labOrd1Dc))
+    ),
+
+    labWeight1Dv : setify(labWeight1Dv),
+    labOrd1Dv    : setify(labOrd1Dv),
+    for d : 2 thru vdim do (
+      labWeightv : listify(cartesian_product(setify(labWeightv),labWeight1Dv)),
+      labOrdv    : listify(cartesian_product(setify(labOrdv),labOrd1Dv))
+    ),
+
+    labWeight : listify(cartesian_product(setify(labWeightc),setify(labWeightv))),
+    labOrd    : listify(cartesian_product(setify(labOrdc),setify(labOrdv))),
+
+    ord    : makelist(0,i,1,length(labOrd)),
+    weight : makelist(0,i,1,length(labWeight)),
+    for i : 1 thru length(labWeight) do (
+      flatOrd : makelist(flatten(labOrd[i])[2*j],j,1,length(flatten(labOrd[i]))/2),
+      ord[i]  : copylist(flatOrd),
+      flatFac   : makelist(flatten(labWeight[i])[2*j],j,1,length(flatten(labWeight[i]))/2),
+      weight[i] : apply("*",float(flatFac))
+    )
+  ),
+  return([ord,weight])
+)$
+
+/* Like gaussOrdWeightHyb but for gyrokinetics (only p=2 in vpar). */
+gaussOrdWeightGkHyb(n,cvars,vvars) := block([nc,nv,ord_flipped,ord,weight],
+  cdim : length(cvars),  vdim : length(vvars),
+  nc : n,   /* Number of quad points in configuration space and mu. */
+  nv : n+1, /* Number of quad points in vpar. */
+
+  if cdim=0 then (
+    if vdim = 1 then (
+      if vvars[1]=vx or vvars[1]=vpar then
+        [ord, weight] : gaussOrdWeight(nv,vdim)
+      elseif vvars[1]=vy or vvars[1]=mu then
+        [ord, weight] : gaussOrdWeight(nc,vdim)
+    ) else (
+      /* Need p=2 in vpar and p=1 in mu. */
+      [ord_flipped, weight] : gaussOrdWeightHyb(nc,1,1),
+      /* Flip ordinates so p=2 is for the 1st dimension (vpar in this case). */
+      ord : makelist(reverse(ord_flipped[i]),i,1,length(ord_flipped))
+    )
+  ) elseif vdim=0 then (
+    [ord, weight] : gaussOrdWeight(nc,cdim)
+  ) elseif cdim=1 and vdim=1 then (
+    if vvars[1]=vx or vvars[1]=vpar then
+      [ord, weight] : gaussOrdWeightHyb(nc,cdim,vdim)
+    elseif vvars[1]=vy or vvars[1]=mu then
+      [ord, weight] : gaussOrdWeight(nc,vdim)
+  ) else (
+    /* Use gaussOrdWeightHyb but flip the last two ordinate
+       coordinates so p=2 is used in vpar and not mu. */
+    [ord_flipped, weight] : gaussOrdWeightHyb(nc,cdim+1,1),
+
+    ord : makelist( append(makelist(ord_flipped[i][j],j,1,cdim),
+                           [ord_flipped[i][cdim+2]],
+                           [ord_flipped[i][cdim+1]]), i, 1, length(ord_flipped) )
+  ),
+  return([ord,weight])
+)$
+
+/* Like gaussOrdWeightHyb but only return ordinates. */
+gaussOrdHyb(n,cdim,vdim) := block(
+  [ord1Dc,ord1Dv,ordc,ordv,ord,labOrd1Dc,labOrdc,labOrd1Dv,labOrdv,
+   labOrd,d,i,flatOrd,nc,nv],
+
+  nc : n,   /* Number of quad points in configuration space. */
+  nv : n+1, /* Number of quad points in velocity space. */
+  ord1Dc : gaussOrd1D(nc),
+  ord1Dv : gaussOrd1D(nv),
+
+  ordc : copylist(ord1Dc),
+  ordv : copylist(ord1Dv),
+    
+  if cdim=0 then (
+    ord : gaussOrd(nv,vdim)
+  ) elseif vdim=0 then (
+    ord : gaussOrd(nc,cdim)
+  ) else (
+    /* MF: this may seem more complicated than it needs to be, but I
+           kept it this way to ensure nodes are ordered in the same
+           way as those returned by gaussOrdWeightHyb. */ 
+    
+    /* In order to use cartesian_product below we need to make
+      the weights distinct. Use a distinct label.
+      Unfortunately this doesn't guarantee the weights are ordered
+      so they match the ordinates. Try labeling the ordinates too. */
+    labOrd1Dc : makelist([string(i),ord1Dc[i]],i,1,length(ord1Dc)),        
+    labOrd1Dv : makelist([string(i),ord1Dv[i]],i,1,length(ord1Dv)),        
+        
+    labOrdc : copylist(labOrd1Dc),
+    labOrdv : copylist(labOrd1Dv),
+    
+    labOrd1Dc : setify(labOrd1Dc),
+    for d : 2 thru cdim do (
+      labOrdc : listify(cartesian_product(setify(labOrdc),labOrd1Dc))
+    ),
+
+    labOrd1Dv : setify(labOrd1Dv),
+    for d : 2 thru vdim do (
+      labOrdv : listify(cartesian_product(setify(labOrdv),labOrd1Dv))
+    ),
+
+    labOrd : listify(cartesian_product(setify(labOrdc),setify(labOrdv))),
+
+    ord : makelist(0,i,1,length(labOrd)),
+    for i : 1 thru length(labOrd) do (
+      flatOrd : makelist(flatten(labOrd[i])[2*j],j,1,length(flatten(labOrd[i]))/2),
+      ord[i]  : copylist(flatOrd)
+    )
+  ),
+  return(ord)
+)$
+
+/* Like gaussOrdWeightHyb but only return ordinates. */
+gaussOrdTenHyb(nc,nv,cdim,vdim) := block(
+  [ord1Dc,ord1Dv,ordc,ordv,ord,labOrd1Dc,labOrdc,labOrd1Dv,labOrdv,
+   labOrd,d,i,flatOrd],
+
+  ord1Dc : gaussOrd1D(nc),
+  ord1Dv : gaussOrd1D(nv),
+
+  ordc : copylist(ord1Dc),
+  ordv : copylist(ord1Dv),
+    
+  if cdim=0 then (
+    ord : gaussOrd(nv,vdim)
+  ) elseif vdim=0 then (
+    ord : gaussOrd(nc,cdim)
+  ) else (
+    /* MF: this may seem more complicated than it needs to be, but I
+           kept it this way to ensure nodes are ordered in the same
+           way as those returned by gaussOrdWeightHyb. */ 
+    
+    /* In order to use cartesian_product below we need to make
+      the weights distinct. Use a distinct label.
+      Unfortunately this doesn't guarantee the weights are ordered
+      so they match the ordinates. Try labeling the ordinates too. */
+    labOrd1Dc : makelist([string(i),ord1Dc[i]],i,1,length(ord1Dc)),        
+    labOrd1Dv : makelist([string(i),ord1Dv[i]],i,1,length(ord1Dv)),        
+        
+    labOrdc : copylist(labOrd1Dc),
+    labOrdv : copylist(labOrd1Dv),
+    
+    labOrd1Dc : setify(labOrd1Dc),
+    for d : 2 thru cdim do (
+      labOrdc : listify(cartesian_product(setify(labOrdc),labOrd1Dc))
+    ),
+
+    labOrd1Dv : setify(labOrd1Dv),
+    for d : 2 thru vdim do (
+      labOrdv : listify(cartesian_product(setify(labOrdv),labOrd1Dv))
+    ),
+
+    labOrd : listify(cartesian_product(setify(labOrdc),setify(labOrdv))),
+
+    ord : makelist(0,i,1,length(labOrd)),
+    for i : 1 thru length(labOrd) do (
+      flatOrd : makelist(flatten(labOrd[i])[2*j],j,1,length(flatten(labOrd[i]))/2),
+      ord[i]  : copylist(flatOrd)
+    )
+  ),
+  return(ord)
+)$
+
+/* Like gaussOrdWeightGkHyb but only return ordinates. */
+gaussOrdGkHyb(n,cvars,vvars) := block([cdim,vdim,nc,nv,ord_flipped,ord],
+  cdim : length(cvars),  vdim : length(vvars),
+  nc : n,   /* Number of quad points in configuration space and mu. */
+  nv : n+1, /* Number of quad points in vpar. */
+
+  if cdim=0 then (
+    if vdim = 1 then (
+      if vvars[1]=vx or vvars[1]=vpar then
+        ord : gaussOrd(nv,vdim)
+      elseif vvars[1]=vy or vvars[1]=mu then
+        ord : gaussOrd(nc,vdim)
+    ) else (
+      /* Need p=2 in vpar and p=1 in mu. */
+      ord_flipped : gaussOrdHyb(nc,1,1),
+      /* Flip ordinates so p=2 is for the 1st dimension (vpar in this case). */
+      ord : makelist(reverse(ord_flipped[i]),i,1,length(ord_flipped))
+    )
+  ) elseif vdim=0 then (
+    ord : gaussOrd(nc,cdim)
+  ) elseif cdim>0 and vdim=1 then (
+    if vvars[1]=vx or vvars[1]=vpar then
+      ord : gaussOrdHyb(nc,cdim,vdim)
+    elseif vvars[1]=vy or vvars[1]=mu then
+      ord : gaussOrd(nc,cdim+vdim)
+  ) else ( /* cdim>0 and vdim=2 */
+    /* Use gaussOrdHyb but flip the last two ordinate
+       coordinates so p=2 is used in vpar and not mu. */
+    ord_flipped : gaussOrdHyb(nc,cdim+1,1),
+
+    ord : makelist( append(makelist(ord_flipped[i][j],j,1,cdim),
+                           [ord_flipped[i][cdim+2]],
+                           [ord_flipped[i][cdim+1]]), i, 1, length(ord_flipped) )
+  ),
+  return(ord)
+)$
+

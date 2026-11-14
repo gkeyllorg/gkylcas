@@ -1,0 +1,383 @@
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac");
+load("core/nodal_operations/nodal_functions.mac")$
+load("core/recovery.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load(stringproc)$
+
+fpprec : 24$
+
+/* This script generates the kernels for the surface term
+   drag contribution from Lenard Bernstein operator. */
+
+varsVAll : [vpar, mu]$
+vidx1(cdim,vdim) := makelist(i,i,cdim,cdim+vdim-1)$
+
+calcGkLBOBoundaryDragUpdateVPar(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,vSub,NP,NC,vid1,vv,surfVars,nuSum_e,nuUSum_e,surf_cvars,surf_vvars,
+   bSurf,surfNodes,numNodes,alphaDr,alphaDrSurf_l_c,alphaDrSurf_r_c,alst_l,alst_r,
+   alphaDrSurf_l_e,alphaDrSurf_r_e,alphaOrd_l_n,alphaOrd_r_n,surfNodesConfig,
+   numNodesConfig,numNodesVel,i,rcoFac_l,rcoFac_r,j,fHatSurf_e,Ghat_c,glst1,Ghat_e,incr],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC),  NP : length(bP),
+
+  /* Expand velocity mapping fields. */
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  pDim : cdim+vdim,
+  vid1 : vidx1(cdim,vdim),
+  vv   : varsVAll[1],
+  surfVars : delete(vv,varsP),
+    
+  printf(fh, "GKYL_CU_DH double ~a(const double *dxv, const double *vmap, const double *vmap_prime_edge, const double *vmap_prime_skin, const double m_, const double *bmag_inv, const double *nuSum, const double *nuPrimMomsSum, const int edge, const double *fEdge, const double *fSkin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // dxv[~a]: cell spacing. ~%", cdim+vdim),
+  printf(fh, "  // vmap: velocity space mapping in skin cell.~%"),
+  printf(fh, "  // vmap_prime_edge,vmap_prime_skin: velocity space mapping derivative in edge and skin cells.~%"),
+  printf(fh, "  // m_: species mass.~%"),
+  printf(fh, "  // bmag_inv: 1/(magnetic field magnitude). ~%"),
+  printf(fh, "  // nuSum: collisionalities added (self and cross species collisionalities). ~%"),
+  printf(fh, "  // nuPrimMomsSum[~a]: sum of bulk velocities and thermal speeds squared times their respective collisionalities. ~%", (1+1)*NC),
+  printf(fh, "  // fEdge,fSkin: Distribution function in edge and skin cells ~%"),
+  printf(fh, "  // out: Incremented distribution function in skin cell ~%"),
+  printf(fh, "~%"),
+
+  /* Create a pointer to nuUSum. */
+  printf(fh, "  const double *nuUSum = nuPrimMomsSum;~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  double rdv2 = 2.0/dxv[~a]; ~%", vid1[1]),
+  printf(fh, "~%"),
+
+  nuSum_e : doExpand1(nuSum,bC),
+  /* Expand the mean flow speed in the configuration basis. */
+  nuUSum_e : doExpand1(nuUSum,bC),
+  printf(fh, "~%"),
+
+  /* Surface basis (equivalent to basis of one lower
+     dimensionality without surface variable), and
+     surface nodes given by tensor product of Gauss-Legendre quadrature points. */
+  surf_cvars : delete(vv, makelist(varsP[i],i,1,cdim)),
+  surf_vvars : delete(vv, makelist(varsP[cdim+i],i,1,vdim)),
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    bSurf     : basisFromVars("gkhyb",surfVars,polyOrder),
+    surfNodes : gaussOrdGkHyb(1+1, surf_cvars, surf_vvars)
+  ) else (
+    bSurf     : basisFromVars(basisFun,surfVars,polyOrder),
+    surfNodes : gaussOrd(polyOrder+1, pDim-1)
+  ),
+  numNodes : length(surfNodes),
+
+  /* Calculate the alpha-velocity due to drag. */
+  alphaDr : nuSum_e*vmap_e[1]-nuUSum_e,
+  /* Project alphaDrag evaluated at interior surface onto surf basis. */
+  alphaDrSurf_l_c : fullratsimp(innerProd(surfVars, 1, bSurf, subst(vv=-1,alphaDr))),
+  alphaDrSurf_r_c : fullratsimp(innerProd(surfVars, 1, bSurf, subst(vv=1,alphaDr))),
+  alst_l          : makelistNoZeros1(alphaDrSurf_l_c, alphaDrSurf),
+  alst_r          : makelistNoZeros1(alphaDrSurf_r_c, alphaDrSurf),
+  alphaDrSurf_l_e : doExpand(alst_l, bSurf),
+  alphaDrSurf_r_e : doExpand(alst_r, bSurf),
+
+  /* Upwind the drag term using quadrature point evaluation. */
+
+  /* Drag term flux does not depend on velocity space surface on which it sits
+     i.e., drag term in vparallel does not depend on mu
+     so sort quadrature points between configuration space and velocity space */
+  /* Get number of configuration space nodes */
+  surfNodesConfig : gaussOrd(polyOrder+1, cdim),
+  numNodesConfig  : length(surfNodesConfig),
+  numNodesVel     : numNodes/numNodesConfig,
+
+  /* Evaluate alpha at ordinates.
+     Note: alphaSurf_e is already a surface expansion. 
+     In addition, it is continuous and does not vary with respect to the surface variable.
+     We still require a alpha_l (w - dv/2) and alpha_r (w + dv/2) for the two sides of the cell */
+  alphaDrSurfC_l_c : fullratsimp(calcInnerProdList(varsC, 1, bC, alphaDrSurf_l_e)),
+  alphaDrSurfC_r_c : fullratsimp(calcInnerProdList(varsC, 1, bC, alphaDrSurf_r_e)),
+  alphaDrSurfC_l_e : doExpand(alphaDrSurfC_l_c, bC),
+  alphaDrSurfC_r_e : doExpand(alphaDrSurfC_r_c, bC),
+  alphaOrd_l_n : gcfac(float(evAtNodes(alphaDrSurfC_l_e,surfNodesConfig,varsC))),
+  alphaOrd_r_n : gcfac(float(evAtNodes(alphaDrSurfC_r_e,surfNodesConfig,varsC))),
+
+  printf(fh, "  double alphaDrSurf[~a] = {0.0}; ~%", length(bSurf)),
+  printf(fh, "  double fUpwindQuad[~a] = {0.0};~%", numNodes),
+  printf(fh, "  double fUpwind[~a] = {0.0};;~%", length(bSurf)),
+  printf(fh, "  double Ghat[~a] = {0.0}; ~%", length(bSurf)),
+  printf(fh, "~%"),
+
+  vmap_prime_fac_edge : subst(vmap_prime=vmap_prime_edge, vmap_prime_e[1]),
+  vmap_prime_fac_skin : subst(vmap_prime=vmap_prime_skin, vmap_prime_e[1]),
+
+  /* if edge == -1, we are doing the left edge boundary and the skin cell needs to be evauluated at +1 */
+  /* In addition we need the drag term evaluated at +1 (so alphaDr evaluated on the right) */
+  printf(fh, "  if (edge == -1) { ~%~%"),
+  /* Write out drag term for far left edge boundary.
+     Need alpha evaluated at +1 for skin-edge interface.
+     NOTE: zero-flux boundary conditions means for far left boundary, no drag term on -1 surface */
+  writeCExprsNoExpand1(alphaDrSurf, alphaDrSurf_r_c),
+  printf(fh, "~%"),
+  /* Write out fUpwindQuad for the far left edge */
+  /* Within the skin cell, we need alpha_r (alpha evaluated at +1)
+     just like how the skin cell is evaluated at +1 */
+  alphaSimp(a) := float(expand(fullratsimp(a))),
+  basisStr : sconcat(basisFun, "_", cdim+vdim, "x"),
+  rcoFac_r : 1.,  rcoFac_l : 1.,
+  if polyOrder=1 then (  /* Force p=1 to use hybrid basis. */
+    alphaSimp(a) := fullratsimp(a),
+    basisStr : sconcat("gkhyb_", cdim, "x", vdim, "v"),
+    /* This subst eliminates the need for another variable, and removes
+       the common factor (for p=1) which is not needed to determine sign. */
+    rcoFac_l : 1./(content(alphaOrd_l_n[1],alphaDrSurf[0])[1]),
+    rcoFac_r : 1./(content(alphaOrd_r_n[1],alphaDrSurf[0])[1])
+  ),
+  for i : 1 thru numNodesConfig do (
+    printf(fh, "  if (~a < 0.0) { ~%", alphaSimp(alphaOrd_r_n[i]*rcoFac_r)),
+    for j : 1 thru numNodesVel do (
+      printf(fh, "    fUpwindQuad[~a] = ~a_p~a_surfx~a_eval_quad_node_~a_r(fSkin)/~a; ~%", (j-1)+(i-1)*numNodesVel, basisStr, polyOrder, cdim+dir, (j-1)+(i-1)*numNodesVel, vmap_prime_fac_skin)
+    ),
+    printf(fh, "  } else { ~%"),
+    for j : 1 thru numNodesVel do (
+      printf(fh, "    fUpwindQuad[~a] = ~a_p~a_surfx~a_eval_quad_node_~a_l(fEdge)/~a; ~%", (j-1)+(i-1)*numNodesVel, basisStr, polyOrder, cdim+dir, (j-1)+(i-1)*numNodesVel, vmap_prime_fac_edge)
+    ),
+    printf(fh, "  } ~%")
+  ),
+
+  printf(fh, "~%"),
+  printf(fh, "  // Project tensor nodal quadrature basis back onto modal basis. ~%"),
+  if polyOrder=1 then  /* Force p=1 to use hybrid basis. */
+    printf(fh, "  gkhyb_~ax~av_p1_vpardir_upwind_quad_to_modal(fUpwindQuad, fUpwind); ~%", cdim, vdim)
+  else
+    printf(fh, "  ~a_~ax_p~a_upwind_quad_to_modal(fUpwindQuad, fUpwind); ~%", basisFun, cdim+vdim, polyOrder),
+  printf(fh, "~%"),
+
+  /* Create expansions of f_hat (upwinded f) on the left and right in the surface basis. */
+  fHatSurf_e : doExpand1(fUpwind, bSurf),
+
+  Ghat_c : calcInnerProdList(surfVars,alphaDrSurf_r_e,bSurf,fHatSurf_e),
+  /* Ghat_c (coefficients of Ghat) is what gets written. From here
+     on we can simply refer to Ghat. */
+  glst1  : makelistNoZeros1(Ghat_c, Ghat),
+  Ghat_e : doExpand(glst1, bSurf),
+  
+  /* Clever factorization is possible for polyOrder = 1, but for higher
+     polynomial orders, factorization is *too* clever and can lead to 
+     deeply nested parentheses, not ideal for compiler optimizations */
+  if (polyOrder = 1) then 
+    writeCExprsNoExpand1(Ghat, Ghat_c)
+  else
+    writeCExprs1(Ghat, Ghat_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Increments to the far left skin cell (some dimensional factors missing). */
+  incr : calcInnerProdList(surfVars, 1, subst(vv=1, bP), Ghat_e),
+  
+  /* Write out contribution */
+  writeCIncrExprs1(out, rdv2*incr),
+
+  /* otherwise edge == +1, we are doing the right edge boundary and the skin cell needs to be evauluated at -1 */
+  printf(fh, "~%  } else { ~%~%"),
+  /* Write out drag term for far right edge boundary.
+     Need alpha evaluated at -1 for skin-edge interface.
+     NOTE: zero-flux boundary conditions means for far right boundary, no drag term on +1 surface */
+  writeCExprsNoExpand1(alphaDrSurf, alphaDrSurf_l_c),
+  printf(fh, "~%"),
+  /* Write out fUpwindQuad for the far right edge */
+  /* Within the skin cell, we need alpha_l (alpha evaluated at -1)
+     just like how the skin cell is evaluated at -1 */
+  for i : 1 thru numNodesConfig do (
+    printf(fh, "  if (~a < 0.0) { ~%", alphaSimp(alphaOrd_l_n[i]*rcoFac_l)),
+    for j : 1 thru numNodesVel do (
+      printf(fh, "    fUpwindQuad[~a] = ~a_p~a_surfx~a_eval_quad_node_~a_r(fEdge)/~a; ~%", (j-1)+(i-1)*numNodesVel, basisStr, polyOrder, cdim+dir, (j-1)+(i-1)*numNodesVel, vmap_prime_fac_edge)
+    ),
+    printf(fh, "  } else { ~%"),
+    for j : 1 thru numNodesVel do (
+      printf(fh, "    fUpwindQuad[~a] = ~a_p~a_surfx~a_eval_quad_node_~a_l(fSkin)/~a; ~%", (j-1)+(i-1)*numNodesVel, basisStr, polyOrder, cdim+dir, (j-1)+(i-1)*numNodesVel, vmap_prime_fac_skin)
+    ),
+    printf(fh, "  } ~%")
+  ),
+
+  printf(fh, "~%"),
+  printf(fh, "  // Project tensor nodal quadrature basis back onto modal basis. ~%"),
+  if polyOrder=1 then  /* Force p=1 to use hybrid basis. */
+    printf(fh, "  gkhyb_~ax~av_p1_vpardir_upwind_quad_to_modal(fUpwindQuad, fUpwind); ~%", cdim, vdim)
+  else
+    printf(fh, "  ~a_~ax_p~a_upwind_quad_to_modal(fUpwindQuad, fUpwind); ~%", basisFun, cdim+vdim, polyOrder),
+  printf(fh, "~%"),
+
+  /* Create expansions of f_hat (upwinded f) on the left and right in the surface basis. */
+  fHatSurf_e : doExpand1(fUpwind, bSurf),
+
+  Ghat_c : calcInnerProdList(surfVars,alphaDrSurf_l_e,bSurf,fHatSurf_e),
+  /* Ghat_c (coefficients of Ghat) is what gets written. From here
+     on we can simply refer to Ghat. */
+  glst1  : makelistNoZeros1(Ghat_c, Ghat),
+  Ghat_e : doExpand(glst1, bSurf),
+  
+  /* Clever factorization is possible for polyOrder = 1, but for higher
+     polynomial orders, factorization is *too* clever and can lead to 
+     deeply nested parentheses, not ideal for compiler optimizations */
+  if (polyOrder = 1) then
+    writeCExprsNoExpand1(Ghat, Ghat_c)
+  else
+    writeCExprs1(Ghat, Ghat_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Increments to the far right edge skin cell (some dimensional factors missing). */
+  incr : calcInnerProdList(surfVars, -1, subst(vv=-1, bP), Ghat_e),
+
+  /* Write out contribution. */
+  writeCIncrExprs1(out, rdv2*incr),
+  printf(fh, "~%"),
+
+  printf(fh, "  } ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  return 0.;~%"),  /* Return CFL frequency in volume kernel. */
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+);
+
+calcGkLBOBoundaryDragUpdateMu(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
+  [varsC,bC,varsP,bP,vSub,NP,NC,vid1,vv,surfVars,nuSum_e,
+   bSurf,alphaDr,fSkin_e,fEdge_e,alphaDrSurf_l_c,alphaDrSurf_r_c,alst_l,alst_r,
+   alphaDrSurf_l_e,alphaDrSurf_r_e,alphaOrd_l_n,alphaOrd_r_n,
+   Ghat_c,glst1,Ghat_e,incr],
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+  NC : length(bC),  NP : length(bP),
+
+  /* Expand velocity mapping fields. */
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  pDim : cdim+vdim,
+  vid1 : vidx1(cdim,vdim),
+  vv   : varsVAll[2],
+  surfVars : delete(vv,varsP),
+
+  printf(fh, "GKYL_CU_DH double ~a(const double *dxv, const double *vmap, const double *vmap_prime_edge, const double *vmap_prime_skin, const double m_, const double *bmag_inv, const double *nuSum, const double *nuPrimMomsSum, const int edge, const double *fEdge, const double *fSkin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // dxv[~a]: cell spacing. ~%", cdim+vdim),
+  printf(fh, "  // vmap: velocity space mapping in skin cell.~%"),
+  printf(fh, "  // vmap_prime_edge,vmap_prime_skin: velocity space mapping derivative in edge and skin cells.~%"),
+  printf(fh, "  // m_: species mass.~%"),
+  printf(fh, "  // bmag_inv: 1/(magnetic field magnitude). ~%"),
+  printf(fh, "  // nuSum: collisionalities added (self and cross species collisionalities). ~%"),
+  printf(fh, "  // nuPrimMomsSum[~a]: sum of bulk velocities and thermal speeds squared times their respective collisionalities. ~%", (1+1)*NC),
+  printf(fh, "  // fEdge,fSkin: Distribution function in edge and skin cells ~%"),
+  printf(fh, "  // out: Incremented distribution function in cell ~%"),
+  printf(fh, "  double rdv2 = 2.0/dxv[~a]; ~%", vid1[dir]),
+  printf(fh, "~%"),
+
+  /* Surface contribution is defined as integral(phi^- Ghat) over the surface. */
+    
+  nuSum_e : doExpand1(nuSum,bC),
+  /* Calculate the alpha-velocity due to drag. */
+  alphaDr : 2.0*nuSum_e*vmap_e[2],
+
+  /* Create expansions of f_edge, f_skin on volume basis. */
+  fEdge_e : doExpand1(fEdge, bP),
+  fSkin_e : doExpand1(fSkin, bP),
+
+  /* Surface basis. Equivalent to basis of one lower
+     dimensionality without surface variable. */
+  if polyOrder = 1 then (  /* Force p=1 to use hybrid basis. */
+    bSurf : basisFromVars("gkhyb",surfVars,polyOrder)
+  ) else (
+    bSurf : basisFromVars(basisFun,surfVars,polyOrder)
+  ),
+
+  /* Project alphaDrag evaluated at interior surface onto surf basis. */
+  alphaDrSurf_l_c : fullratsimp(innerProd(surfVars, 1, bSurf, subst(vv=-1,alphaDr))),
+  alphaDrSurf_r_c : fullratsimp(innerProd(surfVars, 1, bSurf, subst(vv=1,alphaDr))),
+  alst_l          : makelistNoZeros1(alphaDrSurf_l_c, alphaDrSurf),
+  alst_r          : makelistNoZeros1(alphaDrSurf_r_c, alphaDrSurf),
+  alphaDrSurf_l_e : doExpand(alst_l, bSurf),
+  alphaDrSurf_r_e : doExpand(alst_r, bSurf),
+
+  printf(fh, "  double alphaDrSurf[~a] = {0.0}; ~%", length(bSurf)),
+  printf(fh, "  double Ghat[~a] = {0.0}; ~%", length(bSurf)),
+
+  vmap_prime_fac_edge : subst(vmap_prime=vmap_prime_edge, vmap_prime_e[2]),
+  vmap_prime_fac_skin : subst(vmap_prime=vmap_prime_skin, vmap_prime_e[2]),
+
+  /* This contribution comes from the evaluation of the skin cell at 
+     the correct interface (-1 for far left edge, +1 for far right edge). */
+  printf(fh, "~%"),
+  /* if edge == -1, we are doing the left edge boundary and the skin cell needs to be evauluated at +1 */
+  /* In addition we need the drag term evaluated at +1 (so alphaDr evaluated on the right) */
+  printf(fh, "  if (edge == -1) { ~%~%"),
+  /* Write out drag term for far left edge boundary.
+     Need alpha evaluated at +1 for skin-edge interface.
+     NOTE: zero-flux boundary conditions means for far left boundary, no drag term on -1 surface */
+  writeCExprsNoExpand1(alphaDrSurf, alphaDrSurf_r_c),
+  printf(fh, "~%"),
+
+  /* Because -2*nu*mu is negative definite, need right edge value */
+  /* Evaluate surface projection of Ghat = 2*nu*mu_r fEdge to update skin cell. */
+  Ghat_c : calcInnerProdList(surfVars,alphaDrSurf_r_e,bSurf,subst(vv=-1, fEdge_e)/vmap_prime_fac_edge),
+  /* Ghat_c (coefficients of Ghat) is what gets written. From here
+     on we can simply refer to Ghat. */
+  glst1  : makelistNoZeros1(Ghat_c, Ghat),
+  Ghat_e : doExpand(glst1, bSurf),
+  
+  /* Clever factorization is possible for polyOrder = 1, but for higher
+     polynomial orders, factorization is *too* clever and can lead to 
+     deeply nested parentheses, not ideal for compiler optimizations */
+  if (polyOrder = 1) then
+    writeCExprsNoExpand1(Ghat, Ghat_c)
+  else
+    writeCExprs1(Ghat, Ghat_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Increments to the far left skin cell (some dimensional factors missing). */
+  incr : calcInnerProdList(surfVars, 1, subst(vv=1, bP), Ghat_e),
+  
+  /* Write out contribution */
+  writeCIncrExprs1(out, rdv2*incr),
+
+  /* otherwise edge == +1, we are doing the right edge boundary and the skin cell needs to be evauluated at -1 */
+  printf(fh, "~%  } else { ~%~%"),
+  /* Write out drag term for far right edge boundary.
+     Need alpha evaluated at -1 for skin-edge interface.
+     NOTE: zero-flux boundary conditions means for far right boundary, no drag term on +1 surface */
+  writeCExprsNoExpand1(alphaDrSurf, alphaDrSurf_l_c),
+  printf(fh, "~%"),
+
+  /* Because -2*nu*mu is negative definite, need right edge value */
+  /* Evaluate surface projection of Ghat = 2*nu*mu_l fSkin to update skin cell. */
+  Ghat_c : calcInnerProdList(surfVars,alphaDrSurf_l_e,bSurf,subst(vv=-1, fSkin_e)/vmap_prime_fac_skin),
+  /* Ghat_c (coefficients of Ghat) is what gets written. From here
+     on we can simply refer to Ghat. */
+  glst1  : makelistNoZeros1(Ghat_c, Ghat),
+  Ghat_e : doExpand(glst1, bSurf),
+  
+  /* Clever factorization is possible for polyOrder = 1, but for higher
+     polynomial orders, factorization is *too* clever and can lead to 
+     deeply nested parentheses, not ideal for compiler optimizations */
+  if (polyOrder = 1) then
+    writeCExprsNoExpand1(Ghat, Ghat_c)
+  else
+    writeCExprs1(Ghat, Ghat_c),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Increments to the far right edge skin cell (some dimensional factors missing). */
+  incr : calcInnerProdList(surfVars, -1, subst(vv=-1, bP), Ghat_e),
+
+  /* Write out contribution. */
+  writeCIncrExprs1(out, rdv2*incr),
+  printf(fh, "~%"),
+
+  printf(fh, "  } ~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  return 0.;~%"),  /* Return CFL frequency in volume kernel. */
+  printf(fh, "~%"),
+
+  printf(fh, "} ~%")
+);

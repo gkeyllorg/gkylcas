@@ -1,0 +1,252 @@
+/* Maxima function used to generate kernel which shifts the distribution
+   function to make it positive at certain "check" nodes. */
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load(stringproc)$
+fpprec : 24$
+
+genPosShiftVlasovConfPosCheckKernel(fh, funcName, cdim, basisType, polyOrder, nodeType) := block(
+  [varsC,bC,numC,fld_c,fld_e,nodes,numNodes,fld_n,i],
+
+  printf(fh, "GKYL_CU_DH bool ~a(const double *fld) ~%{ ~%", funcName),
+  printf(fh, "  // fld: conf-space field.~%"),
+  printf(fh, "~%"),
+
+  kill(varsC,varsP,bC,bP),
+
+  [varsC,bC] : loadBasis(basisType, cdim, polyOrder),
+  numC : length(bC),
+
+  printf(fh, "  bool is_positive = true;~%"),
+  printf(fh, "~%"),
+
+  /* Copy -f into Deltaf. We'll later add the new f to obtain the change in f. */
+  fld_c : makelist(fld[k-1],k,1,numC),
+  fld_e : doExpand(fld_c, bC),
+ 
+  if nodeType = "positivity" then (
+    /* Construct a set of nodes that are PCPs + 0 in vpar, and PCPs in other
+       dimensions. */ 
+    nodes : (1/3) * getNodes(basisType, cdim, polyOrder)
+  ) elseif nodeType = "gauss_legendre" then (
+    nodes : gaussOrd(polyOrder+1, cdim)
+  ) elseif nodeType = "gauss_lobatto" then (
+    nodes : getNodes(basisType, cdim, polyOrder)
+  ),
+  numNodes : length(nodes),
+
+  /* Evaluate f at check nodes. */
+  fld_n : evAtNodes(fld_e, nodes, varsC),
+
+  /* Loop over the nodes, and if f at that node is <0, set it to the minimum f. */
+  for i : 1 thru numNodes do (
+    printf(fh, "  if (~a < 0.) is_positive = false;~%", float(expand(fld_n[i])))
+  ),
+  printf(fh, "~%"),
+
+  printf(fh, "  return is_positive;~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "}~%")
+)$
+
+genPosShiftVlasovPhaseShiftKernel(fh, funcName, cdim, vdim, basisType, polyOrder, nodeType) := block(
+  [pdim,use_hybrid_basis,varsC,bC,varsP,bP,vSub,numC,numP,varsV,f_c,f_e,nodes,cvars,vvars,numNodes,f_n,i,nodToMod,fnew_c],
+
+  printf(fh, "GKYL_CU_DH bool ~a(double ffloor, double *distf) ~%{ ~%", funcName),
+  printf(fh, "  // ffloor: Distribution function floor to shift to when f<0.~%"),
+  printf(fh, "  // distf: distribution function.~%"),
+  printf(fh, "~%"),
+
+  kill(varsC,varsP,bC,bP),
+  pdim : cdim+vdim,
+
+  use_hybrid_basis : false,
+  if polyOrder = 1 and (basisType = "Ser" or basisType = "ser") then (  /* Force p=1 to use hybrid basis. */
+    use_hybrid_basis : true
+  ),
+
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisType, cdim, vdim, polyOrder),
+  numC : length(bC),  numP : length(bP),
+  varsV : makelist(varsP[i+cdim],i,1,vdim),
+
+  if nodeType = "positivity" then (
+    /* Construct a set of nodes that are positivity control points (PCPs)+ 0 in vpar,
+       and PCPs in other dimensions. */ 
+    if use_hybrid_basis then (  /* Force p=1 to use hybrid basis. */
+      nodes : (1/3) * getNodesHyb(cdim, vdim)
+    ) else (
+      nodes : (1/3) * getNodes(basisType, cdim, vdim)
+    )
+  ) elseif nodeType = "gauss_legendre" then (
+    if use_hybrid_basis then (  /* Force p=1 to use hybrid basis. */
+      cvars : makelist(varsP[i],i,1,cdim),
+      vvars : makelist(varsP[cdim+i],i,1,vdim),
+      nodes : gaussOrdHyb(polyOrder+1, cdim, vdim)
+    ) else (
+      nodes : gaussOrd(polyOrder+1, pdim)
+    )
+  ) elseif nodeType = "gauss_lobatto" then (
+    if use_hybrid_basis then (  /* Force p=1 to use hybrid basis. */
+      nodes : getNodesHyb(cdim, vdim)
+    ) else (
+      nodes : getNodes(basisType, cdim, vdim)
+    )
+  ),
+  numNodes : length(nodes),
+
+  printf(fh, "  bool shifted = false;~%"),
+  printf(fh, "~%"),
+
+  f_c : makelist(distf[k-1],k,1,numP),
+  f_e : doExpand(f_c, bP),
+ 
+  /* Evaluate f at check nodess. */
+  f_n : evAtNodes(f_e, nodes, varsP),
+  printf(fh, "  double fnod[~a];~%",numNodes),
+  writeCExprs1(fnod, f_n),
+  printf(fh, "~%"),
+
+  /* Loop over the nodes, and if f at that node is <0, set it to the minimum f. */
+  printf(fh, "  // If f < 0. at check nodes, set it to ffloor.~%"),
+  for i : 1 thru numNodes do (
+    printf(fh, "  if (fnod[~a] < 0.) {~%", i-1),
+    printf(fh, "    fnod[~a] = ffloor;~%", i-1),
+    printf(fh, "    shifted = true;~%"),
+    printf(fh, "  }~%")
+  ),
+  printf(fh, "~%"),
+
+  f_n : makelist(fnod[i-1],i,1,numNodes),
+  if use_hybrid_basis then (
+    nodToMod : calcNodToModWithNodesHyb("gkhyb", cdim, vdim, nodes)
+  ) else (
+    nodToMod : calcNodToModWithNodes(basisType, pdim, polyOrder, nodes)
+  ),
+
+  fnew_c : nodToMod . f_n,
+  fnew_c : makelist(fullratsimp(fnew_c[i][1]),i,1,numP),
+
+  printf(fh, "  if (shifted) {~%", i-1),
+  writeCExprs1(distf, fnew_c),
+  printf(fh, "  }~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  return shifted;~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "}~%")
+
+)$
+
+genPosShiftVlasovPhaseMRSKernel(fh, funcName, cdim, vdim, basisType, polyOrder, nodeType) := block(
+  [pdim,varsC,bC,varsP,bP,vSub,numC,numP,varsV,f_c,f_e,nodes,cvars,vvars,numNodes,f_n,i,nodToMod,fnew_c],
+
+  printf(fh, "GKYL_CU_DH bool ~a(double ffloor, double *distf) ~%{ ~%", funcName),
+  printf(fh, "  // ffloor: Distribution function floor to shift to when f<0.~%"),
+  printf(fh, "  // distf: distribution function.~%"),
+  printf(fh, "~%"),
+
+  kill(varsC,varsP,bC,bP),
+  pdim : cdim+vdim,
+
+  use_hybrid_basis : false,
+  if polyOrder = 1 and (basisType = "Ser" or basisType = "ser") then (  /* Force p=1 to use hybrid basis. */
+    use_hybrid_basis : true
+  ),
+
+  [varsC,bC,varsP,bP] : loadPhaseBasis(basisType, cdim, vdim, polyOrder),
+  numC : length(bC),  numP : length(bP),
+  varsV : makelist(varsP[i+cdim],i,1,vdim),
+
+  if nodeType = "positivity" then (
+    /* Construct a set of nodes that are positivity control points (PCPs)+ 0 in vpar,
+       and PCPs in other dimensions. */ 
+    if use_hybrid_basis then (
+      nodes : (1/3) * getNodesHyb(cdim, vdim)
+    ) else (
+      nodes : (1/3) * getNodes(basisType, cdim, vdim)
+    )
+  ) elseif nodeType = "gauss_legendre" then (
+    if use_hybrid_basis then (
+      cvars : makelist(varsP[i],i,1,cdim),
+      vvars : makelist(varsP[cdim+i],i,1,vdim),
+      nodes : gaussOrdHyb(polyOrder+1, cvars, vvars)
+    ) else (
+      nodes : gaussOrd(polyOrder+1, pdim)
+    )
+  ) elseif nodeType = "gauss_lobatto" then (
+    if use_hybrid_basis then (
+      nodes : getNodesHyb(cdim, vdim)
+    ) else (
+      nodes : getNodes(basisType, cdim, vdim)
+    )
+  ),
+  numNodes : length(nodes),
+
+  f_c : makelist(distf[k-1],k,1,numP),
+  f_e : doExpand(f_c, bP),
+ 
+  /* Evaluate f at check nodess. */
+  f_n : evAtNodes(f_e, nodes, varsP),
+  printf(fh, "  double fnod[~a];~%",numNodes),
+  writeCExprs1(fnod, f_n),
+  printf(fh, "~%"),
+
+  printf(fh, "  bool shifted_node = false;~%"),
+  printf(fh, "~%"),
+  /* If the cell-average is positive, apply a Moe–Rossmanith–Seal limiter. */
+  printf(fh, "  if (distf[0] > 0.) {~%"),
+  printf(fh, "    // Apply Moe–Rossmanith–Seal limiter.~%"),
+  printf(fh, "    double fnod_min = DBL_MAX;~%",numNodes),
+  for i : 1 thru numNodes do (
+    printf(fh, "    fnod_min = fmin(fnod_min, fnod[~a]);~%",i-1)
+  ),
+  printf(fh, "~%"),
+
+  printf(fh, "    if (fnod_min < 0.0) {~%"),
+  printf(fh, "      double f_cellav = distf[0]/~a;~%",float(sqrt(2.0)^pdim)),
+  printf(fh, "      double denom = f_cellav - fnod_min;~%",float(sqrt(2.0)^pdim)),
+  printf(fh, "      double theta = denom > 1.0e-12*f_cellav? fmin(1.0, f_cellav/denom) : 1.0;~%"),
+  printf(fh, "~%"),
+
+  fnew_c : calcInnerProdList(varsP,1,bP,f_cellav + theta*(f_e - f_cellav)),
+  writeCExprs1(distf, fnew_c),
+  printf(fh, "~%"),
+
+  printf(fh, "      shifted_node = true;~%"),
+  printf(fh, "    }~%"),
+  printf(fh, "  }~%~%"),
+
+  printf(fh, "  else {~%~%"),
+
+  /* Loop over the nodes, and if f at that node is <0, set it to the minimum f. */
+  printf(fh, "    // If f < 0. at check nodes, set it to ffloor.~%"),
+  for i : 1 thru numNodes do (
+    printf(fh, "    if (fnod[~a] < 0.) fnod[~a] = ffloor;~%", i-1, i-1)
+  ),
+  printf(fh, "~%"),
+
+  f_n : makelist(fnod[i-1],i,1,numNodes),
+  if use_hybrid_basis then (
+    nodToMod : calcNodToModWithNodesHyb("hyb", cdim, vdim, nodes)
+  ) else (
+    nodToMod : calcNodToModWithNodes(basisType, pdim, polyOrder, nodes)
+  ),
+
+  fnew_c : nodToMod . f_n,
+  fnew_c : makelist(fullratsimp(fnew_c[i][1]),i,1,numP),
+
+  writeCExprs1(distf, fnew_c),
+  printf(fh, "~%"),
+
+  printf(fh, "    shifted_node = true;~%"),
+  printf(fh, "  }~%~%"),
+
+  printf(fh, "  return shifted_node;~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "}~%")
+
+)$

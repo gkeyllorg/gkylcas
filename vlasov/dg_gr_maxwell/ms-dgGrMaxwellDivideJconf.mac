@@ -1,0 +1,60 @@
+load("vlasov/dg_gr_maxwell/dgGrMaxwellDivideJconfFuncs.mac")$
+load(stringproc)$
+/* This script calls the function which divides out the configuration-space
+   Jacobian at nodes from Jfields and converts the resulting nodal 
+   expansion back to a modal expansion. 
+
+   Also creates a function for rescaling an input fields *without* the Jacobian
+   into Jfields from multiplying fields at nodes by the configuration-space Jacobian at
+   nodes and converting back to the modal expansion. The latter function
+   is used at restarts since we write out fields, not Jfields. 
+
+   Essentially this converts between the varaibles:
+   Q = [JD^x, JD^y, JD^z, JB^x, JB^y, JB^z, Jphi, Jpsi]
+   and 
+   Q_no_J = [D^x, D^y, D^z, B^x, B^y, B^z, phi, psi]
+*/
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 3$
+
+/* ...... END OF USER INPUTS........ */
+
+cvars : [x, y, z]$
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for polyOrder : minPolyOrder[bInd] thru maxPolyOrder[bInd] do (
+      disp(printf(false,sconcat("Creating Jfields/J  ",bName[bInd]," ~axP~a"),c,polyOrder)),
+      fname : sconcat("~/max-out/dg_gr_maxwell_divide_Jc_", c, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("dg_gr_maxwell_divide_Jc_", c, "x_", bName[bInd], "_p", polyOrder),
+      divideJconf(fh, funcName, c, bName[bInd], polyOrder),
+      close(fh),
+
+      disp(printf(false,sconcat("Creating J*fields  ",bName[bInd]," ~axP~a"),c,polyOrder)),
+      fname : sconcat("~/max-out/dg_gr_maxwell_rescale_Jc_", c, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("dg_gr_maxwell_rescale_Jc_", c, "x_", bName[bInd], "_p", polyOrder),
+      rescaleJconf(fh, funcName, c, bName[bInd], polyOrder),
+      close(fh)                      
+    )
+  )
+);

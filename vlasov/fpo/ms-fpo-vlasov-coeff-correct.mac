@@ -1,0 +1,60 @@
+/* Generate kernels to set the matrices for the linear system
+  of conservation correction equations and accumulate onto drag/diffusion coefficients. */
+
+load("vlasov/fpo/funcs-fpo-vlasov-coeff-correct.mac")$
+load(stringproc)$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 2$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 0$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1, 
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+
+      /* Kernels to set matrices for linear solve */
+      fname : sconcat("~/max-out/mom_fpo_vlasov_coeff_correct_mat_", 
+        d, "x3v_", bName[bInd], "_p", polyOrder, ".c"),
+      disp("Creating ", fname),
+      fh : openw(fname),
+      funcName : sconcat("mom_fpo_vlasov_coeff_correct_mat_", d, "x3v_",
+        bName[bInd], "_p", polyOrder),
+      printf(fh, "#include <gkyl_mom_fpo_vlasov_kernels.h> ~%"),
+      setFpoConservationMatrices(fh, funcName, d, bName[bInd], polyOrder),
+
+      /* Kernels to accumulate corrections onto drag and diffusion coeffs */
+      fname : sconcat("~/max-out/mom_fpo_vlasov_coeff_correct_accum_", 
+        d, "x3v_", bName[bInd], "_p", polyOrder, ".c"),
+      disp("Creating ", fname),
+      fh : openw(fname),
+      funcName : sconcat("mom_fpo_vlasov_coeff_correct_accum_", d, "x3v_",
+        bName[bInd], "_p", polyOrder),
+      printf(fh, "#include <gkyl_mom_fpo_vlasov_kernels.h> ~%"),
+      accumulateFpoConservationCorrs(fh, funcName, d, bName[bInd], polyOrder)
+
+    )
+  )
+)$
