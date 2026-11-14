@@ -23,7 +23,6 @@ for c : 1 thru 3 do (
   printf(fh, "~avoid pkpm_dist_transverse_~ax1v_ser_p1(const double *bvar, double* GKYL_RESTRICT f); ~%", deco, c),
   printf(fh, "~avoid pkpm_harm_exp_to_nodes_~ax1v_ser_p1(const double *f, double* GKYL_RESTRICT fn); ~%", deco, c),
   printf(fh, "~avoid pkpm_harm_exp_to_modal_~ax1v_ser_p1(const double *fn, double* GKYL_RESTRICT f); ~%", deco, c),
-  printf(fh, "~avoid pkpm_harm_exp_conf_nodes_~ax_ser_p1(const double *em, double* GKYL_RESTRICT Bn); ~%", deco, c),
   printf(fh, "~avoid pkpm_harm_exp_fg_to_nodes_~ax1v_ser_p1(const double *f, double* GKYL_RESTRICT fgn); ~%", deco, c),
   printf(fh, "~avoid pkpm_harm_exp_wint_~ax1v_ser_p1(const double *f, double* GKYL_RESTRICT wi); ~%", deco, c),
   for d : 1 thru c do (

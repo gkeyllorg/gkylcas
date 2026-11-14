@@ -102,7 +102,7 @@ calcPKPMHarmBuild(fh, funcNm, cdim) := block(
   printf(fh, "  // em:        Electromagnetic field (B for the gyration). ~%"),
   printf(fh, "  // ho:        Output stored operator (gkyl_pkpm_harm_ops.h): ~a entries of ~a modes, exact ~%", nop, n2),
   printf(fh, "  //            projections by ~a-point Gauss-Legendre quadrature per direction (coefficient degree <= ~a). ~%", NQ, D),
-  printf(fh, "  // wn:        Output raw w-flux values at the ~a w-face nodes [node][PKPM_HS_W_END] (node i0 + ~a i1 + ~a i2). ~%", NN, NQ, NQ^2),
+  printf(fh, "  // wn:        Output raw w-flux values at the ~a w-face nodes [node][PKPM_HS_W_END] (row-major nodes). ~%", NN),
   /* field sources: [symbol, pointer expression, scale] */
   fnm : lambda([sym], sconcat(sym, "_n")),
   block([srcs, a, c],

@@ -1,6 +1,7 @@
 /* pkpm-nodal.mac -------------------------------------------------------------------
    Shared emitters of the nodal steps of the PKPM kernels, on tensor Gauss-Legendre nodes with N
-   points per configuration direction, node i0 + N i1 + N^2 i2 (direction 0 fastest):
+   points per configuration direction in row-major order (the last direction fastest, the order
+   of gkyl_range and of the ordinates of gaussOrd): node i2 + N i1 + N^2 i0 in 3x.
    - pkpmEmitP1Nodes: a p=1 configuration field (gkyl basis coefficients) at the nodes;
    - pkpmEmitNodeProj: node values to modes by 1D weight tables, mode k0 + M k1 + M^2 k2;
    both direction by direction (sum factorization), as static inline helpers. */
@@ -8,15 +9,16 @@
 load("core/modal-basis.mac")$
 load(stringproc)$
 
-/* Digits (direction 0 first) of a flat index in the mixed radix rad, and back. */
+/* Digits (direction 0 first) of a row-major flat index (the last direction fastest) in the mixed
+   radix rad, and back. */
 pkpmNodalDigits(idx, rad) := block([r, dig, m],
-  r : idx, dig : [],
-  for m : 1 thru length(rad) do (dig : endcons(mod(r, rad[m]), dig), r : floor(r/rad[m])),
+  r : idx, dig : makelist(0, m, 1, length(rad)),
+  for m : length(rad) thru 1 step -1 do (dig[m] : mod(r, rad[m]), r : floor(r/rad[m])),
   dig
 )$
 pkpmNodalFlat(dig, rad) := block([r, m],
   r : 0,
-  for m : length(rad) thru 1 step -1 do r : r*rad[m] + dig[m],
+  for m : 1 thru length(rad) do r : r*rad[m] + dig[m],
   r
 )$
 
@@ -36,8 +38,8 @@ pkpmP1PatternIndex(pkC, pkbC) := block([cdim, sOf, q, pat, d],
 pkpmEmitP1Nodes(fh, fname, cdim, sOf, x1) := block([NQ, NN, P1, d, radS, radD, dst, cnt, idx, dig, expr, sd, sdig, fsrc],
   NQ : length(x1), NN : NQ^cdim,
   P1 : lambda([s, x], if s = 0 then 1/sqrt(2) else sqrt(3/2)*x),
-  printf(fh, "// The p=1 field f (gkyl basis) at the ~a Gauss-Legendre nodes (~a per direction, direction 0 ~%", NN, NQ),
-  printf(fh, "// fastest), direction by direction. ~%"),
+  printf(fh, "// The p=1 field f (gkyl basis) at the ~a Gauss-Legendre nodes (~a per direction, row-major: the ~%", NN, NQ),
+  printf(fh, "// last direction fastest), direction by direction. ~%"),
   printf(fh, "GKYL_CU_DH static inline void ~a(const double *f, double* GKYL_RESTRICT fn) ~%{ ~%", fname),
   for d : 0 thru cdim - 1 do (
     radS : makelist(if m < d then NQ else 2, m, 0, cdim-1),
@@ -79,7 +81,11 @@ pkpmEmitNodeProj(fh, fname, cdim, NQ, W, omap) := block([M, d, radS, radD, src, 
         sdig : copylist(dig), sdig[d+1] : sd,
         expr : expr + float(W[dig[d+1] + 1][sd + 1])*arraymake(eval_string(src), [pkpmNodalFlat(sdig, radS)])
       ),
-      outIdx : if d = cdim - 1 and omap # [] then omap[idx + 1] else idx,
+      /* the modes keep the index k0 + M k1 + M^2 k2 */
+      outIdx : if d = cdim - 1 then block([pat],
+          pat : sum(dig[m]*M^(m-1), m, 1, cdim),
+          if omap # [] then omap[pat + 1] else pat)
+        else idx,
       printf(fh, "  ~a[~a] = ~a; ~%", dst, outIdx, expr)
     )
   ),

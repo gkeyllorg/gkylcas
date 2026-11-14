@@ -91,7 +91,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   [nodes, weights] : gaussOrdWeight(2, cdim),
   NN : length(nodes),
   nlin : makelist(length(listofvars(pkbC[k])), k, 1, NC),
-  /* the w-face nodes, direction 0 fastest (those of the build and of the interior w faces) */
+  /* the w-face nodes, row-major (those of the build and of the interior w faces) */
   pidx : pkpmPhaseIndex(pkC, pkbC, vv, pkbV, pkbP),
   sOf : pkpmP1PatternIndex(pkC, pkbC),
   xw : gaussOrdWeight1D(pkpmVelFluxNumPts), x1 : float(xw[1]), w1 : float(xw[2]),

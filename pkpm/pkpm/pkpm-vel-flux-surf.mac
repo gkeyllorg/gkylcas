@@ -1,8 +1,8 @@
 /* pkpm-vel-flux-surf.mac --------------------------------------------------------
    v_par surface flux of the PKPM kinetic equations (velocity-space pass, stage B), on the eight
    blocks U = [F, G, M0_perp (x, y, z), N_perp (x, y, z)], at the tensor Gauss-Legendre nodes with
-   pkpmVelFluxNumPts points per configuration direction (node i0 + N i1 + N^2 i2, direction 0
-   fastest; the nodes of the build of the stored operator, pkpm-harm-build.mac).
+   pkpmVelFluxNumPts points per configuration direction (row-major, the last direction fastest;
+   the nodes of the build of the stored operator, pkpm-harm-build.mac).
 
    pkpm_vel_flux_nodes_<c>x_ser_p1(wn, theta, bvar, alpha_0, c_h, nv)
      Once per configuration cell: the node values nv[node][PKPM_HS_NODE_NV] of the w flux: the RAW

@@ -14,7 +14,7 @@ fhh : openw("~/max-out/gkyl_dg_conf_nodal_kernels.h")$
 printf(fhh, "#pragma once ~%~%")$
 printf(fhh, "// Generated (gkylcas/vlasov/conf_nodal/conf-nodal.mac): conversions between modal expansions and ~%")$
 printf(fhh, "// the configuration-nodal, velocity-modal form. The nodes are the 2^cdim interior Gauss-Legendre ~%")$
-printf(fhh, "// points of a p=1 configuration-space cell, node q having bit d set when x_d > 0. ~%")$
+printf(fhh, "// points of a p=1 configuration-space cell in row-major order (the last direction fastest). ~%")$
 printf(fhh, "#include <gkyl_util.h> ~%~%")$
 printf(fhh, "EXTERN_C_BEG ~%~%")$
 
