@@ -27,11 +27,6 @@ for c : 1 thru 3 do (
   printf(fh, "~avoid pkpm_harm_exp_fg_to_nodes_~ax1v_ser_p1(const double *f, double* GKYL_RESTRICT fgn); ~%", deco, c),
   printf(fh, "~avoid pkpm_harm_exp_wint_~ax1v_ser_p1(const double *f, double* GKYL_RESTRICT wi); ~%", deco, c),
   for d : 1 thru c do (
-    printf(fh, "~adouble pkpm_conf_flux_~a_~ax1v_ser_p1(const double *w, const double *dxv,
-  const double *jacob_pos_l, const double *jacob_pos_r, const double *b_l, const double *b_r,
-  const double *u_l, const double *u_r, const double *xi_l, const double *xi_r,
-  const double *theta_l, const double *theta_r, const double *f_l, const double *f_r,
-  double* GKYL_RESTRICT flux); ~%", deco, cvars[d], c),
     printf(fh, "~adouble pkpm_stream_surf~a_~ax1v_ser_p1(const double *w, const double *dxv,
   const double *flux_l, const double *flux_r, double* GKYL_RESTRICT out); ~%", deco, cvars[d], c)
   ),

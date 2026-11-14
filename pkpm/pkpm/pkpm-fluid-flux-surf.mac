@@ -1,15 +1,15 @@
 /* pkpm-fluid-flux-surf.mac ------------------------------------------------------
    Surface machinery of the fluid system [rho, M, E] of the factored, energy-constrained
-   (p=1) PKPM solver: the face basis and nodes (pkpmFluidSurf), the face-trace emitter
-   (pkpmWriteFaceEvals) and the hyper_dg surface kernel scattering stored face fluxes,
+   (p=1) PKPM solver: the face basis and nodes (pkpmFluidSurf) and the hyper_dg surface kernel
+   scattering stored face fluxes,
 
    pkpm_fluid_surf<dir>_<c>x_ser_p1(w, dxv, flux_l, flux_r, out)
      Scatter the stored fluxes of the lower (flux_l) and upper (flux_r) faces into the
      increment of [rho, M, E]; the stored layout per face is [F_rho, F_x, F_y, F_z, F_E]
      (NSurf each).
 
-   The face fluxes themselves are the moments of the kinetic flux
-   (pkpm-fluid-flux-kinetic.mac). */
+   The face fluxes themselves are the moments of the kinetic flux, computed by
+   gkyl_dg_pkpm_remap_flux_surf (pkpm-remap-flux.mac). */
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 load("core/nodal_operations/quadrature_functions.mac")$
@@ -29,15 +29,6 @@ pkpmFluidSurf(cdim, surfVars) := block([bSurf, ow],
     bSurf : basisFromVars("ser", surfVars, 1),
     ow : gaussOrdWeight(pkpmConfFluxNumPts, cdim-1),
     [bSurf, gaussOrd(pkpmConfFluxNumPts, cdim-1), ow[2]]
-  )
-)$
-
-/* Emit `  name[i] = <modal expansion evaluated at cv = edge, node i>;`. */
-pkpmWriteFaceEvals(fh, name, coeffName, bC, cv, edge, surfVars, nodes) := block([e, i, sub],
-  e : doExpand1(coeffName, bC),
-  for i : 1 thru length(nodes) do (
-    sub : if cdimGlobal > 1 then makelist(surfVars[d] = nodes[i][d], d, 1, length(surfVars)) else [],
-    printf(fh, "  ~a[~a] = ~a; ~%", name, i-1, float(expand(subst(cv = edge, subst(sub, e)))))
   )
 )$
 

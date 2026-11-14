@@ -1,6 +1,6 @@
 /* pkpm-flux-tables.mac ---------------------------------------------------------
-   Nodal surface-evaluation tables for the PKPM surface-flux kernels, written
-   with the generators of vlasov/vlasov/surf-eval-tables.mac for the
+   Nodal surface-evaluation tables for the PKPM kernels that scatter stored face
+   fluxes, written with the generators of vlasov/vlasov/surf-eval-tables.mac for the
    p=1 PKPM phase basis (p=1 configuration space tensored with p=2 in v_par;
    the "tenhyb" loader, identical in function set and ordering to the "hyb"
    basis of gkyl_cart_modal_hybrid for one velocity dimension, which the
@@ -17,12 +17,10 @@
    face is upwind. One header per configuration dimension,
    gkyl_pkpm_flux_surf_tables_<c>x1v_p1.h, with the tag pkpm_<c>x1v_p1:
 
-     vst_<tag>_ph_x<d>  / vst_<tag>_prj_x<d>   configuration face d (producer /
-                                              consumer-projection tables)
-     vst_<tag>_prj_v0                         v_par face (consumer projection)
+     vst_<tag>_prj_x<d>   configuration face d (consumer projection)
+     vst_<tag>_prj_v0     v_par face (consumer projection)
 
-   plus the gkyl_vlasov_surf_meta / gkyl_vlasov_prj_meta instances the
-   Vlasov-style launchers read. Flat node layout: n = i*NI + j with the
+   plus the gkyl_vlasov_prj_meta instances the Vlasov-style launchers read. Flat node layout: n = i*NI + j with the
    outer (transverse configuration) node i slowest and the inner node j
    fastest (gaussOrd ordering). */
 load("vlasov/vlasov/vlasov-basis.mac")$
@@ -59,33 +57,26 @@ loadPKPMPhaseBasis(cdim) := block([lt, pk, lh],
 /* The basis loaders assign the dynamically scoped names varsC/bC/varsV/bV/varsP/bP,
    so every generator keeps private copies (pkC, pkV, ...) of what it needs. */
 writePKPMFluxTabHeader(fh, cdim) := block(
-  [tag, pkC, pkV, pkP, pkbP, d, cv, surfCVars, nodes_crem, nodes_vvol, sz, szp, vv, lb],
+  [tag, pkC, pkV, pkP, pkbP, d, cv, surfCVars, szp, vv, lb],
   tag : pkpmFluxTag(cdim),
   lb : loadPKPMPhaseBasis(cdim),
   pkC : copylist(lb[1]), pkV : copylist(lb[3]), pkP : copylist(lb[5]), pkbP : copylist(lb[6]),
   vv : pkV[1],
 
   printf(fh, "#pragma once ~%"),
-  printf(fh, "// Generated nodal surface-evaluation tables of the PKPM surface-flux kernels ~%"),
+  printf(fh, "// Generated nodal surface-evaluation tables of the PKPM flux-scatter kernels ~%"),
   printf(fh, "// (see gkylcas/pkpm/pkpm/pkpm-flux-tables.mac): five Gauss-Legendre points per ~%"),
   printf(fh, "// transverse configuration direction and three in v_par on configuration faces, five ~%"),
   printf(fh, "// per configuration direction on the v_par face. Header-static so both host and device ~%"),
   printf(fh, "// instantiations of GKYL_CU_DH kernels can read them; unused arrays are ~%"),
   printf(fh, "// elided per TU. ~%"),
   printf(fh, "#include <gkyl_util.h> ~%"),
-  printf(fh, "#include <gkyl_vlasov_flux_surf_mod2nod_meta.h> ~%"),
   printf(fh, "#include <gkyl_vlasov_surf_nod2mod_meta.h> ~%"),
 
   /* Configuration faces: outer = transverse configuration nodes, inner = v_par nodes. */
-  nodes_vvol : gaussOrd(pkpmConfFluxNumWPts, 1),
   for d : 1 thru cdim do (
     cv : pkC[d],
     surfCVars : delete(cv, pkC),
-    nodes_crem : if cdim > 1 then gaussOrd(pkpmConfFluxNumPts, cdim-1) else [1],
-    sz : writePhaseFactorTables(fh, sconcat("vst_", tag, "_ph_x", d-1), pkbP,
-      surfCVars, cv, pkV, nodes_crem, nodes_vvol, false, false, false),
-    printf(fh, "GKYL_CU_TABLE __attribute__((unused)) static const struct gkyl_vlasov_surf_meta vst_~a_ph_x~a_meta = { .nb = ~a, .na = ~a, .nmv = ~a, .no = ~a, .ni = ~a, .ns = ~a, .fhat_off = ~a }; ~%",
-      tag, d-1, length(pkbP), sz[1], sz[2], length(nodes_crem), length(nodes_vvol), 0, 0),
     szp : writeConsumerProjTables(fh, sconcat("vst_", tag, "_prj_x", d-1), pkbP,
       basisFromVars("tenhyb", delete(cv, pkP), 1),
       surfCVars, cv, pkV, pkpmConfFluxNumPts, pkpmConfFluxNumWPts),
