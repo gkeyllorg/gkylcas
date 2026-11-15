@@ -1,6 +1,6 @@
 /* pkpm-harm-exp.mac ------------------------------------------------------------
    Nodal transforms of the exponential Runge-Kutta update of the first-harmonic blocks of the
-   normalized p=1 PKPM distributions [F, G, M0_perp (x, y, z), N_perp (x, y, z)] (plan 17.6, 17.7):
+   normalized p=1 PKPM distributions [F, G, M0_perp (x, y, z), N_perp (x, y, z)]:
    the linear part L = (q/m) (.) x B_n - nu I_perp, frozen at the start of the step, is applied
    node by node at the tensor Gauss-Legendre nodes of the phase cell, 2 per configuration direction
    (where b and the p=1 products are exact) times 3 in w. The phase basis is the p=1 configuration

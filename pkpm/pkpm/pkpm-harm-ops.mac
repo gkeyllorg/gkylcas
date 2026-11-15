@@ -6,7 +6,7 @@
    w flux Phi_oi are polynomials sum_j w^j c_j(x), and each c_j is one ENTRY [o, i, kind, j]
    (kind 0 source, 1 w flux) of the stored operator: its projection onto the tensor Legendre
    modes of degree <= 2 per configuration direction (pkpmP2Basis, 3^cdim modes), exact for every
-   volume and w-face Galerkin integral (plan 17.15). Terms (plan 17.11, H = 4 theta G -
+   volume and w-face Galerkin integral. Terms (H = 4 theta G -
    2 theta^2 F, O = 6 theta N - 6 theta^2 M0, beta = xi div b):
      w flux:  every block: alpha_k = -K w - (b.grad xi) w^2;
               F <- beta G + t.M0, G <- beta H + t.N, M0 <- G t + R_B1 N, N <- H t + R_B1 O

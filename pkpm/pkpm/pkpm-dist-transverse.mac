@@ -9,7 +9,7 @@
    and the projected nodal values are interpolated back to the modal basis (exact: the phase basis
    is the p=1 configuration basis times the p=2 Legendre basis in w, and the 2-point rule
    integrates the p=1 products exactly). F and G are not touched. Applied to the state of every
-   stage (plan section 17.11).
+   stage.
 
    pkpm_dist_transverse_<c>x1v_ser_p1(bvar, f): bvar the field direction of the cell, f the eight
    blocks of the cell, projected in place. */

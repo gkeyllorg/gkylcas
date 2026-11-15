@@ -26,8 +26,7 @@ let(dvpar^2, dvpar_sq)$
    int w M0_perp dw (3), int w^2 M0_perp dw (3), int N_perp dw (3)] (mass-weighted; with mass 1
    and the normalized distributions [F, G, M0_perp, N_perp] of the factored update these are
    [M0, M2, M0_G, M1, M3, M1_G, mu, m1, m2, n0]: mu = int M0_perp dw the first-harmonic constraint
-   moment, m1 the parallel-perpendicular stress, m2/2 + n0 the perpendicular heat flux, plan
-   17.14). */
+   moment, m1 the parallel-perpendicular stress, m2/2 + n0 the perpendicular heat flux). */
 calcPKPMUpdateMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block(
   [varsC,bC,varsP,bP,NP,NC,fl,vTrans,rho,ppar,pperp,PKPM_moments,clst,k,blk],
   [varsC,bC,varsP,bP] : loadPhaseBasis(if polyOrder=1 then "hyb" else basisFun, cdim, vdim, polyOrder),

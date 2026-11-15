@@ -57,7 +57,7 @@
    Policy: if M0(F) <= 0 or the determinant is not positive at any node, all closures and the edge
    fluxes are zero in the cell and the kernel returns the number of such nodes.
 
-   Time step (plan 17.27): every velocity-space rate is a polynomial in w of degree <= 2, so with
+   Time step: every velocity-space rate is a polynomial in w of degree <= 2, so with
    absolute coefficients evaluated at W = max(|w_lo|, |w_up|) it bounds every w of the column.
    cfl[0] receives that column rate of the w fluxes and the closure sources:
    (2 p_v + 1)/2 dv1 max over the w-face nodes of |alpha_0| + |c - K| W + |b.grad xi| W^2 + (the
@@ -109,7 +109,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "GKYL_CU_DH int ~a(double w_lo, double w_up, double dv, const double *norm_moms, const double *rhs_moms,
   const double *bvar, const double *wn, const double *theta, const double *alpha_0_prev, const double *c_h_prev,
   const double *f_lo, const double *f_up,
-  double* GKYL_RESTRICT c_0, double* GKYL_RESTRICT alpha_0, double* GKYL_RESTRICT c_h, double* GKYL_RESTRICT a_perp,
+  double* GKYL_RESTRICT c_0, double* alpha_0, double* c_h, double* GKYL_RESTRICT a_perp,
   double* GKYL_RESTRICT flux_lo, double* GKYL_RESTRICT flux_up, double* GKYL_RESTRICT cfl,
   double* GKYL_RESTRICT cond) ~%{ ~%", funcNm),
   printf(fh, "  // w_lo, w_up:   Velocity domain edges; dv: velocity cell size. ~%"),
@@ -123,7 +123,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  // c_0, alpha_0, c_h, a_perp: Output closures at the ~a Gauss-Legendre nodes, interpolated to p=1. ~%", NN),
   printf(fh, "  // flux_lo, flux_up: Output edge fluxes [8 blocks] in the stored face format. ~%"),
   printf(fh, "  // cfl:          Output [0]: the time-step rate of the w fluxes and closure sources of the whole column ~%"),
-  printf(fh, "  //               (absolute coefficients at the larger |w| edge, plan 17.27); [1] = 0. ~%"),
+  printf(fh, "  //               (absolute coefficients at the larger |w| edge); [1] = 0. ~%"),
   printf(fh, "  // cond:         Output [1]: the smallest determinant of the 3x3 system over the nodes relative to ~%"),
   printf(fh, "  //               its edge-free value (1 when the edge terms vanish; small or negative when the ~%"),
   printf(fh, "  //               velocity-domain edges carry a non-negligible trace: too small velocity extents). ~%"),
@@ -348,7 +348,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, " ~%"),
   /* 3. the column time-step rate with the new closures: the w-flux speed bound at the w-face nodes
      and the closure sources over the cell */
-  printf(fh, "  // the column time-step rate with the new closures (plan 17.27) ~%"),
+  printf(fh, "  // the column time-step rate with the new closures ~%"),
   printf(fh, "  double a0f[~a], cf[~a]; ~%", NF, NF),
   printf(fh, "  ~a(alpha_0, a0f); ~%", p1fn),
   printf(fh, "  ~a(c_h, cf); ~%", p1fn),

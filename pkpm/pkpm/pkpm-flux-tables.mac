@@ -9,7 +9,7 @@
    The PKPM node counts differ from the Vlasov tables: on a configuration face five
    Gauss-Legendre points per transverse configuration direction (pkpmConfFluxNumPts; the
    first-harmonic flux xi H (e_d - b b_d) against the test function reaches degree seven and the
-   fluid energy flux of its moments degree eight there, plan 17.14) and three in v_par
+   fluid energy flux of its moments degree eight there) and three in v_par
    (pkpmConfFluxNumWPts; V_n M0 against the test function: degree five); on the v_par face five
    points per configuration direction (pkpmVelFluxNumPts), because the first-harmonic w flux
    reaches degree nine there (H t = (4 theta G - 2 theta^2 F) t, with t = I_perp(C - U^T b - w g)

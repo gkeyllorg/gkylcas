@@ -1,6 +1,5 @@
 /* pkpm-dtb-over-magb.mac ----------------------------------------------------------
-   The magnetic-field rate of the first-harmonic PKPM forces (normalized_first_harmonic.tex,
-   section "Which coefficients the constraints determine"):
+   The magnetic-field rate of the first-harmonic PKPM forces:
 
    pkpm_dtB_over_magB_<c>x_ser_p1(em, dt_em, out)
      d_t B/|B| at the 2^cdim Gauss-Legendre nodes, where b = B/|B| is defined (em_bvar_nodal),

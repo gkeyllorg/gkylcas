@@ -16,7 +16,7 @@
    closure term contributes the bilinear product (closure x moment) that the nodal closure solve
    charged. Everything else of the velocity-space pass is the surface scatter of the stored w
    fluxes. Returns 0: the closure sources and force speeds enter the column time-step rate of the
-   closure kernel (pkpm_vars_closure_*, plan 17.27). */
+   closure kernel (pkpm_vars_closure_*). */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$

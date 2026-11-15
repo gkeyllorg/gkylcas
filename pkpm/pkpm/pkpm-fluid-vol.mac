@@ -7,8 +7,8 @@
        P_id = p_perp delta_id + (p_par - p_perp) b_i b_d + s_i b_d + b_i s_d,
      integral( d_d phi ( u_d E + P_id u_i + q_d ) ),   q_d = b_d (q_par + 2 q_perp)/2 + r_d,
 
-   the pressure tensor and heat flux of the moment map of the kinetic flux of the eight blocks
-   (plan 17.14): s = rho xi^2 int w M0_perp dw is the parallel-perpendicular stress and
+   the pressure tensor and heat flux of the moment map of the kinetic flux of the eight blocks:
+   s = rho xi^2 int w M0_perp dw is the parallel-perpendicular stress and
    r = rho xi^3 int (w^2 M0_perp/2 + N_perp) dw the perpendicular heat flux. Integrated exactly
    from the modal factors (the evolved [rho, M, E], the nodal flow u, the kinetic coupling moments
    [p_par, p_perp, q_par, q_perp, s (3), r (3)] formed by the caller from the density, the thermal

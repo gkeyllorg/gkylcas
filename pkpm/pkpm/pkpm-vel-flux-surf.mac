@@ -21,7 +21,7 @@
      the raw coefficients the node rule integrates the flux exactly wherever it is upwind
      (degree 1 + 7 + 1 per direction); elsewhere the speeds and the branch are those of the actual
      local operator at the nodes. Traces, node values and projections direction by direction.
-     No time-step rate: that of the w fluxes is the column rate of the closure kernel (plan 17.27).
+     No time-step rate: that of the w fluxes is the column rate of the closure kernel.
 
    The flux at the domain edges of velocity space is the closure's (pkpm-vars-closure.mac): the
    updater does not call the face kernel there. */
@@ -89,7 +89,7 @@ calcPKPMVelFluxSurf(fh, funcNm, cdim) := block(
   printf(fh, "  // nv:        Node values [~a nodes][PKPM_HS_NODE_NV] of the w flux of the configuration cell. ~%", NN),
   printf(fh, "  // f_l/f_r:   Distributions [F, G, M0_perp, N_perp] in the cell below/current cell. ~%"),
   printf(fh, "  // flux:      Output surface fluxes [8 blocks] on the lower w face (stored face format). ~%"),
-  printf(fh, "  // (The time-step rate of the w fluxes is the column rate of the closure kernel, plan 17.27.) ~%"),
+  printf(fh, "  // (The time-step rate of the w fluxes is the column rate of the closure kernel.) ~%"),
   printf(fh, "  const double v_face = w[~a] - 0.5*dxv[~a]; ~%", cdim, cdim),
   /* traces: f_l at its upper edge (eta = 1), f_r at its lower edge (eta = -1) */
   printf(fh, "  double tl[~a], tr[~a], ul[8][~a], ur[8][~a]; ~%", NC, NC, NN, NN),
