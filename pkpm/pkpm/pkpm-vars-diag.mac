@@ -3,10 +3,12 @@
    where products of primitive factors are projected onto p=1, and the projections feed
    the output, never the update.
 
-   pkpm_vars_diag_<c>x_ser_p1(moms, fluid, bvar, grad_b, u, grad_u, theta, alpha_0, xi, c_h, fluid_io, pkpm_vars_io)
-     with moms = [p_par, p_perp, q_par, q_perp] the coupling moments and fluid = [rho, M, E]:
-     fluid_io     = [rho, M_x, M_y, M_z, P_xx + M_x u_x, P_xy + M_x u_y, P_xz + M_x u_z,
-                     P_yy + M_y u_y, P_yz + M_y u_z, P_zz + M_z u_z, E]     (11 components)
+   pkpm_vars_diag_<c>x_ser_p1(moms, bvar, grad_b, u, grad_u, theta, alpha_0, xi, c_h, pkpm_prim_io, pkpm_vars_io)
+     with moms = [p_par, p_perp, q_par, q_perp, s (x, y, z), r (x, y, z)] the coupling moments:
+     pkpm_prim_io = [P_xx, P_xy, P_xz, P_yy, P_yz, P_zz, q_x, q_y, q_z]     (9 components)
+       P_ij = (p_par - p_perp) b_i b_j + p_perp delta_ij + s_i b_j + b_i s_j,
+       q_i  = b_i (q_par + 2 q_perp)/2 + r_i,
+       the pressure tensor and heat flux of the fluid volume kernel (pkpm-fluid-vol.mac),
      pkpm_vars_io = [u_x, u_y, u_z, T_perp/m, a_P, div b, bb:grad u, T_perp/m div b, xi, c]
                                                                             (10 components)
      with T_perp/m = xi^2 theta and a_P = xi alpha_0 (products projected onto p=1) and
@@ -26,16 +28,16 @@ pkpmDiagLoad(cdim) := block([vb],
 )$
 
 calcPKPMVarsDiag(fh, funcNm, cdim) := block(
-  [vb, varsC, bC, NC, rho_e, ppar_e, pperp_e, b_e, u_e, M_e, theta_e, xi_e, xisq_e, a0_e, i, j, c, ij, S_c, d,
-   div_b_e, K_e, out_c, tperp_e],
+  [vb, varsC, bC, NC, ppar_e, pperp_e, qpar_e, qperp_e, s_e, r_e, b_e, theta_e, xi_e, xisq_e, a0_e, i, j, c, ij,
+   d, div_b_e, K_e, out_c, tperp_e],
   vb : pkpmDiagLoad(cdim), varsC : vb[1], bC : vb[2],
   NC : length(bC),
   printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
-  printf(fh, "GKYL_CU_DH void ~a(const double *vlasov_pkpm_moms, const double *euler_pkpm,
-  const double *bvar, const double *grad_b, const double *u, const double *grad_u, const double *theta, const double *alpha_0,
-  const double *xi, const double *c_h, double* GKYL_RESTRICT fluid_io, double* GKYL_RESTRICT pkpm_vars_io) ~%{ ~%", funcNm),
-  printf(fh, "  // vlasov_pkpm_moms: Kinetic coupling moments [p_par, p_perp, q_par, q_perp]. ~%"),
-  printf(fh, "  // euler_pkpm:       Fluid state [rho, rho ux, rho uy, rho uz, E]. ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *vlasov_pkpm_moms, const double *bvar, const double *grad_b,
+  const double *u, const double *grad_u, const double *theta, const double *alpha_0, const double *xi,
+  const double *c_h, double* GKYL_RESTRICT pkpm_prim_io, double* GKYL_RESTRICT pkpm_vars_io) ~%{ ~%", funcNm),
+  printf(fh, "  // vlasov_pkpm_moms: Kinetic coupling moments [p_par, p_perp, q_par, q_perp, s (x, y, z), r (x, y, z)]: ~%"),
+  printf(fh, "  //                   s the parallel-perpendicular stress, r the perpendicular heat flux. ~%"),
   printf(fh, "  // bvar:             Magnetic field unit vector [bx, by, bz]. ~%"),
   printf(fh, "  // grad_b:           Weak gradient of b, [d_i bx, d_i by, d_i bz] per direction i. ~%"),
   printf(fh, "  // u:                Flow velocity [ux, uy, uz]. ~%"),
@@ -44,15 +46,18 @@ calcPKPMVarsDiag(fh, funcNm, cdim) := block(
   printf(fh, "  // alpha_0:          Pressure force a_P/xi closing the first moment. ~%"),
   printf(fh, "  // xi:               Thermal speed [xi, xi^2]. ~%"),
   printf(fh, "  // c_h:              Heating rate closing the scalar second moment. ~%"),
-  printf(fh, "  // fluid_io:         Output [rho, M_i, P_ij + M_i u_j, E] (11 components). ~%"),
+  printf(fh, "  // pkpm_prim_io:     Output [P_xx, P_xy, P_xz, P_yy, P_yz, P_zz, q_x, q_y, q_z] (9 components): the pressure ~%"),
+  printf(fh, "  //                   tensor and the heat flux of the fluid equations. ~%"),
   printf(fh, "  // pkpm_vars_io:     Output [u_x, u_y, u_z, T_perp/m, a_P, div b, bb:grad u, T_perp/m div b, xi, c] (10 components). ~%"),
-  printf(fh, "  const double *rho = &euler_pkpm[~a]; ~%", 0*NC),
   printf(fh, "  const double *ppar = &vlasov_pkpm_moms[~a]; ~%", 0*NC),
   printf(fh, "  const double *pperp = &vlasov_pkpm_moms[~a]; ~%", 1*NC),
+  printf(fh, "  const double *qpar = &vlasov_pkpm_moms[~a]; ~%", 2*NC),
+  printf(fh, "  const double *qperp = &vlasov_pkpm_moms[~a]; ~%", 3*NC),
   for i : 1 thru 3 do (
+    printf(fh, "  const double *s~a = &vlasov_pkpm_moms[~a]; ~%", cvars[i], (3+i)*NC),
+    printf(fh, "  const double *r~a = &vlasov_pkpm_moms[~a]; ~%", cvars[i], (6+i)*NC),
     printf(fh, "  const double *b~a = &bvar[~a]; ~%", cvars[i], (i-1)*NC),
-    printf(fh, "  const double *u~a = &u[~a]; ~%", cvars[i], (i-1)*NC),
-    printf(fh, "  const double *M~a = &euler_pkpm[~a]; ~%", cvars[i], i*NC)
+    printf(fh, "  const double *u~a = &u[~a]; ~%", cvars[i], (i-1)*NC)
   ),
   for d : 1 thru cdim do
     for j : 1 thru 3 do
@@ -61,7 +66,9 @@ calcPKPMVarsDiag(fh, funcNm, cdim) := block(
     printf(fh, "  const double *gb~a~a = &grad_b[~a]; ~%", cvars[d], cvars[d], ((d-1)*3 + (d-1))*NC),
   ij : [[1,1],[1,2],[1,3],[2,2],[2,3],[3,3]],
   for c : 1 thru 6 do
-    printf(fh, "  double *fluid_io_S~a~a = &fluid_io[~a]; ~%", cvars[ij[c][1]], cvars[ij[c][2]], (3+c)*NC),
+    printf(fh, "  double *pkpm_prim_io_P~a~a = &pkpm_prim_io[~a]; ~%", cvars[ij[c][1]], cvars[ij[c][2]], (c-1)*NC),
+  for i : 1 thru 3 do
+    printf(fh, "  double *pkpm_prim_io_q~a = &pkpm_prim_io[~a]; ~%", cvars[i], (5+i)*NC),
   printf(fh, "  double *pkpm_vars_io_tperp = &pkpm_vars_io[~a]; ~%", 3*NC),
   printf(fh, "  double *pkpm_vars_io_a_P = &pkpm_vars_io[~a]; ~%", 4*NC),
   printf(fh, "  double *pkpm_vars_io_div_b = &pkpm_vars_io[~a]; ~%", 5*NC),
@@ -71,11 +78,6 @@ calcPKPMVarsDiag(fh, funcNm, cdim) := block(
   printf(fh, "  const double *xi_sq = &xi[~a]; ~%", 1*NC),
   printf(fh, " ~%"),
   printf(fh, "  for (int k = 0; k < ~a; ++k) { ~%", NC),
-  printf(fh, "    fluid_io[~a + k] = rho[k]; ~%", 0*NC),
-  printf(fh, "    fluid_io[~a + k] = Mx[k]; ~%", 1*NC),
-  printf(fh, "    fluid_io[~a + k] = My[k]; ~%", 2*NC),
-  printf(fh, "    fluid_io[~a + k] = Mz[k]; ~%", 3*NC),
-  printf(fh, "    fluid_io[~a + k] = euler_pkpm[~a + k]; ~%", 10*NC, 4*NC),
   printf(fh, "    pkpm_vars_io[~a + k] = ux[k]; ~%", 0*NC),
   printf(fh, "    pkpm_vars_io[~a + k] = uy[k]; ~%", 1*NC),
   printf(fh, "    pkpm_vars_io[~a + k] = uz[k]; ~%", 2*NC),
@@ -85,9 +87,11 @@ calcPKPMVarsDiag(fh, funcNm, cdim) := block(
   printf(fh, " ~%"),
   ppar_e : doExpand1(ppar, bC),
   pperp_e : doExpand1(pperp, bC),
+  qpar_e : doExpand1(qpar, bC),
+  qperp_e : doExpand1(qperp, bC),
+  s_e : [doExpand1(sx, bC), doExpand1(sy, bC), doExpand1(sz, bC)],
+  r_e : [doExpand1(rx, bC), doExpand1(ry, bC), doExpand1(rz, bC)],
   b_e : [doExpand1(bx, bC), doExpand1(by, bC), doExpand1(bz, bC)],
-  u_e : [doExpand1(ux, bC), doExpand1(uy, bC), doExpand1(uz, bC)],
-  M_e : [doExpand1(Mx, bC), doExpand1(My, bC), doExpand1(Mz, bC)],
   theta_e : doExpand1(theta, bC),
   xi_e : doExpand1(xi_1, bC),
   xisq_e : doExpand1(xi_sq, bC),
@@ -99,9 +103,13 @@ calcPKPMVarsDiag(fh, funcNm, cdim) := block(
   pkpmWriteDefExprs(fh, "pkpm_vars_io_a_P", out_c),
   for c : 1 thru 6 do (
     i : ij[c][1], j : ij[c][2],
-    S_c : calcInnerProdList(varsC, 1, bC,
-      (ppar_e - pperp_e)*b_e[i]*b_e[j] + (if i = j then pperp_e else 0) + M_e[i]*u_e[j]),
-    pkpmWriteDefExprs(fh, sconcat("fluid_io_S", cvars[i], cvars[j]), S_c)
+    out_c : calcInnerProdList(varsC, 1, bC,
+      (ppar_e - pperp_e)*b_e[i]*b_e[j] + (if i = j then pperp_e else 0) + s_e[i]*b_e[j] + b_e[i]*s_e[j]),
+    pkpmWriteDefExprs(fh, sconcat("pkpm_prim_io_P", cvars[i], cvars[j]), out_c)
+  ),
+  for i : 1 thru 3 do (
+    out_c : calcInnerProdList(varsC, 1, bC, b_e[i]*(qpar_e + 2*qperp_e)/2 + r_e[i]),
+    pkpmWriteDefExprs(fh, sconcat("pkpm_prim_io_q", cvars[i]), out_c)
   ),
   printf(fh, " ~%"),
   div_b_e : sum(doExpand1(concat(gb, cvars[d], cvars[d]), bC), d, 1, cdim),
