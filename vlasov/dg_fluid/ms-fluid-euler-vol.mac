@@ -38,7 +38,7 @@ for bInd : 1 thru length(bName) do (
       fname : sconcat("~/max-out/euler_vol_",  d, "x_", bName[bInd], "_p", polyOrder, ".c"),
       fh : openw(fname),
       funcName : sconcat("euler_vol_", d, "x_", bName[bInd]),
-      calcEulerVolUpdater(fh, funcName, d, bName[bInd], polyOrder),
+      calcEulerVolUpdater(fh, funcName, d, bName[bInd], polyOrder, false),
       close(fh)
     )
   )

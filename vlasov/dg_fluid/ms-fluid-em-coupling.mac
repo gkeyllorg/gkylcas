@@ -1,0 +1,37 @@
+load("vlasov/dg_fluid/fluid-em-coupling.mac")$
+load(stringproc)$
+/* Nodal locally implicit fluid-Maxwell source kernels of p=1 DG fluids
+   (fluid_em_coupling_{set,copy}_<c>x_ser_p1) and their header. */
+
+for c : 1 thru 3 do (
+  funcName : sconcat("fluid_em_coupling_set_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcFluidEMCouplingSet(fh, funcName, c),
+  close(fh),
+  funcName : sconcat("fluid_em_coupling_copy_", c, "x_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcFluidEMCouplingCopy(fh, funcName, c),
+  close(fh)
+)$
+
+fh : openw("~/max-out/gkyl_fluid_em_coupling_kernels.h")$
+printf(fh, "#pragma once ~%")$
+printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <stdbool.h> ~%")$
+printf(fh, "#include <gkyl_mat.h> ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, "EXTERN_C_BEG ~%~%")$
+for c : 1 thru 3 do (
+  writeFluidEMCouplingHelpers(fh, c),
+  printf(fh, "GKYL_CU_DH void fluid_em_coupling_set_~ax_ser_p1(int count, int num_species, double qbym[GKYL_MAX_SPECIES],
+  double epsilon0, bool is_field_static, double dt, struct gkyl_nmat *A_n, struct gkyl_nmat *rhs_n,
+  const double *app_accel[GKYL_MAX_SPECIES], const double *ext_em, const double *app_current,
+  const double *fluid[GKYL_MAX_SPECIES], const double *em); ~%", c),
+  printf(fh, "GKYL_CU_DH void fluid_em_coupling_copy_~ax_ser_p1(int count, int num_species, double qbym[GKYL_MAX_SPECIES],
+  bool has_energy[GKYL_MAX_SPECIES], double epsilon0, struct gkyl_nmat *x,
+  double* GKYL_RESTRICT fluid[GKYL_MAX_SPECIES], double* GKYL_RESTRICT em); ~%~%", c)
+)$
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$

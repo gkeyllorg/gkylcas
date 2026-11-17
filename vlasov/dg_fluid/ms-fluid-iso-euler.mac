@@ -1,0 +1,153 @@
+load("vlasov/dg_fluid/fluid-euler-vol.mac")$
+load("vlasov/dg_fluid/fluid-euler-surf.mac")$
+load("vlasov/dg_fluid/fluid-vars-pressure.mac")$
+load("vlasov/dg_fluid/fluid-vars-limiter.mac")$
+load("vlasov/dg_fluid/fluid-vars-source.mac")$
+load("vlasov/dg_fluid/fluid-vars-positivity.mac")$
+load(stringproc)$
+/* This script generates the kernels of the DG isothermal Euler equations, state
+   [rho, rho ux, rho uy, rho uz] with p = vt^2 rho, and their header gkyl_iso_euler_kernels.h:
+   the functions of the Euler kernels called with isIso = true. The flow velocity, kinetic energy
+   and integrated-variable kernels of Euler (fluid_vars_u, fluid_vars_ke, fluid_vars_integrated)
+   do not read the energy and serve both systems. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 3$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 2$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+clabels : ["x","y","z"]$
+
+fhH : openw("~/max-out/gkyl_iso_euler_kernels.h")$
+printf(fhH, "#pragma once ~%")$
+printf(fhH, "#include <math.h> ~%")$
+printf(fhH, "#include <gkyl_wave_geom.h> ~%")$
+printf(fhH, "#include <gkyl_wv_eqn.h> ~%")$
+printf(fhH, "#include <gkyl_util.h> ~%")$
+printf(fhH, "EXTERN_C_BEG ~%")$
+printf(fhH, "~%")$
+/* Rotations and flux of the isothermal Euler equations for the kernels (the ones of the wave
+   equation object, moments/zero/wv_iso_euler.c, are not inlined). */
+printf(fhH, "// Rotate the state [rho, rho ux, rho uy, rho uz] to the frame of an interface (normal, tangents). ~%")$
+printf(fhH, "GKYL_CU_DH static inline void ~%")$
+printf(fhH, "iso_euler_rot_to_local(const struct gkyl_wv_eqn *eqn, const double *tau1, const double *tau2, ~%")$
+printf(fhH, "  const double *norm, const double *GKYL_RESTRICT qglobal, double *GKYL_RESTRICT qlocal) ~%")$
+printf(fhH, "{ ~%")$
+printf(fhH, "  qlocal[0] = qglobal[0]; ~%")$
+printf(fhH, "  qlocal[1] = qglobal[1]*norm[0] + qglobal[2]*norm[1] + qglobal[3]*norm[2]; ~%")$
+printf(fhH, "  qlocal[2] = qglobal[1]*tau1[0] + qglobal[2]*tau1[1] + qglobal[3]*tau1[2]; ~%")$
+printf(fhH, "  qlocal[3] = qglobal[1]*tau2[0] + qglobal[2]*tau2[1] + qglobal[3]*tau2[2]; ~%")$
+printf(fhH, "} ~%")$
+printf(fhH, "~%")$
+printf(fhH, "// Rotate the state back to the global frame. ~%")$
+printf(fhH, "GKYL_CU_DH static inline void ~%")$
+printf(fhH, "iso_euler_rot_to_global(const struct gkyl_wv_eqn *eqn, const double *tau1, const double *tau2, ~%")$
+printf(fhH, "  const double *norm, const double *GKYL_RESTRICT qlocal, double *GKYL_RESTRICT qglobal) ~%")$
+printf(fhH, "{ ~%")$
+printf(fhH, "  qglobal[0] = qlocal[0]; ~%")$
+printf(fhH, "  qglobal[1] = qlocal[1]*norm[0] + qlocal[2]*tau1[0] + qlocal[3]*tau2[0]; ~%")$
+printf(fhH, "  qglobal[2] = qlocal[1]*norm[1] + qlocal[2]*tau1[1] + qlocal[3]*tau2[1]; ~%")$
+printf(fhH, "  qglobal[3] = qlocal[1]*norm[2] + qlocal[2]*tau1[2] + qlocal[3]*tau2[2]; ~%")$
+printf(fhH, "} ~%")$
+printf(fhH, "~%")$
+printf(fhH, "// Flux along the normal of the state in the frame of the interface. ~%")$
+printf(fhH, "GKYL_CU_DH static inline void ~%")$
+printf(fhH, "iso_euler_flux(double vt, const double *q, double *flux) ~%")$
+printf(fhH, "{ ~%")$
+printf(fhH, "  const double u = q[1]/q[0]; ~%")$
+printf(fhH, "  flux[0] = q[1]; ~%")$
+printf(fhH, "  flux[1] = q[1]*u + q[0]*vt*vt; ~%")$
+printf(fhH, "  flux[2] = q[2]*u; ~%")$
+printf(fhH, "  flux[3] = q[3]*u; ~%")$
+printf(fhH, "} ~%")$
+printf(fhH, "~%")$
+deco : "GKYL_CU_DH "$
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      disp(printf(false,sconcat("Creating isothermal Euler kernels ", bName[bInd]," ~axp~a"),d,polyOrder)),
+      suffix : sconcat("_", d, "x_", bName[bInd], "_p", polyOrder),
+
+      /* Volume term (dx1 is a list in the volume script and a C variable in the surface one). */
+      dx1 : [dx10, dx11, dx12],
+      fh : openw(sconcat("~/max-out/iso_euler_vol", suffix, ".c")),
+      calcEulerVolUpdater(fh, sconcat("iso_euler_vol_", d, "x_", bName[bInd]), d, bName[bInd], polyOrder, true),
+      close(fh),
+      printf(fhH, "~adouble iso_euler_vol~a(const double *w, const double *dxv, double vt, const double *u, const double *p, const double *fluid, double* GKYL_RESTRICT out); ~%", deco, suffix),
+
+      /* Pressure. */
+      fh : openw(sconcat("~/max-out/fluid_vars_iso_pressure", suffix, ".c")),
+      calcFluidPressure(fh, sconcat("fluid_vars_iso_pressure", suffix), d, bName[bInd], polyOrder, true),
+      close(fh),
+      printf(fhH, "~avoid fluid_vars_iso_pressure~a(double param, const double *fluid, const double *u, double* GKYL_RESTRICT p, double* GKYL_RESTRICT p_surf); ~%", deco, suffix),
+
+      /* Explicit sources. */
+      fh : openw(sconcat("~/max-out/fluid_vars_iso_source", suffix, ".c")),
+      calcEulerSource(fh, sconcat("fluid_vars_iso_source", suffix), d, bName[bInd], polyOrder, true),
+      close(fh),
+      printf(fhH, "~avoid fluid_vars_iso_source~a(const double* app_accel, const double* fluid, double* GKYL_RESTRICT out); ~%", deco, suffix),
+      fh : openw(sconcat("~/max-out/fluid_vars_iso_em_source", suffix, ".c")),
+      calcEulerEMSource(fh, sconcat("fluid_vars_iso_em_source", suffix), d, bName[bInd], polyOrder, true),
+      close(fh),
+      printf(fhH, "~adouble fluid_vars_iso_em_source~a(const double* qmem, const double* omega_p_sq, const double* fluid, double* GKYL_RESTRICT out); ~%", deco, suffix),
+
+      /* Vertex positivity limiter: p = 1 only. */
+      if (polyOrder = 1 and bName[bInd] = "ser") then (
+        fh : openw(sconcat("~/max-out/fluid_vars_iso_positivity", suffix, ".c")),
+        calcFluidPositivity(fh, sconcat("fluid_vars_iso_positivity", suffix), d, "ser", 1, true),
+        close(fh),
+        printf(fhH, "~aint fluid_vars_iso_positivity~a(double eps, double* GKYL_RESTRICT fluid); ~%", deco, suffix)
+      ),
+
+      kill(dx1),
+      for dir : 1 thru d do (
+        /* Surface term. */
+        fh : openw(sconcat("~/max-out/iso_euler_surf", clabels[dir], suffix, ".c")),
+        printf(fh, "#include <gkyl_iso_euler_kernels.h> ~%"),
+        printf(fh, "#include <gkyl_wv_iso_euler_priv.h> ~%"),
+        if d > 1 then (
+          printf(fh, "#include <gkyl_basis_~a_~ax_p~a_surfx~a_eval_quad.h> ~%", bName[bInd], d, polyOrder, dir),
+          printf(fh, "#include <gkyl_basis_~a_~ax_p~a_upwind_quad_to_modal.h> ~%", bName[bInd], d, polyOrder)
+        ),
+        calcEulerUpdateInDir(dir, fh, "iso_euler_surf", d, bName[bInd], polyOrder, true),
+        close(fh),
+        printf(fhH, "~adouble iso_euler_surf~a~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn, 
+    const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, 
+    const double *fluid_l, const double *fluid_c, const double *fluid_r, double* GKYL_RESTRICT out); ~%", deco, clabels[dir], suffix),
+
+        /* Slope limiter. */
+        fh : openw(sconcat("~/max-out/fluid_vars_iso_limiter", clabels[dir], suffix, ".c")),
+        calcEulerLimiter(dir, fh, sconcat("fluid_vars_iso_limiter", clabels[dir], suffix), d, bName[bInd], polyOrder, true),
+        close(fh),
+        printf(fhH, "~avoid fluid_vars_iso_limiter~a~a(double limiter_fac, const struct gkyl_wv_eqn *wv_eqn, const struct gkyl_wave_cell_geom *geom, double *fluid_l, double *fluid_c, double *fluid_r); ~%", deco, clabels[dir], suffix)
+      ),
+      printf(fhH, "~%")
+    )
+  )
+);
+printf(fhH, "EXTERN_C_END ~%")$
+close(fhH)$

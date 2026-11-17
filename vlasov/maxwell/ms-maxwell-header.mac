@@ -32,6 +32,9 @@ printPrototype(deco, ci, vi, bStr, pi) := block([si],
   for si : 1 thru ci do (
     printf(fh, "~adouble maxwell_surf~a_~ax_~a_p~a(const gkyl_maxwell_inp *meq, const double *w, const double *dx, const double *jacob_pos_l, const double *jacob_pos_c, const double *jacob_pos_r, const double *ql, const double *qc, const double *qr, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, bStr, pi)
   ),
+  for si : 1 thru ci do (
+    printf(fh, "~adouble maxwell_boundary_surf~a_~ax_~a_p~a(const gkyl_maxwell_inp *meq, const double *w, const double *dx, const double *jacob_pos_edge, const double *jacob_pos_skin, const int edge, const double *qedge, const double *qskin, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, bStr, pi)
+  ),
   printf(fh, "~%")
 )$
 

@@ -43,7 +43,7 @@ for bInd : 1 thru length(bName) do (
       fname : sconcat("~/max-out/fluid_vars_pressure_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
       fh : openw(fname),
       funcName : sconcat("fluid_vars_pressure_",  d, "x_", bName[bInd], "_p", polyOrder),
-      calcFluidPressure(fh, funcName, d, bName[bInd], polyOrder),
+      calcFluidPressure(fh, funcName, d, bName[bInd], polyOrder, false),
       close(fh)
     )
   )

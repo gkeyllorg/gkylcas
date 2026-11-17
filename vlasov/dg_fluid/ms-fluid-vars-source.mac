@@ -1,10 +1,11 @@
 load("vlasov/dg_fluid/fluid-vars-source.mac")$
 load(stringproc)$
-/* This script calls the functions which generate the kernels for the source terms in the
-   fluid equations of different fluid models: isothermal Euler, Euler/5 moment, and 10 moment
-   For all three, momentum source is: q/m*(rho*E + rho*u x B)
-   For Euler/5 moment also have energy source: q/m*(rhou*E)
-   For 10 moment also have pressure source: P x B + (P x B)_sym */
+/* This script calls the functions which generate the kernels for the explicit source terms in
+   the fluid equations (Euler/5 moment):
+   fluid_vars_source:    applied acceleration a, momentum source rho a, energy source rho u . a;
+   fluid_vars_em_source: the same with the Lorentz force of an explicitly coupled charged fluid,
+                         momentum source rho a + rho u x (q/m B) with a including q/m E; returns the
+                         rate of the source for the time-step. */
 
 
 /* ...... USER INPUTS........ */
@@ -42,7 +43,14 @@ for bInd : 1 thru length(bName) do (
       fname : sconcat("~/max-out/fluid_vars_source_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
       fh : openw(fname),
       funcName : sconcat("fluid_vars_source_",  d, "x_", bName[bInd], "_p", polyOrder),
-      calcEulerSource(fh, funcName, d, bName[bInd], polyOrder),
+      calcEulerSource(fh, funcName, d, bName[bInd], polyOrder, false),
+      close(fh),
+
+      disp(printf(false,sconcat("Creating fluid vars EM source funcs ",bName[bInd]," ~axp~a"),d,polyOrder)),
+      fname : sconcat("~/max-out/fluid_vars_em_source_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("fluid_vars_em_source_",  d, "x_", bName[bInd], "_p", polyOrder),
+      calcEulerEMSource(fh, funcName, d, bName[bInd], polyOrder, false),
       close(fh)
     )
   )

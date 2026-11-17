@@ -9,8 +9,11 @@ fpprec : 24$
 lhs : [outrho, outrhoux, outrhouy, outrhouz, outenergy]$
 dx1 : [dx10, dx11, dx12]$
 
-calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
-  [varsC,bC,NC,cflPt,cid,
+/* isIso = false: Euler, [rho, rho ux, rho uy, rho uz, energy]. isIso = true: isothermal Euler,
+   [rho, rho ux, rho uy, rho uz], with the pressure p = vt^2 rho of the pressure kernel and the
+   sound speed vt. */
+calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
+  [numEq,varsC,bC,NC,cflPt,cid,
    rho_e,rhoux_e,rhouy_e,rhouz_e,energy_e,
    ux_e,uy_e,uz_e,u_e,p_e, 
    umid,pmid,rhomid,t1,t2,t3,t4,t5,volTerms,vol,expr],
@@ -23,19 +26,34 @@ calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
   /* Number of basis monomials. */
   NC : length(bC),
 
-  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+  numEq : if isIso then 4 else 5,
+  if isIso then
+    printf(fh, "#include <gkyl_iso_euler_kernels.h> ~%")
+  else
+    printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
 
   /* specify a point to evaluate maximum speed at for use in computing CFL */
   cflPt : makelist(varsC[d]=0, d, 1, length(varsC)),
 
-  printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, double gas_gamma, 
+  if isIso then (
+    printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, double vt, 
     const double *u, const double *p, const double *fluid, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
-  printf(fh, "  // w[NDIM]:   Cell-center coordinates.~%"),
-  printf(fh, "  // dxv[NDIM]: Cell spacing.~%"),
-  printf(fh, "  // gas_gamma: Adiabatic index.~%"),
-  printf(fh, "  // u:         Input flow velocity [ux, uy, uz].~%"),
-  printf(fh, "  // p:         Input pressure .~%"),
-  printf(fh, "  // fluid:     [rho, rho ux, rho uy, rho uz, E], Fluid input state vector.~%"),
+    printf(fh, "  // w[NDIM]:   Cell-center coordinates.~%"),
+    printf(fh, "  // dxv[NDIM]: Cell spacing.~%"),
+    printf(fh, "  // vt:        Thermal velocity.~%"),
+    printf(fh, "  // u:         Input flow velocity [ux, uy, uz].~%"),
+    printf(fh, "  // p:         Input pressure (vt^2 rho).~%"),
+    printf(fh, "  // fluid:     [rho, rho ux, rho uy, rho uz], Fluid input state vector.~%")
+  ) else (
+    printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, double gas_gamma, 
+    const double *u, const double *p, const double *fluid, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
+    printf(fh, "  // w[NDIM]:   Cell-center coordinates.~%"),
+    printf(fh, "  // dxv[NDIM]: Cell spacing.~%"),
+    printf(fh, "  // gas_gamma: Adiabatic index.~%"),
+    printf(fh, "  // u:         Input flow velocity [ux, uy, uz].~%"),
+    printf(fh, "  // p:         Input pressure .~%"),
+    printf(fh, "  // fluid:     [rho, rho ux, rho uy, rho uz, E], Fluid input state vector.~%")
+  ),
   printf(fh, "  // out:       Incremented output.~%"),
   printf(fh, "~%"),
   for dir : 1 thru cdim do (
@@ -47,7 +65,7 @@ calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  const double *rhoux = &fluid[~a]; ~%", 1*NC),
   printf(fh, "  const double *rhouy = &fluid[~a]; ~%", 2*NC),
   printf(fh, "  const double *rhouz = &fluid[~a]; ~%", 3*NC),
-  printf(fh, "  const double *energy = &fluid[~a]; ~%", 4*NC),
+  if not isIso then printf(fh, "  const double *energy = &fluid[~a]; ~%", 4*NC),
   printf(fh, "~%"),
 
   /* access flow velocity data */
@@ -60,7 +78,7 @@ calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  double *outrhoux = &out[~a]; ~%", 1*NC),
   printf(fh, "  double *outrhouy = &out[~a]; ~%", 2*NC),
   printf(fh, "  double *outrhouz = &out[~a]; ~%", 3*NC),
-  printf(fh, "  double *outenergy = &out[~a]; ~%", 4*NC),
+  if not isIso then printf(fh, "  double *outenergy = &out[~a]; ~%", 4*NC),
   printf(fh, "~%"),
 
   /* cflFreq_mid is our approximation of sum_i max(abs(alpha_i))/(dx_i/(2p+1)) */
@@ -87,7 +105,10 @@ calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
     umid : gcfac(float(expand(subst(cflPt, u_e[dir])))),
     pmid : gcfac(float(expand(subst(cflPt, p_e)))),
     rhomid : gcfac(float(expand(subst(cflPt, rho_e)))),
-    printf(fh, "  cflFreq_mid += 0.5*~a*(fabs(~a) + sqrt(gas_gamma*~a/(~a))); ~%", float(2*polyOrder+1)*dx1[dir], umid, pmid, rhomid)
+    if isIso then
+      printf(fh, "  cflFreq_mid += 0.5*~a*(fabs(~a) + vt); ~%", float(2*polyOrder+1)*dx1[dir], umid)
+    else
+      printf(fh, "  cflFreq_mid += 0.5*~a*(fabs(~a) + sqrt(gas_gamma*~a/(~a))); ~%", float(2*polyOrder+1)*dx1[dir], umid, pmid, rhomid)
   ),
   printf(fh, "~%"),
 
@@ -121,7 +142,7 @@ calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder) := block(
      ),
   t5),
   volTerms : [t1,t2,t3,t4,t5],
-  for m : 1 thru 5 do (
+  for m : 1 thru numEq do (
     vol : volTerms[m],
     writeCIncrExprs1(lhs[m], vol),
     printf(fh, "~%")

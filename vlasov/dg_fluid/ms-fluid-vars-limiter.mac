@@ -43,7 +43,7 @@ for bInd : 1 thru length(bName) do (
         fname : sconcat("~/max-out/fluid_vars_limiter", clabels[dir], "_", d, "x_", bName[bInd], "_p", polyOrder, ".c"),
         fh : openw(fname),
         funcName : sconcat("fluid_vars_limiter",clabels[dir],"_", d, "x_", bName[bInd], "_p", polyOrder),
-        calcEulerLimiter(dir, fh, funcName, d, bName[bInd], polyOrder),
+        calcEulerLimiter(dir, fh, funcName, d, bName[bInd], polyOrder, false),
         close(fh)
       )
     )

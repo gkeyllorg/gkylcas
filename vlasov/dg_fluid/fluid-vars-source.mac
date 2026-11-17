@@ -1,13 +1,22 @@
-/* This script generates the kernels for the explicit source terms (external forces) in the
-   fluid equations of different fluid models: isothermal Euler, Euler/5 moment, and 10 moment.
-   Note: these kernels are only used for neutral fluids where there is some specified external
-   force (such as external gravity). For fluid-em coupling, see fluid-vars-implicit-source.mac. */
+/* This script generates the kernels for the explicit source terms in the fluid equations
+   (Euler/5 moment):
+   calcEulerSource:   an external applied acceleration (such as gravity) on a neutral fluid;
+   calcEulerEMSource: the acceleration and the Lorentz force of a charged fluid whose coupling
+                      to the electromagnetic field is explicit. The kernel returns the rate of the
+                      source for the time-step, from the cell averages: the larger of
+                      omega_p + |q/m B| (the frequencies of the fluid-Maxwell source lie below it)
+                      and 2 |a + u x (q/m B)| / sqrt(2 e / rho), with e the internal energy density:
+                      a forward-Euler source step of size dt lowers e by rho |dt (a + u x q/m B)|^2 / 2,
+                      so at a CFL number of 1 a stage keeps three quarters of it. Isothermal Euler
+                      has no internal energy and returns the first rate.
+   For the implicit fluid-EM coupling, see fluid-em-coupling.mac. */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
-calcEulerSource(fh, funcNm, cdim, basisFun, polyOrder) := block(
+/* isIso = true (both kernels): isothermal Euler, [rho, rho ux, rho uy, rho uz], no energy. */
+calcEulerSource(fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
   [varsC, bC, NC, rho_e, Ex_e, Ey_e, Ez_e, Bx_e, By_e, Bz_e, 
    rhoux_e, rhouy_e, rhouz_e, 
    incr_rhoux, incr_rhouy, incr_rhouz, incr_energy],
@@ -20,7 +29,10 @@ calcEulerSource(fh, funcNm, cdim, basisFun, polyOrder) := block(
   /* Number of basis monomials. */
   NC : length(bC),
 
-  printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+  if isIso then
+    printf(fh, "#include <gkyl_iso_euler_kernels.h> ~%")
+  else
+    printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH void ~a(const double* app_accel, const double* fluid, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
   printf(fh, "  // app_accel: External applied acceleration (external forces).~%"),
   printf(fh, "  // fluid:     [rho, rho ux, rho uy, rho uz...], Fluid input state vector.~%"),
@@ -42,7 +54,7 @@ calcEulerSource(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "  double *out_rhoux = &out[~a]; ~%", 1*NC),
   printf(fh, "  double *out_rhouy = &out[~a]; ~%", 2*NC),
   printf(fh, "  double *out_rhouz = &out[~a]; ~%", 3*NC),
-  printf(fh, "  double *out_energy = &out[~a]; ~%", 4*NC),
+  if not isIso then printf(fh, "  double *out_energy = &out[~a]; ~%", 4*NC),
   printf(fh, "~%"),
 
   app_accel_x_e : doExpand1(app_accel_x, bC),
@@ -69,10 +81,125 @@ calcEulerSource(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "~%"),
   flush_output(fh),
 
-  incr_energy : calcInnerProdList(varsC, 1, bC, rhoux_e*app_accel_x_e + rhouy_e*app_accel_y_e + rhouz_e*app_accel_z_e),
-  writeCIncrExprs1(out_energy, incr_energy),
+  if not isIso then (
+    incr_energy : calcInnerProdList(varsC, 1, bC, rhoux_e*app_accel_x_e + rhouy_e*app_accel_y_e + rhouz_e*app_accel_z_e),
+    writeCIncrExprs1(out_energy, incr_energy),
+    printf(fh, "~%"),
+    flush_output(fh)
+  ),
+
+  printf(fh, "} ~%")
+)$
+
+calcEulerEMSource(fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
+  [varsC, bC, NC, rho_e, ax_e, ay_e, az_e, Bx_e, By_e, Bz_e,
+   rhoux_e, rhouy_e, rhouz_e,
+   incr_rhoux, incr_rhouy, incr_rhouz, incr_energy],
+
+  kill(varsC, bC),
+
+  /* Load basis of dimensionality requested. */
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+
+  /* Number of basis monomials. */
+  NC : length(bC),
+
+  if isIso then
+    printf(fh, "#include <gkyl_iso_euler_kernels.h> ~%")
+  else
+    printf(fh, "#include <gkyl_euler_kernels.h> ~%"),
+  printf(fh, "#include <math.h> ~%"),
+  printf(fh, "GKYL_CU_DH double ~a(const double* qmem, const double* omega_p_sq, const double* fluid, double* GKYL_RESTRICT out) ~%{ ~%", funcNm),
+  printf(fh, "  // qmem:       [ax, ay, az, q/m Bx, q/m By, q/m Bz], acceleration (q/m E plus any applied~%"),
+  printf(fh, "  //             acceleration) and q/m times the magnetic field.~%"),
+  printf(fh, "  // omega_p_sq: Plasma frequency squared of the cell (one value; all the coupled species).~%"),
+  if isIso then
+    printf(fh, "  // fluid:      [rho, rho ux, rho uy, rho uz], Fluid input state vector.~%")
+  else
+    printf(fh, "  // fluid:      [rho, rho ux, rho uy, rho uz, energy], Fluid input state vector.~%"),
+  printf(fh, "  // out:        Output increment~%"),
+  printf(fh, "  // Returns the rate of the source for the time-step (from the cell averages)."),
+  printf(fh, "~%"),
+
+  printf(fh, "~%"),
+  printf(fh, "  const double *ax = &qmem[~a]; ~%", 0*NC),
+  printf(fh, "  const double *ay = &qmem[~a]; ~%", 1*NC),
+  printf(fh, "  const double *az = &qmem[~a]; ~%", 2*NC),
+  printf(fh, "  const double *Bx = &qmem[~a]; ~%", 3*NC),
+  printf(fh, "  const double *By = &qmem[~a]; ~%", 4*NC),
+  printf(fh, "  const double *Bz = &qmem[~a]; ~%", 5*NC),
+  printf(fh, "~%"),
+  printf(fh, "  const double *rho = &fluid[~a]; ~%", 0*NC),
+  printf(fh, "  const double *rhoux = &fluid[~a]; ~%", 1*NC),
+  printf(fh, "  const double *rhouy = &fluid[~a]; ~%", 2*NC),
+  printf(fh, "  const double *rhouz = &fluid[~a]; ~%", 3*NC),
+  printf(fh, "~%"),
+
+  /* No source term for density */
+  printf(fh, "  double *out_rhoux = &out[~a]; ~%", 1*NC),
+  printf(fh, "  double *out_rhouy = &out[~a]; ~%", 2*NC),
+  printf(fh, "  double *out_rhouz = &out[~a]; ~%", 3*NC),
+  if not isIso then printf(fh, "  double *out_energy = &out[~a]; ~%", 4*NC),
+  printf(fh, "~%"),
+
+  ax_e : doExpand1(ax, bC),
+  ay_e : doExpand1(ay, bC),
+  az_e : doExpand1(az, bC),
+  Bx_e : doExpand1(Bx, bC),
+  By_e : doExpand1(By, bC),
+  Bz_e : doExpand1(Bz, bC),
+
+  rho_e : doExpand1(rho, bC),
+  rhoux_e : doExpand1(rhoux, bC),
+  rhouy_e : doExpand1(rhouy, bC),
+  rhouz_e : doExpand1(rhouz, bC),
+
+  /* Momentum: rho a + rho u x (q/m B). */
+  incr_rhoux : calcInnerProdList(varsC, 1, bC, rho_e*ax_e + rhouy_e*Bz_e - rhouz_e*By_e),
+  writeCIncrExprs1(out_rhoux, incr_rhoux),
   printf(fh, "~%"),
   flush_output(fh),
+
+  incr_rhouy : calcInnerProdList(varsC, 1, bC, rho_e*ay_e + rhouz_e*Bx_e - rhoux_e*Bz_e),
+  writeCIncrExprs1(out_rhouy, incr_rhouy),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  incr_rhouz : calcInnerProdList(varsC, 1, bC, rho_e*az_e + rhoux_e*By_e - rhouy_e*Bx_e),
+  writeCIncrExprs1(out_rhouz, incr_rhouz),
+  printf(fh, "~%"),
+  flush_output(fh),
+
+  /* Energy: rho u . a (the magnetic force does no work). */
+  if not isIso then (
+    incr_energy : calcInnerProdList(varsC, 1, bC, rhoux_e*ax_e + rhouy_e*ay_e + rhouz_e*az_e),
+    writeCIncrExprs1(out_energy, incr_energy),
+    printf(fh, "~%"),
+    flush_output(fh)
+  ),
+
+  /* Rate of the source from the cell averages (coefficient of the constant basis function over
+     sqrt(2^cdim)). */
+  if isIso then (
+    /* No internal energy to keep positive: only the frequencies of the source. */
+    printf(fh, "  const double avg = ~a; ~%", float(1/sqrt(2^cdim))),
+    printf(fh, "  const double Bx_a = avg*Bx[0], By_a = avg*By[0], Bz_a = avg*Bz[0]; ~%"),
+    printf(fh, "  return sqrt(omega_p_sq[0]) + sqrt(Bx_a*Bx_a + By_a*By_a + Bz_a*Bz_a); ~%")
+  ) else (
+    printf(fh, "  const double avg = ~a; ~%", float(1/sqrt(2^cdim))),
+    printf(fh, "  const double rho_a = avg*rho[0], Mx_a = avg*rhoux[0], My_a = avg*rhouy[0], Mz_a = avg*rhouz[0]; ~%"),
+    printf(fh, "  const double E_a = avg*fluid[~a]; ~%", 4*NC),
+    printf(fh, "  const double ax_a = avg*ax[0], ay_a = avg*ay[0], az_a = avg*az[0]; ~%"),
+    printf(fh, "  const double Bx_a = avg*Bx[0], By_a = avg*By[0], Bz_a = avg*Bz[0]; ~%"),
+    printf(fh, "  const double fx = rho_a*ax_a + My_a*Bz_a - Mz_a*By_a; ~%"),
+    printf(fh, "  const double fy = rho_a*ay_a + Mz_a*Bx_a - Mx_a*Bz_a; ~%"),
+    printf(fh, "  const double fz = rho_a*az_a + Mx_a*By_a - My_a*Bx_a; ~%"),
+    printf(fh, "  const double e_a = E_a - 0.5*(Mx_a*Mx_a + My_a*My_a + Mz_a*Mz_a)/rho_a; ~%"),
+    printf(fh, "  const double rate_freq = sqrt(omega_p_sq[0]) + sqrt(Bx_a*Bx_a + By_a*By_a + Bz_a*Bz_a); ~%"),
+    printf(fh, "  const double rate_accel = sqrt(2.0*(fx*fx + fy*fy + fz*fz)/(rho_a*e_a)); ~%"),
+    printf(fh, "  return fmax(rate_freq, rate_accel); ~%")
+  ),
+  printf(fh, "~%"),
 
   printf(fh, "} ~%")
 )$
