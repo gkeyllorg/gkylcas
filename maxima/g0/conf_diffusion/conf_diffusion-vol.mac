@@ -1,0 +1,65 @@
+load("modal-basis")$
+load("out-scripts")$
+load("utilities")$
+load(stringproc)$
+fpprec : 24$
+
+/* Generate the volume kernel for configuration-space diffusion using one
+   integration by parts. */
+conf_diffusion_gen_vol_ker(fh, funcNm, cdim, basisType, polyOrder) := block(
+  [vars,basis,numBasis,K_c,K_e,Jinv_c,Jinv_e,f_c,f_e,vol_incr_c,
+   pOrderFact,KAv,JinvAv,rdx2,rdx2Sq,metricScale,dir,derivDir],
+
+  printf(fh, "GKYL_CU_DH double ~a(const double *w, const double *dx, const double *K, const double *jacobgeo_inv, const double *f, double* GKYL_RESTRICT out) ~%{~%", funcNm),
+  printf(fh, "  // w[NDIM]: Cell-center coordinates.~%"),
+  printf(fh, "  // dx[NDIM]: Cell spacing.~%"),
+  printf(fh, "  // K: Full tensor K^{ij}=J D g^{ij}, stored by tensor component.~%"),
+  printf(fh, "  // jacobgeo_inv: 1/J, used in the CFL estimate.~%"),
+  printf(fh, "  // f: Physical scalar field N/J.~%"),
+  printf(fh, "  // out: Incremented output.~%~%"),
+  [vars,basis] : loadBasis(basisType, cdim, polyOrder),
+  numBasis : length(basis),
+
+  rdx2 : makelist(concat(rdx2,dir-1),dir,1,cdim),
+  rdx2Sq : makelist(concat(rdx2sq,dir-1),dir,1,cdim),
+  for dir : 1 thru cdim do
+    (printf(fh, "  const double ~a = 2.0/dx[~a];~%",
+      rdx2[dir],dir-1),
+    printf(fh, "  const double ~a = pow(2.0/dx[~a],2.0);~%",
+      rdx2Sq[dir],dir-1)),
+  printf(fh, "~%"),
+
+  K_c : makelist(makelist(
+    makelist(K[((dir-1)*cdim+(derivDir-1))*numBasis+i-1],i,1,numBasis),
+    derivDir,1,cdim),dir,1,cdim),
+  K_e : makelist(makelist(doExpand(K_c[dir][derivDir],basis),
+    derivDir,1,cdim),dir,1,cdim),
+  Jinv_c : makelist(jacobgeo_inv[i-1],i,1,numBasis),
+  Jinv_e : doExpand(Jinv_c,basis),
+  f_c : makelist(f[i-1],i,1,numBasis),
+  f_e : doExpand(f_c,basis),
+
+  /* One integration by parts: -int d_i(phi) K^{ij} d_j(f) dx. */
+  vol_incr_c : makelist(0,i,1,numBasis),
+  for dir : 1 thru cdim do
+    for derivDir : 1 thru cdim do (
+      metricScale : if dir=derivDir then rdx2Sq[dir]
+        else rdx2[dir]*rdx2[derivDir],
+      vol_incr_c : vol_incr_c+metricScale
+        *calcInnerProdList(vars, -1,
+          diff(basis,vars[dir])*K_e[dir][derivDir],
+          diff(f_e,vars[derivDir]))
+    ),
+  writeCIncrExprs1(out, vol_incr_c),
+  printf(fh, "~%"),
+
+  pOrderFact : (polyOrder+1)^2,
+  KAv : makelist(makelist(fullratsimp(
+    innerProd(vars,1,1,K_e[dir][derivDir])/innerProd(vars,1,1,1)),
+    derivDir,1,cdim),dir,1,cdim),
+  JinvAv : fullratsimp(innerProd(vars,1,1,Jinv_e)/innerProd(vars,1,1,1)),
+  printf(fh, "  return ~a;~%",
+    float(expand(pOrderFact*JinvAv
+      *apply("+",makelist(KAv[dir][dir]*rdx2Sq[dir],dir,1,cdim))))),
+  printf(fh, "}~%")
+)$

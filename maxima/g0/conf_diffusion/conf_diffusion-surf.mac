@@ -1,0 +1,135 @@
+load("modal-basis")$
+load("recovery")$
+load("out-scripts")$
+fpprec : 24$
+
+/* Generate configuration-space diffusion surface kernels using a two-cell
+   recovery polynomial for the interface derivative. */
+conf_diffusion_gen_surf_ker(fh, funcNm, cdim, basisType, polyOrder, dir,
+  derivDir) := block(
+  [vars,basis,numBasis,surfVar,surfIntVars,Kl_c,Kc_c,Kr_c,Kl_e,Kc_e,Kr_e,
+   fl_c,fc_c,fr_c,fRecl_e,KAv_l,surf_incr_l_c,fRecr_e,KAv_r,
+   surf_incr_r_c,surf_l_out,surf_r_out,rdx2,rdx2Sq,metricScale,d],
+
+  [vars,basis] : loadBasis(basisType, cdim, polyOrder),
+  numBasis : length(basis),
+  surfVar : vars[dir],
+  surfIntVars : delete(surfVar,vars),
+
+  printf(fh, "GKYL_CU_DH double ~a(const double *wc, const double *dxc, const double *Kl, const double *Kc, const double *Kr, const double *fl, const double *fc, const double *fr, double* GKYL_RESTRICT out) ~%{~%", funcNm),
+  printf(fh, "  // wc[NDIM]: Cell-center coordinates.~%"),
+  printf(fh, "  // dxc[NDIM]: Cell spacing.~%"),
+  printf(fh, "  // Kl/Kc/Kr: K^{ij}=J D g^{ij} in neighboring cells.~%"),
+  printf(fh, "  // fl/fc/fr: Scalar field in the left/center/right cells.~%"),
+  printf(fh, "  // out: Incremented output.~%~%"),
+  rdx2 : makelist(concat(rdx2,d-1),d,1,cdim),
+  rdx2Sq : makelist(concat(rdx2sq,d-1),d,1,cdim),
+  for d : 1 thru cdim do
+    (printf(fh, "  const double ~a = 2.0/dxc[~a];~%",
+      rdx2[d],d-1),
+    printf(fh, "  const double ~a = pow(2.0/dxc[~a],2.0);~%",
+      rdx2Sq[d],d-1)),
+  printf(fh,"~%"),
+
+  Kl_c : makelist(makelist(Kl[((dir-1)*cdim+(d-1))*numBasis+i-1],
+    i,1,numBasis),d,1,cdim),
+  Kc_c : makelist(makelist(Kc[((dir-1)*cdim+(d-1))*numBasis+i-1],
+    i,1,numBasis),d,1,cdim),
+  Kr_c : makelist(makelist(Kr[((dir-1)*cdim+(d-1))*numBasis+i-1],
+    i,1,numBasis),d,1,cdim),
+  Kl_e : makelist(doExpand(Kl_c[d],basis),d,1,cdim),
+  Kc_e : makelist(doExpand(Kc_c[d],basis),d,1,cdim),
+  Kr_e : makelist(doExpand(Kr_c[d],basis),d,1,cdim),
+  fl_c : makelist(fl[i-1],i,1,numBasis),
+  fc_c : makelist(fc[i-1],i,1,numBasis),
+  fr_c : makelist(fr[i-1],i,1,numBasis),
+
+  /* Recover both interfaces once, then emit each tensor-derivative/interface
+     contribution separately. Keeping the generated expressions independent
+     materially reduces CUDA register pressure and device-stack spilling in
+     3x while preserving the same sum. */
+  fRecl_e : calcRecov2CellGen(basisType, surfVar, vars, polyOrder,
+    dg(fl_c),dg(fc_c)),
+  fRecr_e : calcRecov2CellGen(basisType, surfVar, vars, polyOrder,
+    dg(fc_c),dg(fr_c)),
+  metricScale : if dir=derivDir then rdx2Sq[dir]
+    else rdx2[dir]*rdx2[derivDir],
+  KAv_l : (subst(surfVar=1,Kl_e[derivDir])
+    +subst(surfVar=-1,Kc_e[derivDir]))/2,
+  surf_incr_l_c : metricScale
+    *calcInnerProdList(surfIntVars, -1, subst(surfVar=-1,basis),
+      KAv_l*subst(surfVar=0,diff(fRecl_e,vars[derivDir]))),
+  KAv_r : (subst(surfVar=1,Kc_e[derivDir])
+    +subst(surfVar=-1,Kr_e[derivDir]))/2,
+  surf_incr_r_c : metricScale
+    *calcInnerProdList(surfIntVars, 1, subst(surfVar=1,basis),
+      KAv_r*subst(surfVar=0,diff(fRecr_e,vars[derivDir]))),
+  surf_l_out : makelist(surf_incr_l_c[i],i,1,numBasis),
+  surf_r_out : makelist(surf_incr_r_c[i],i,1,numBasis),
+  writeCIncrExprsNoExpand1(out,surf_l_out),
+  writeCIncrExprsNoExpand1(out,surf_r_out),
+  printf(fh, "~%  return 0.;~%"),
+  printf(fh, "}~%")
+)$
+
+/* Generate a one-sided natural-boundary kernel. The exterior physical-face
+   flux is zero, so only the recovery contribution at the skin/edge-cell
+   interface is retained. This avoids constructing reflected ghost fields in
+   the runtime wrapper (and, in particular, large device-stack temporaries). */
+conf_diffusion_gen_boundary_surf_ker(fh, funcNm, cdim, basisType,
+  polyOrder, dir, derivDir) := block(
+  [vars,basis,numBasis,surfVar,surfIntVars,Kedge_c,Kskin_c,Kedge_e,Kskin_e,
+   fedge_c,fskin_c,fRecr_e,fRecl_e,KAv,edge_incr_c,edge_out,rdx2,rdx2Sq,
+   metricScale,d],
+
+  [vars,basis] : loadBasis(basisType, cdim, polyOrder),
+  numBasis : length(basis),
+  surfVar : vars[dir],
+  surfIntVars : delete(surfVar,vars),
+
+  printf(fh, "GKYL_CU_DH double ~a(const double *wskin, const double *dxskin, const double *Kedge, const double *Kskin, int edge, const double *fedge, const double *fskin, double* GKYL_RESTRICT out) ~%{~%", funcNm),
+  printf(fh, "  // Zero normal flux at the physical face; edge is the adjacent interior cell.~%"),
+  printf(fh, "  // edge: -1 for the lower physical boundary, +1 for the upper boundary.~%~%"),
+  rdx2 : makelist(concat(rdx2,d-1),d,1,cdim),
+  rdx2Sq : makelist(concat(rdx2sq,d-1),d,1,cdim),
+  for d : 1 thru cdim do
+    (printf(fh, "  const double ~a = 2.0/dxskin[~a];~%",
+      rdx2[d],d-1),
+    printf(fh, "  const double ~a = pow(2.0/dxskin[~a],2.0);~%",
+      rdx2Sq[d],d-1)),
+  printf(fh,"~%"),
+
+  Kedge_c : makelist(makelist(Kedge[((dir-1)*cdim+(d-1))*numBasis+i-1],
+    i,1,numBasis),d,1,cdim),
+  Kskin_c : makelist(makelist(Kskin[((dir-1)*cdim+(d-1))*numBasis+i-1],
+    i,1,numBasis),d,1,cdim),
+  Kedge_e : makelist(doExpand(Kedge_c[d],basis),d,1,cdim),
+  Kskin_e : makelist(doExpand(Kskin_c[d],basis),d,1,cdim),
+  fedge_c : makelist(fedge[i-1],i,1,numBasis),
+  fskin_c : makelist(fskin[i-1],i,1,numBasis),
+
+  printf(fh, "  if (edge == -1) {~%"),
+  fRecr_e : calcRecov2CellGen(basisType, surfVar, vars, polyOrder,
+    dg(fskin_c),dg(fedge_c)),
+  metricScale : if dir=derivDir then rdx2Sq[dir]
+    else rdx2[dir]*rdx2[derivDir],
+  KAv : (subst(surfVar=1,Kskin_e[derivDir])
+    +subst(surfVar=-1,Kedge_e[derivDir]))/2,
+  edge_incr_c : metricScale
+    *calcInnerProdList(surfIntVars, 1, subst(surfVar=1,basis),
+      KAv*subst(surfVar=0,diff(fRecr_e,vars[derivDir]))),
+  edge_out : makelist(edge_incr_c[i],i,1,numBasis),
+  writeCIncrExprsNoExpand1(out,edge_out),
+
+  printf(fh, "  } else {~%"),
+  fRecl_e : calcRecov2CellGen(basisType, surfVar, vars, polyOrder,
+    dg(fedge_c),dg(fskin_c)),
+  KAv : (subst(surfVar=1,Kedge_e[derivDir])
+    +subst(surfVar=-1,Kskin_e[derivDir]))/2,
+  edge_incr_c : metricScale
+    *calcInnerProdList(surfIntVars, -1, subst(surfVar=-1,basis),
+      KAv*subst(surfVar=0,diff(fRecl_e,vars[derivDir]))),
+  edge_out : makelist(edge_incr_c[i],i,1,numBasis),
+  writeCIncrExprsNoExpand1(out,edge_out),
+  printf(fh, "  }~%~%  return 0.;~%}~%")
+)$
