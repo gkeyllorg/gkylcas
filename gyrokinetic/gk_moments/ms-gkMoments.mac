@@ -1,7 +1,8 @@
+if not boundp('gk_mom_output_dir) then gk_mom_output_dir : "~/max-out"$
 /* Generate kernels that compute the moments of the gyrocenter distribution function
    for use by the gyrokinetic solver. */
 
-load("gyrokinetic/gk_moments/gkMomentsFuncs.mac")$
+load("gyrokinetic/gk_moments/gkMomentsFuncs")$
 load(stringproc)$
 
 /* ...... USER INPUTS........ */
@@ -40,14 +41,14 @@ for bInd : 1 thru length(bName) do (
 
       minPolyOrderB : minPolyOrder[bInd],
       maxPolyOrderB : maxPolyOrder[bInd],
-      if (c+v>4 and maxPolyOrderB > 2) then maxPolyOrderB : 1,
+      if (c+v>4 and maxPolyOrderB > 1) then maxPolyOrderB : 1,
 
       /* gyrokinetic moment calculators. */
       for polyOrder : minPolyOrderB thru maxPolyOrderB do (
         disp(printf(false,sconcat("Creating Gyrokinetic Moments ~ax ~av p~a ", bName[bInd]),c,v,polyOrder)),
-        fname : sconcat("~/max-out/gyrokinetic_mom_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
+        fname : sconcat(gk_mom_output_dir, "/mom_gyrokinetic_", c, "x", v, "v_", bName[bInd], "_p", polyOrder, ".c"),
         fh : openw(fname),
-        funcName : sconcat("gyrokinetic"),
+        funcName : "mom_gyrokinetic",
         calcGkMoments(fh, funcName, c, v, bName[bInd], polyOrder),
         close(fh)
       )

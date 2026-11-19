@@ -1,0 +1,472 @@
+/* Functions that compute the weighted
+   integrated moments of the distribution function in gyrokinetic model. */
+
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("gyrokinetic/utilities_gyrokinetic.mac")$
+load(stringproc)$
+fpprec : 24$
+
+volExpr(totDim) := prod(dxv[i-1], i, 1, totDim)$
+
+/* Expand a weight in the velocity basis associated with the distribution. */
+velocityWeightExpansion(vdim, polyOrder) := block(
+  [basisData],
+  basisData : loadGkBasis("ser", 0, vdim, polyOrder),
+  return(doExpand1(wgt, basisData[4]))
+)$
+
+get_weight_exp_label(weight_space, bC) := block(
+  [wgt_e,wgt_label],
+  /* Get the expanded weight and file name label. */
+  wgt_e : 1,
+  wgt_label : "NOWEIGHT_",
+  if (weight_space = "conf") then (
+    wgt_label : "WEIGHTX_",
+    wgt_e : doExpand1(wgt, bC)
+  ),
+  if weight_space = "vel" then wgt_label : "WEIGHTV_",
+  return ([wgt_e, wgt_label])
+)$
+
+/* Integrated M0. */
+calcGkIntWeightedM0(fh, funcNm, cdim, vdim, basisFun, polyOrder, weight_space) := block(
+  [varsC,bC,varsP,bP,vSub,vmap_e,vmapSq_e,vmap_prime_e,vmap_c,
+   d,f_e,M,m0,tempPowVars,wgt_e,wgt_label],
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_c : [],
+  for d : 1 thru vdim do (
+    vmap_c : append( vmap_c, delete(mu,delete(vpar,listofvars(vmap_e[d]))) )
+  ),
+
+  [wgt_e, wgt_label] : get_weight_exp_label(weight_space, bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_M0_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, wgt_label, cdim, vdim, basisFun, polyOrder),
+
+  if vdim = 1 then
+    printf(fh, "  const double volFact = ~a; ~%", volExpr(cdim+vdim)*float(1/(2^(cdim+vdim))) )
+  else
+    printf(fh, "  const double volFact = ~a/m_; ~%", volExpr(cdim+vdim)*float(2*%pi/(2^(cdim+vdim))) ),
+
+  printf(fh, " ~%"),
+
+  f_e : doExpand1(f, bP),
+  if weight_space = "vel" then f_e : expand(f_e*velocityWeightExpansion(vdim, polyOrder)),
+
+  M : [],
+
+  m0 : fullratsimp(innerProd(varsP, wgt_e, 1, f_e)),
+  M  : endcons(m0,M),
+
+  M : map(letsimp, M),
+
+  tempPowVars : [],
+  tempPowVars : writeCIncrExprsCollect1noPowers(out, volFact*M, [volFact], [vmap_c], tempPowVars),
+
+  printf(fh, "} ~%~%")
+)$
+
+/* Integrated parallel momentum (M1). */
+calcGkIntWeightedM1(fh, funcNm, cdim, vdim, basisFun, polyOrder, weight_space) := block(
+  [varsC,bC,varsP,bP,vSub,vmap_e,vmapSq_e,vmap_prime_e,vmap_c,
+   d,f_e,M,m1,tempPowVars,wgt_e,wgt_label],
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_c : [],
+  for d : 1 thru vdim do (
+    vmap_c : append( vmap_c, delete(mu,delete(vpar,listofvars(vmap_e[d]))) )
+  ),
+
+  [wgt_e, wgt_label] : get_weight_exp_label(weight_space, bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_M1_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, wgt_label, cdim, vdim, basisFun, polyOrder),
+
+  if vdim = 1 then
+    printf(fh, "  const double volFact = ~a; ~%", volExpr(cdim+vdim)*float(1/(2^(cdim+vdim))) )
+  else
+    printf(fh, "  const double volFact = ~a/m_; ~%", volExpr(cdim+vdim)*float(2*%pi/(2^(cdim+vdim))) ),
+
+  printf(fh, " ~%"),
+
+  f_e : doExpand1(f, bP),
+  if weight_space = "vel" then f_e : expand(f_e*velocityWeightExpansion(vdim, polyOrder)),
+
+  M : [],
+
+  m1 : fullratsimp(innerProd(varsP, wgt_e, vmap_e[1], f_e)),
+  M  : endcons(m1,M),
+
+  M : map(letsimp, M),
+
+  tempPowVars : [],
+  tempPowVars : writeCIncrExprsCollect1noPowers(out, volFact*M, [volFact], [vmap_c], tempPowVars),
+
+  printf(fh, "} ~%~%")
+)$
+
+/* Integrated parallel particle kinetic energy (M2par). */
+calcGkIntWeightedM2par(fh, funcNm, cdim, vdim, basisFun, polyOrder, weight_space) := block(
+  [varsC,bC,varsP,bP,vSub,vmap_e,vmapSq_e,vmap_prime_e,vmap_c,
+   d,f_e,M,m2par,bmag_e,Mtemp,tmp_e,tempPowVars,wgt_e,wgt_label],
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_c : [],
+  for d : 1 thru vdim do (
+    vmap_c : append( vmap_c, delete(mu,delete(vpar,listofvars(vmap_e[d]))) )
+  ),
+
+  [wgt_e, wgt_label] : get_weight_exp_label(weight_space, bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_M2PAR_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, wgt_label, cdim, vdim, basisFun, polyOrder),
+
+  if vdim = 1 then
+    printf(fh, "  const double volFact = ~a; ~%", volExpr(cdim+vdim)*float(1/(2^(cdim+vdim))) )
+  else
+    printf(fh, "  const double volFact = ~a/m_; ~%", volExpr(cdim+vdim)*float(2*%pi/(2^(cdim+vdim))) ),
+
+  printf(fh, " ~%"),
+
+  f_e : doExpand1(f, bP),
+  if weight_space = "vel" then f_e : expand(f_e*velocityWeightExpansion(vdim, polyOrder)),
+
+  M : [],
+
+  m2par : fullratsimp(innerProd(varsP, wgt_e, (vmap_e[1])^2, f_e)),
+  M : endcons(m2par, M),
+
+  M : map(letsimp, M),
+
+  tempPowVars : [],
+  tempPowVars : writeCIncrExprsCollect1noPowers(out, volFact*M, [volFact], [vmap_c], tempPowVars),
+
+  printf(fh, "} ~%~%")
+)$
+
+/* Integrated perpendicular particle kinetic energy (M2perp). */
+calcGkIntWeightedM2perp(fh, funcNm, cdim, vdim, basisFun, polyOrder, weight_space) := block(
+  [varsC,bC,varsP,bP,vSub,vmap_e,vmapSq_e,vmap_prime_e,vmap_c,
+   d,f_e,M,m2perp,bmag_e,Mtemp,tmp_e,tempPowVars,wgt_e,wgt_label],
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_c : [],
+  for d : 1 thru vdim do (
+    vmap_c : append( vmap_c, delete(mu,delete(vpar,listofvars(vmap_e[d]))) )
+  ),
+
+  [wgt_e, wgt_label] : get_weight_exp_label(weight_space, bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_M2PERP_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, wgt_label, cdim, vdim, basisFun, polyOrder),
+
+  printf(fh, "  const double volFact = ~a/m_; ~%", volExpr(cdim+vdim)*float(2*%pi/(2^(cdim+vdim))) ),
+
+  printf(fh, " ~%"),
+
+  f_e : doExpand1(f, bP),
+  if weight_space = "vel" then f_e : expand(f_e*velocityWeightExpansion(vdim, polyOrder)),
+
+  M : [],
+
+  bmag_e : doExpand1(bmag, bC),
+
+  Mtemp : calcInnerProdList(varsP, vmap_e[2], bC, f_e),
+  Mtemp : map(letsimp, Mtemp),
+
+  printf(fh, "  double tmp[~a]; ~%", length(bC)),
+
+  writeCExprs1(tmp, 2/m_*Mtemp),
+  printf(fh, " ~%"),
+  tmp_e : doExpand1(tmp, bC),
+
+  m2perp : fullratsimp(innerProd(varsC, wgt_e, bmag_e, tmp_e)),
+
+  M : endcons(m2perp, M),
+
+  M : map(letsimp, M),
+
+  tempPowVars : [],
+  tempPowVars : writeCIncrExprsCollect1noPowers(out, volFact*M, [volFact,m_], [vmap_c], tempPowVars),
+
+  printf(fh, "} ~%~%")
+)$
+
+
+/* Integrated particle kinetic energy (M2). */
+calcGkIntWeightedM2(fh, funcNm, cdim, vdim, basisFun, polyOrder, weight_space) := block(
+  [varsC,bC,varsP,bP,vSub,vmap_e,vmapSq_e,vmap_prime_e,vmap_c,
+   d,f_e,M,m2,bmag_e,Mtemp,tmp_e,tempPowVars,wgt_e,wgt_label],
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_c : [],
+  for d : 1 thru vdim do (
+    vmap_c : append( vmap_c, delete(mu,delete(vpar,listofvars(vmap_e[d]))) )
+  ),
+
+  [wgt_e, wgt_label] : get_weight_exp_label(weight_space, bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_M2_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, wgt_label, cdim, vdim, basisFun, polyOrder),
+
+  if vdim = 1 then
+    printf(fh, "  const double volFact = ~a; ~%", volExpr(cdim+vdim)*float(1/(2^(cdim+vdim))) )
+  else
+    printf(fh, "  const double volFact = ~a/m_; ~%", volExpr(cdim+vdim)*float(2*%pi/(2^(cdim+vdim))) ),
+
+  printf(fh, " ~%"),
+
+  f_e : doExpand1(f, bP),
+  if weight_space = "vel" then f_e : expand(f_e*velocityWeightExpansion(vdim, polyOrder)),
+
+  M : [],
+
+  m2 : fullratsimp(innerProd(varsP, wgt_e, (vmap_e[1])^2, f_e)),
+  if (vdim > 1) then (
+    bmag_e : doExpand1(bmag, bC),
+
+    Mtemp : calcInnerProdList(varsP, vmap_e[2], bC, f_e),
+    Mtemp : map(letsimp, Mtemp),
+
+    printf(fh, "  double tmp[~a]; ~%", length(bC)),
+
+    writeCExprs1(tmp, 2/m_*Mtemp),
+    printf(fh, " ~%"),
+    tmp_e : doExpand1(tmp, bC),
+
+    m2 : m2+fullratsimp(innerProd(varsC, wgt_e, bmag_e, tmp_e))
+  ),
+  M : endcons(m2, M),
+
+  M : map(letsimp, M),
+
+  tempPowVars : [],
+  tempPowVars : writeCIncrExprsCollect1noPowers(out, volFact*M, [volFact,m_], [vmap_c], tempPowVars),
+
+  printf(fh, "} ~%~%")
+)$
+
+calcGkIntWeightedM0M1M2(fh, funcNm, cdim, vdim, basisFun, polyOrder, weight_space) := block(
+  [varsC,bC,varsP,bP,vSub,vmap_e,vmapSq_e,vmap_prime_e,vmap_c,
+   d,f_e,M,m0,m1,m2,bmag_e,Mtemp,tmp_e,tempPowVars,wgt_e,wgt_label],
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_c : [],
+  for d : 1 thru vdim do (
+    vmap_c : append( vmap_c, delete(mu,delete(vpar,listofvars(vmap_e[d]))) )
+  ),
+
+  [wgt_e, wgt_label] : get_weight_exp_label(weight_space, bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_M0M1M2_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, wgt_label, cdim, vdim, basisFun, polyOrder),
+
+  if vdim = 1 then
+    printf(fh, "  const double volFact = ~a; ~%", volExpr(cdim+vdim)*float(1/(2^(cdim+vdim))) )
+  else
+    printf(fh, "  const double volFact = ~a/m_; ~%", volExpr(cdim+vdim)*float(2*%pi/(2^(cdim+vdim))) ),
+
+  printf(fh, " ~%"),
+
+  f_e : doExpand1(f, bP),
+  if weight_space = "vel" then f_e : expand(f_e*velocityWeightExpansion(vdim, polyOrder)),
+
+  M : [],
+
+  /* Integrated M0. */
+  m0 : fullratsimp(innerProd(varsP, wgt_e, 1, f_e)),
+  M  : endcons(m0,M),
+
+  /* Integrated parallel momentum (M1). */
+  m1 : fullratsimp(innerProd(varsP, wgt_e, vmap_e[1], f_e)),
+  M  : endcons(m1,M),
+
+  /* Integrated particle kinetic energy (M2). */
+  m2 : fullratsimp(innerProd(varsP, wgt_e, (vmap_e[1])^2, f_e)),
+  if (vdim > 1) then (
+    bmag_e : doExpand1(bmag, bC),
+
+    Mtemp : calcInnerProdList(varsP, vmap_e[2], bC, f_e),
+    Mtemp : map(letsimp, Mtemp),
+
+    printf(fh, "  double tmp[~a]; ~%", length(bC)),
+
+    writeCExprs1(tmp, 2/m_*Mtemp),
+    printf(fh, " ~%"),
+    tmp_e : doExpand1(tmp, bC),
+
+    m2 : m2+fullratsimp(innerProd(varsC, wgt_e, bmag_e, tmp_e))
+  ),
+  M : endcons(m2, M),
+
+  M : map(letsimp, M),
+
+  tempPowVars : [],
+  tempPowVars : writeCIncrExprsCollect1noPowers(out, volFact*M, [volFact,m_], [vmap_c], tempPowVars),
+
+  printf(fh, "} ~%~%")
+)$
+
+calcGkIntWeightedM0M1M2parM2perp(fh, funcNm, cdim, vdim, basisFun, polyOrder, weight_space) := block(
+  [varsC,bC,varsP,bP,vSub,vmap_e,vmapSq_e,vmap_prime_e,vmap_c,
+   d,f_e,M,m0,m1,m2par,bmag_e,Mtemp,tmp_e,m2perp,tempPowVars,wgt_e,wgt_label],
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_c : [],
+  for d : 1 thru vdim do (
+    vmap_c : append( vmap_c, delete(mu,delete(vpar,listofvars(vmap_e[d]))) )
+  ),
+
+  [wgt_e, wgt_label] : get_weight_exp_label(weight_space, bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_M0M1M2PARM2PERP_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, wgt_label, cdim, vdim, basisFun, polyOrder),
+
+  if vdim = 1 then
+    printf(fh, "  const double volFact = ~a; ~%", volExpr(cdim+vdim)*float(1/(2^(cdim+vdim))) )
+  else
+    printf(fh, "  const double volFact = ~a/m_; ~%", volExpr(cdim+vdim)*float(2*%pi/(2^(cdim+vdim))) ),
+
+  printf(fh, " ~%"),
+
+  f_e : doExpand1(f, bP),
+  if weight_space = "vel" then f_e : expand(f_e*velocityWeightExpansion(vdim, polyOrder)),
+
+  M : [],
+
+  /* Integrated M0. */
+  m0 : fullratsimp(innerProd(varsP, wgt_e, 1, f_e)),
+  M  : endcons(m0,M),
+
+  /* Integrated parallel momentum (M0 upar). */
+  m1 : fullratsimp(innerProd(varsP, wgt_e, vmap_e[1], f_e)),
+  M  : endcons(m1,M),
+
+  /* Integrated parallel particle energy (M2par). */
+  m2par : fullratsimp(innerProd(varsP, wgt_e, (vmap_e[1])^2, f_e)),
+  M  : endcons(m2par, M),
+
+  if (vdim > 1) then (
+    bmag_e : doExpand1(bmag, bC),
+
+    Mtemp : calcInnerProdList(varsP, vmap_e[2], bC, f_e),
+    Mtemp : map(letsimp, Mtemp),
+
+    printf(fh, "  double tmp[~a]; ~%", length(bC)),
+
+    writeCExprs1(tmp, 2/m_*Mtemp),
+    printf(fh, " ~%"),
+    tmp_e : doExpand1(tmp, bC),
+
+    m2perp : fullratsimp(innerProd(varsC, wgt_e, bmag_e, tmp_e)),
+    M : endcons(m2perp, M)
+  ),
+
+  M : map(letsimp, M),
+
+  tempPowVars : [],
+  tempPowVars : writeCIncrExprsCollect1noPowers(out, volFact*M, [volFact,m_], [vmap_c], tempPowVars),
+
+
+  printf(fh, "} ~%~%")
+)$
+
+calcGkIntWeightedHamiltonian(fh, funcNm, cdim, vdim, basisFun, polyOrder, weight_space) := block(
+  [varsC,bC,varsP,bP,vSub,vmap_e,vmapSq_e,vmap_prime_e,vmap_c,
+   d,f_e,M,M0,mM1,mM2,bmag_e,phi_e,Mtemp,tmp_e,tempPowVars,Ham,wgt_e,wgt_label],
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis(basisFun, cdim, vdim, polyOrder),
+
+  [vmap_e,vmapSq_e,vmap_prime_e] : expandVmapFields(varsP),
+
+  vmap_c : [],
+  for d : 1 thru vdim do (
+    vmap_c : append( vmap_c, delete(mu,delete(vpar,listofvars(vmap_e[d]))) )
+  ),
+
+  [wgt_e, wgt_label] : get_weight_exp_label(weight_space, bC),
+
+  printf(fh, "GKYL_CU_DH void ~a_HAMILTONIAN_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, wgt_label, cdim, vdim, basisFun, polyOrder),
+
+  if vdim = 1 then
+    printf(fh, "  const double volFact = ~a; ~%", volExpr(cdim+vdim)*float(1/(2^(cdim+vdim))) )
+  else
+    printf(fh, "  const double volFact = ~a/m_; ~%", volExpr(cdim+vdim)*float(2*%pi/(2^(cdim+vdim))) ),
+
+  printf(fh, " ~%"),
+
+  f_e : doExpand1(f, bP),
+  if weight_space = "vel" then f_e : expand(f_e*velocityWeightExpansion(vdim, polyOrder)),
+
+  M : [],
+
+  /* Integrated M0. */
+  M0 : fullratsimp(innerProd(varsP, wgt_e, 1, f_e)),
+  M  : endcons(M0,M),
+
+  /* Integrated parallel momentum (m*M1). */
+  mM1 : fullratsimp(innerProd(varsP, wgt_e, vmap_e[1], m_*f_e)),
+  M  : endcons(mM1,M),
+
+  /* Integrated particle energy (H). */
+  phi_e : doExpand1(wgt, bC),
+  Ham : fullratsimp(innerProd(varsP, wgt_e, (m_/2)*(vmap_e[1])^2+q_*phi_e, f_e)),
+  if (vdim > 1) then (
+    bmag_e : doExpand1(bmag, bC),
+
+    Mtemp : calcInnerProdList(varsP, vmap_e[2], bC, f_e),
+    Mtemp : map(letsimp, Mtemp),
+
+    printf(fh, "  double tmp[~a]; ~%", length(bC)),
+
+    writeCExprs1(tmp, Mtemp),
+    printf(fh, " ~%"),
+    tmp_e : doExpand1(tmp, bC),
+
+    Ham : Ham+fullratsimp(innerProd(varsC, wgt_e, bmag_e, tmp_e))
+  ),
+  M : endcons(Ham, M),
+
+  M : map(letsimp, M),
+
+  tempPowVars : [],
+  tempPowVars : writeCIncrExprsCollect1noPowers(out, volFact*M, [volFact,m_], [vmap_c], tempPowVars),
+
+  printf(fh, "} ~%~%")
+)$
+
+calcIntWeightedMoments(fh, funcNm, cdim, vdim, basisFun, polyOrder) := block([],
+  printf(fh, "#include <gkyl_mom_weighted_gyrokinetic_kernels.h> ~%"),
+  calcGkIntWeightedM0(fh, funcNm, cdim, vdim, basisFun, polyOrder, "conf"),
+  calcGkIntWeightedM0(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel"),
+  calcGkIntWeightedM1(fh, funcNm, cdim, vdim, basisFun, polyOrder, "conf"),
+  calcGkIntWeightedM1(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel"),
+  calcGkIntWeightedM2par(fh, funcNm, cdim, vdim, basisFun, polyOrder, "conf"),
+  calcGkIntWeightedM2par(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel"),
+  calcGkIntWeightedM2(fh, funcNm, cdim, vdim, basisFun, polyOrder, "conf"),
+  calcGkIntWeightedM2(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel"),
+  calcGkIntWeightedM0M1M2(fh, funcNm, cdim, vdim, basisFun, polyOrder, "conf"),
+  calcGkIntWeightedM0M1M2(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel"),
+  if vdim > 1 then (
+    calcGkIntWeightedM2perp(fh, funcNm, cdim, vdim, basisFun, polyOrder, "conf"),
+    calcGkIntWeightedM2perp(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel"),
+    calcGkIntWeightedM0M1M2parM2perp(fh, funcNm, cdim, vdim, basisFun, polyOrder, "conf"),
+    calcGkIntWeightedM0M1M2parM2perp(fh, funcNm, cdim, vdim, basisFun, polyOrder, "vel")
+  )
+)$
