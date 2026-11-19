@@ -124,9 +124,9 @@ genDiffusionGenSurfy2x(bName,dim,polyOrder) := block(
   
   printf(fh, "  const double* Dyy = &Dij[~a];~%~%", 2*numBasis),
   
-  printf(fh, "  const double* qcl = q[3];~%"),
-  printf(fh, "  const double* qcc = q[4];~%"),
-  printf(fh, "  const double* qcu = q[5];~%~%"),
+  printf(fh, "  const double* qcl = q[0];~%"),
+  printf(fh, "  const double* qcc = q[1];~%"),
+  printf(fh, "  const double* qcu = q[2];~%~%"),
   
   for i : 1 thru numBasis do (
     printf(fh, "  out[~a] += Jyy*(~a);~%", i-1,

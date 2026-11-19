@@ -1,26 +1,167 @@
+/* Serendipity basis. */
+minPolyOrder_Ser : 2$ /* pure Serendipity p=1 is not supported for the FPO */
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 1$
+
+/* Tensor product basis. */
+/* Tensor p=1 IS the tensor hybrid basis: p=1 in configuration space and p=2 in
+   velocity space. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
 fname : sconcat("~/max-out/gkyl_fpo_vlasov_kernels.h") $
 fh : openw(fname) $
-
 printf(fh, "#pragma once~%") $
 printf(fh, "#include <math.h>~%") $
-printf(fh, "#include <gkyl_util.h>~%") $
+printf(fh, "#include <gkyl_util.h>~%~%") $
 printf(fh, "EXTERN_C_BEG~%~%") $
 
-bName : "ser" $
+vdim : 3$
+bNames : ["ser", "tensor"] $
 dirs : [vx, vy, vz] $
+dirCombos : listify(cartesian_product(setify(dirs), setify(dirs)))$
+stencilStrs3 : ["lo", "in", "up"]$
+stencilStrs9 : listify(cartesian_product(setify(stencilStrs3), setify(stencilStrs3)))$
+boundaryStencilStrs9 : delete(["in","in"], stencilStrs9)$
 
-for polyOrder : 1 thru 2 do (
-  printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_drag_vol_1x3v_", bName, "_p", polyOrder, "(const double* w, const double* dx, const double* h, const double* f, double* GKYL_RESTRICT out);~%")),
-  printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_diff_vol_1x3v_", bName, "_p", polyOrder, "(const double* w, const double* dx, const double* g, const double* f, double* GKYL_RESTRICT out);~%")),
-  for d1 : 1 thru 3 do (
-    dir1 : dirs[d1],
-    for d2 : 1 thru 3 do (
-      dir2 : dirs[d2],
-      printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_drag_surf", dir1, dir2, "_1x3v_", bName, "_p", polyOrder, "(const double* w, const double* dx, const double* hl, const double* hc, const double* hu, const double* fl, const double* fc, const double* fu, double* GKYL_RESTRICT out);~%")),
-      printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_diff_surf", dir1, dir2, "_1x3v_", bName, "_p", polyOrder, "(const double* w, const double* dx, const double* g[], const double* f[], double* GKYL_RESTRICT out);~%"))
+for bInd : 1 thru length(bNames) do (
+bName : bNames[bInd],
+for c : minCdim[bInd] thru maxCdim[bInd] do (
+  minPolyOrderB : minPolyOrder[bInd],
+  maxPolyOrderB : maxPolyOrder[bInd],
+  for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+    printf(fh, sconcat("// ",c,"x3v ",bName," p",polyOrder," kernels~%")),
+
+    /* Drag coefficient */
+    for d1 : 1 thru length(dirs) do (
+      for sIdx : 1 thru length(stencilStrs3) do (
+	stencilStr : stencilStrs3[sIdx],
+        printf(fh, sconcat("GKYL_CU_DH void fpo_drag_coeff_",c,"x3v_",dirs[d1],"_",bName,"_p",polyOrder,"_",stencilStr,dirs[d1],
+        "(const double *dxv, const double *gamma, const double* fpo_h_stencil[3], const double* fpo_dhdv_surf, double *drag_coeff, double *drag_coeff_surf);~%"))
+     )
+    ),
+    printf(fh, "~%"),
+
+    /* Drag coefficient sign information */
+    for d1 : 1 thru length(dirs) do (
+      for sIdx : 1 thru length(stencilStrs3) do (
+	stencilStr : stencilStrs3[sIdx],
+        printf(fh, sconcat("GKYL_CU_DH void fpo_sgn_drag_coeff_",c,"x3v_",dirs[d1],"_",bName,"_p",polyOrder,"_",stencilStr,dirs[d1],
+	"(const double *drag_coeff_surf, double *sgn_drag_coeff_surf, int *const_sgn_drag_coeff_surf);~%"))
       )
-    )
-  ) $
+    ),
+    printf(fh, "~%"),
+
+    /* Diffusion tensor diagonal terms */
+    for d1 : 1 thru length(dirs) do (
+      for sIdx : 1 thru length(stencilStrs3) do (
+	stencilStr : stencilStrs3[sIdx],
+	printf(fh, sconcat("GKYL_CU_DH void fpo_diff_coeff_diag_",c,"x3v_",dirs[d1],"_",bName,"_p",polyOrder,"_",stencilStr, dirs[d1],
+	"(const double *dxv, const double *gamma, const double* fpo_g_stencil[3], const double* fpo_d2gdv2_surf, double *diff_coeff);~%"))
+      )
+    ),
+    printf(fh, "~%"),
+   
+    /* Diffusion tensor off-diagonal terms */
+    for dIdx : 1 thru length(dirCombos) do (
+      dir1 : dirCombos[dIdx][1],
+      dir2 : dirCombos[dIdx][2],
+      if (dir1 # dir2)  then (
+        for sIdx : 1 thru length(stencilStrs9) do (
+          d1StencilStr : stencilStrs9[sIdx][1],
+          d2StencilStr : stencilStrs9[sIdx][2],
+          printf(fh, sconcat("GKYL_CU_DH void fpo_diff_coeff_cross_",c,"x3v_",dir1,dir2,"_",bName,"_p",polyOrder,
+            "_",d1StencilStr, dir1,"_", d2StencilStr, dir2,
+          "(const double *dxv, const double* gamma, const double* fpo_g_stencil[9], const double* fpo_g_surf_stencil[9], const double* fpo_dgdv_surf, double *diff_coeff);~%"))
+        )
+      )
+    ),
+    printf(fh, "~%"),
+  
+    /* Diffusion tensor surface expansions */
+    for d1 : 1 thru length(dirs) do (
+      printf(fh, sconcat("GKYL_CU_DH void fpo_diff_coeff_surf_",c,"x3v_",dirs[d1],"_",bName,"_p",polyOrder,
+	"(const double *diff_coeff_L, const double *diff_coeff_R, double *diff_coeff_surf_R);~%"))
+    ),
+    printf(fh, "~%"),
+
+    /* Drag volume term */
+    printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_drag_vol_",c,"x3v_",bName,"_p",polyOrder,
+      "(const double* dxv, const double* drag_coeff, const double* f, double* GKYL_RESTRICT out);~%")),
+    printf(fh, "~%"),
+
+    /* Drag surface term */
+    for d1 : 1 thru length(dirs) do (
+      printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_drag_surf",dirs[d1],"_",c,"x3v_",bName,"_p",polyOrder,
+	"(const double* dxv, const double *alpha_surf_L, const double *alpha_surf_R, const double *sgn_alpha_surf_L, const double *sgn_alpha_surf_R, const int *const_sgn_alpha_L, const int *const_sgn_alpha_R, const double *fL, const double *fC, const double *fR, double* GKYL_RESTRICT out);~%"))
+    ),
+    printf(fh, "~%"),
+
+    /* Drag boundary surface term */
+    for d1 : 1 thru length(dirs) do (
+      printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_drag_boundary_surf",dirs[d1],"_",c,"x3v_",bName,"_p",polyOrder,
+      "(const double* dxv, const double *alpha_surf_Edge, const double *alpha_surf_Skin, ~%",
+      "  const double *sgn_alpha_surf_Edge, const double *sgn_alpha_surf_Skin, const int *const_sgn_alpha_Edge, const int *const_sgn_alpha_Skin, const int Edge, const double *fEdge, const double *fSkin, double* GKYL_RESTRICT out); ~%"))
+    ),
+    printf(fh, "~%"),
+
+    /* Diffusion volume term */
+    printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_diff_vol_",c,"x3v_",bName,"_p",polyOrder,
+      "(const double* dxv, const double *diff_coeff, const double* f, double* GKYL_RESTRICT out);~%")),
+    printf(fh, "~%"),
+
+    /* Diffusion surface term */
+    for dIdx : 1 thru length(dirCombos) do (
+      dir1 : dirCombos[dIdx][1],
+      dir2 : dirCombos[dIdx][2],
+      printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_diff_surf",dir1,dir2,"_",c,"x3v_",bName,"_p",polyOrder,
+	"(const double* dxv, const double* diff_coeff_C, const double* diff_coeff_surf_stencil[9], const double* f_stencil[9], double* GKYL_RESTRICT out);~%"))
+    ),
+    printf(fh, "~%"),
+
+    /* Diffusion diagonal boundary surface term */
+    for d1 : 1 thru length(dirs) do (
+      dir1 : dirs[d1],
+      for sIdx : 1 thru length(stencilStrs3) do (
+	stencilStr : stencilStrs3[sIdx],
+	if (stencilStr # "in") then (
+	  printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_diff_boundary_surf",dir1,dir1,"_",c,"x3v_",bName,"_p",polyOrder,"_",stencilStr,dir1,
+	  "(const double *dxv, const double *diff_coeff_C, const double* diff_coeff_surf_stencil[9], const double* f_stencil[9], double* out);~%"))
+	)
+      )
+    ),
+    printf(fh, "~%"),
+
+    /* Diffusion off-diagonal diagonal boundary surface term */
+    for dIdx : 1 thru length(dirCombos) do (
+      dir1 : dirCombos[dIdx][1],
+      dir2 : dirCombos[dIdx][2],
+      if (dir1 # dir2)  then (
+      for sIdx : 1 thru length(boundaryStencilStrs9) do (
+	d1StencilStr : boundaryStencilStrs9[sIdx][1],
+	d2StencilStr : boundaryStencilStrs9[sIdx][2],
+	printf(fh, sconcat("GKYL_CU_DH double fpo_vlasov_diff_boundary_surf",dir1,dir2,"_",c,"x3v_",bName,"_p",polyOrder,"_",d1StencilStr,dir1,"_",d2StencilStr,dir2,
+	"(const double *dxv, const double *diff_coeff_C, const double* diff_coeff_surf_stencil[9], const double* f_stencil[9], double* out);~%"))
+      )
+      )
+    ),
+    printf(fh, "~%"),
+
+    printf(fh, "~%")
+  )
+)
+)$
 printf(fh, "~%") $
 
 printf(fh, "EXTERN_C_END") $

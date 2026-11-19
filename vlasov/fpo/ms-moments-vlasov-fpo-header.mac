@@ -1,0 +1,74 @@
+/* Generate the header file for the moments of the distribution function
+   to make the Fokker-Planck operator for the Vlasov-Maxwell system of equations
+   conservative. Includes both volume and boundary corrections. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 2$ /* pure Serendipity p=1 is not supported for the FPO */
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 1$
+
+/* Tensor product basis. */
+/* Tensor p=1 IS the tensor hybrid basis: p=1 in configuration space and p=2 in
+   velocity space. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+printFPOPrototype(deco, ci, bStr, pi) := block([si],
+  printf(fh, "~avoid mom_fpo_vlasov_~ax3v_~a_p~a(const double *w, const double *dxv, const int *idx, const double *a_i, const double *D_ij,  const double *f, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
+  printf(fh, "~avoid mom_bcorr_fpo_vlasov_~ax3v_~a_p~a(const int *idx, enum gkyl_vel_edge edge, const double *vBoundary, const double *dxv, const double *D_ij, const double *fIn, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
+  printf(fh, "~%")  
+)$
+
+fh : openw("~/max-out/gkyl_mom_fpo_vlasov_kernels.h")$
+printf(fh, "#pragma once ~%")$
+printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <gkyl_eqn_type.h> ~%")$
+printf(fh, "#include <gkyl_mat.h> ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+
+decorator : "GKYL_CU_DH "$
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (c>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      printf(fh, sconcat("// ",c,"x3v Kernels~%")),
+      /* Volume moments */
+      printf(fh, sconcat("GKYL_CU_DH void mom_fpo_vlasov_",c,"x3v_",bName[bInd],"_p",polyOrder,
+	"(const double *w, const double *dxv, const int *idx, const double *a_i, const double *D_ij,  const double *f, double* GKYL_RESTRICT out);~%")),
+
+      /* Boundary corrections */
+      printf(fh, sconcat("GKYL_CU_DH void mom_bcorr_fpo_vlasov_",c,"x3v_",bName[bInd],"_p",polyOrder,
+	"(const double *w, const int *idx, enum gkyl_vel_edge edge, const double *vBoundary, const double *dxv, const double *D_ij, const double *fIn, double* GKYL_RESTRICT out);~%")),
+
+      /* Matrix set */
+      printf(fh, sconcat("GKYL_CU_DH void mom_fpo_vlasov_coeff_correct_mat_",c,"x3v_",bName[bInd],"_p",polyOrder,
+	"(struct gkyl_mat *lhs, struct gkyl_mat *rhs, const double *fpo_moms, const double *boundary_corrections, const double *moms);~%")),
+
+      /* Accumulation */
+      printf(fh, sconcat("GKYL_CU_DH void mom_fpo_vlasov_coeff_correct_accum_",c,"x3v_",bName[bInd],"_p",polyOrder,
+	"(const double *drag_diff_coeff_corrs, double *drag_coeff, double *drag_coeff_surf, double *diff_coeff, double *diff_coeff_surf);~%")),
+
+      printf(fh, "~%")
+    )
+  )
+);
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$
+/* ............ Finished writing out the C header file ............ */

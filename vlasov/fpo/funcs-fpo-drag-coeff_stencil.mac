@@ -1,0 +1,252 @@
+/*
+  Generate kernels for the drag coefficient
+  for the Rosenbluth/Fokker-Planck Operator
+  a_i = d H / dv_i 
+
+  Using a 3-cell domain stencil:
+  Left edge
+  Domain volume
+  Right edge
+*/
+
+load("vlasov/fpo/fpo-utils.mac")$
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/recovery.mac")$
+load("moments/bvp_utilities/bvp-util.mac")$
+
+fpprec : 24$
+
+generateFpoDragCoeffStencil(fname, funcNm, cdim, basisFun, polyOrder, pv) := block(
+  [vdim, dim, dirNums, coordVarS, stencilLoc, stencilStr, pvdir, fnameStencil, fh, varsC, bC, 
+  varsP, bP, surfVars, bSurf, NC, numSurf, H_L_lst, H_C_lst, H_R_lst, H_C_e, dHdv_surf_C_e, stencilCells,
+  H_rec, drag_coeff_out],
+
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
+  /* FPO is only defined in 3V */
+  vdim : 3,
+  pdim : cdim+vdim,
+
+  /* Diagonal term stencils are always 1D */
+  dim : 1,
+
+  dirNums : [[vx, 1], [vy, 2], [vz,3]],
+
+  kill(varsC, basisC, varsP, basisP),
+
+  /* Associative list between stencil location (-1,0,1) and variable strings in kernel name. */
+  coordVarS : getCoordVarS([pv]),
+
+  /* List of stencil locations. Each entry is a dim-dimensional list
+  with -1 meaning it is at a lower boundary, 1 upper boundary, or
+  0 away from boundaries in that direction. */
+  stencilLoc : getStencilCoords(dim),
+
+  for sI : 1 thru length(stencilLoc) do (
+    stencilStr : sconcat("_", assoc(stencilLoc[sI][1], 
+      [[-1, "lo"], [0, "in"], [1, "up"]]), string(pv)),
+
+    pvdir : assoc(pv, dirNums),
+
+    fnameStencil : sconcat(fname, "_stencil", stencilStr, ".c"),
+    disp(printf(false,"Creating ~a", fnameStencil)),
+    fh : openw(fnameStencil),
+    printf(fh, "#include <gkyl_fpo_vlasov_kernels.h> ~%~%"),
+
+    printf(fh, "GKYL_CU_DH void ~a_p~a~a(const double *dxv, const double *gamma, 
+    const double* fpo_h_stencil[3], const double* fpo_dhdv_surf, double *drag_coeff, 
+    double *drag_coeff_surf) {~%", funcNm, polyOrder, stencilStr),
+    printf(fh, "  // dxv[NDIM]: Cell spacing in each direction. ~%"),
+    printf(fh, "  // gamma: Scalar factor gamma. ~%"),
+    printf(fh, "  // fpo_h_stencil[3]: 3 cell stencil of Rosenbluth potential H. ~%"),
+    printf(fh, "  // fpo_dhdv_surf: Surface projection of dH/dv in center cell. ~%"),
+    printf(fh, "  // drag_coeff: Output array for drag coefficient. ~%"),
+    printf(fh, "  // drag_coeff_surf: Surface projection of drag coefficient at lower boundary.~%~%"),
+    printf(fh, "  // Use cell-average value for gamma. ~%"),
+    printf(fh, "  double gamma_avg = gamma[0]/sqrt(pow(2, ~a)); ~%", cdim),
+
+    printf(fh, "  double dv1 = 2.0/dxv[~a]; ~%", pvdir+cdim-1),
+    printf(fh, "~%"),
+
+    if (basisFun = "hyb") then (
+
+      [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+
+    ) else (
+
+      [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+
+      [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+
+    ),
+
+
+    surfVars : delete(pv, varsP),
+    bSurf : basisFromVars(basisFun, surfVars, polyOrder),
+
+    NC : length(bP),
+    numSurf : length(bSurf),
+
+    H_L_lst : makelist(H_L[i], i, 0, NC-1),
+    H_C_lst : makelist(H_C[i], i, 0, NC-1),
+    H_R_lst : makelist(H_R[i], i, 0, NC-1),
+
+    H_C_e : doExpand1(H_C, bP),
+
+    /* Surface projection of H */
+    dHdv_surf_C_e : doExpand1(dHdv_surf_C, bSurf)/dv1,
+
+    if stencilLoc[sI] = [0] then (
+      /*
+        +-----+-----+-----+
+        | H_L | H_C | H_R |
+        +-----+-----+-----+
+      */
+
+      /* 1-cell recovery for drag coefficient in cell volume */
+      H_rec1 : calcRecov1CellGen(basisFun, pv, varsP, polyOrder, 1, 
+        dg(H_L_lst), dg(H_C_lst), dg(H_R_lst)),
+
+      /* 2-cell recovery at lower cell boundary for surface projection */
+      H_rec2 : calcRecov2CellGen(basisFun, pv, varsP, polyOrder,
+        dg(H_L_lst), dg(H_C_lst))
+    )
+    elseif stencilLoc[sI] = [-1] then (
+      /*
+        +-----+-----+-----+
+        | +++ | H_C | H_R |
+        +-----+-----+-----+
+      */
+
+      /* 1-cell recovery for drag coefficient in cell volume */
+      H_rec1 : calcRecov1CellGen(basisFun, pv, varsP, polyOrder, 1,
+        bcs([der=1, val=dHdv_surf_C_e]), dg(H_C_lst), dg(H_R_lst)),
+
+      /* No surface projection of drag coefficient at lower boundary because zero-flux BCs */
+      H_rec2 : 0 
+    )
+    elseif stencilLoc[sI] = [1] then (
+      /*
+        +-----+-----+-----+
+        | H_L | H_C | +++ |
+        +-----+-----+-----+
+      */
+
+      /* 1-cell recovery for drag coefficient in cell volume */
+      H_rec1 : calcRecov1CellGen(basisFun, pv, varsP, polyOrder, 1,
+        dg(H_L_lst), dg(H_C_lst), bcs([der=1, val=dHdv_surf_C_e])),
+
+      /* 2-cell recovery at lower cell boundary for surface projection */
+      H_rec2 : calcRecov2CellGen(basisFun, pv, varsP, polyOrder,
+        dg(H_L_lst), dg(H_C_lst))
+    ),
+
+    stencilCells : [L, C, R],
+    for i : 1 thru length(stencilCells) do (
+      printf(fh, "  const double* H_~a = fpo_h_stencil[~a]; ~%", stencilCells[i], i-1)
+    ),
+    printf(fh, "  ~%"),
+    printf(fh, "  const double *dHdv_surf_C = &fpo_dhdv_surf[~a]; ~%", (pvdir-1)*numSurf),
+    printf(fh, "  ~%"),
+    printf(fh, "  double *out = &drag_coeff[~a]; ~%", (pvdir-1)*NC),
+    printf(fh, "  double *out_surf = &drag_coeff_surf[~a]; ~%", (pvdir-1)*numSurf),
+    printf(fh, "  ~%"),
+
+
+    drag_coeff_out : calcInnerProdList(varsP, 1, bP, diff(H_rec1, pv)),
+    drag_coeff_surf_out : calcInnerProdList(surfVars, 1, bSurf, subst(pv=0.0,diff(H_rec2, pv))),
+
+    factorAndWriteCExprsCollect1(out, 2*gamma_avg*drag_coeff_out*dv1, [gamma_avg, dv1]),
+    printf(fh, "~%"),
+    writeCExprsWithZerosNoExpand1(out_surf, 2.0*gamma_avg*drag_coeff_surf_out*dv1),
+    printf(fh, "}~%~%"),
+    flush_output(fh),
+    close(fh)
+  )
+)$
+
+generateFpoSgnDragCoeff(fname, funcNm, cdim, basisFun, polyOrder, pv) := block(
+  [vdim, pdim, dim, dirNums, varsC, bC, varsP, bP, surfVars, bSurf, surfNodes, numSurf,
+  numNodes, coordVarS, stencilLoc, sI, pvdir, fnameStencil, fh, drag_coeff_surf_e],
+
+  /* Tensor p=1 is the tensor hybrid basis: p=1 in configuration space and p=2 in
+     velocity space. */
+  if (basisFun = "tensor" and polyOrder = 1) then (basisFun : "hyb"),
+  /* FPO is only defined in 3V */
+  vdim : 3,
+  pdim : cdim+vdim,
+
+  /* Diagonal term stencils are always 1D */
+  dim : 1,
+
+  dirNums : [[vx, 1], [vy, 2], [vz,3]],
+
+  kill(varsC, basisC, varsP, basisP),
+  if (basisFun = "hyb") then (
+    [varsC,bC,varsP,bP] : loadPhaseBasis(basisFun, cdim, vdim, polyOrder)
+  ) else (
+    [varsC, bC] : loadBasis(basisFun, cdim, polyOrder),
+    [varsP, bP] : loadBasis(basisFun, cdim+vdim, polyOrder)
+  ),
+
+
+  surfVars : delete(pv, varsP),
+  bSurf : basisFromVars(basisFun, surfVars, polyOrder),
+
+  if (basisFun = "hyb") then (
+    surfNodes : gaussOrdHyb(polyOrder+1, cdim, vdim-1)
+  )
+  else (
+    surfNodes : gaussOrd(polyOrder+1, pdim-1)
+  ),
+  numSurf : length(bSurf),
+  numNodes : length(surfNodes),
+
+  /* Associative list between stencil location (-1,0,1) and variable strings in kernel name. */
+  coordVarS : getCoordVarS([pv]),
+
+  /* List of stencil locations. Each entry is a dim-dimensional list
+  with -1 meaning it is at a lower boundary, 1 upper boundary, or
+  0 away from boundaries in that direction. */
+  stencilLoc : getStencilCoords(dim),
+
+  for sI : 1 thru length(stencilLoc) do (
+    stencilStr : sconcat("_", assoc(stencilLoc[sI][1], 
+      [[-1, "lo"], [0, "in"], [1, "up"]]), string(pv)),
+
+    pvdir : assoc(pv, dirNums),
+
+    fnameStencil : sconcat(fname, "_stencil", stencilStr, ".c"),
+    disp(printf(false,"Creating ~a", fnameStencil)),
+    fh : openw(fnameStencil),
+    printf(fh, "#include <gkyl_fpo_vlasov_kernels.h> ~%~%"),
+    printf(fh, "GKYL_CU_DH void ~a_p~a~a(const double *drag_coeff_surf, double *sgn_drag_coeff_surf, int *const_sgn_drag_coeff_surf) {~%", funcNm, polyOrder, stencilStr),
+    printf(fh, "  // drag_coeff_surf: Surface projection of drag coefficient at lower boundary.~%"),
+    printf(fh, "  // sgn_drag_coeff_surf: sign(drag_coeff_surf) evaluated at quadrature points along lower surface.~%"),
+    printf(fh, "  // const_sgn_drag_coeff_surf: 1 if sign(drag_coeff_surf) is constant along lower boundary, 0 otherwise. ~%"),
+    printf(fh, "~%"),
+    printf(fh, "  const double *alpha_surf = &drag_coeff_surf[~a]; ~%", (pvdir-1)*numSurf),
+    printf(fh, "  double *sgn_alpha_surf = &sgn_drag_coeff_surf[~a]; ~%~%", (pvdir-1)*numNodes),
+
+    /* 
+      Calculate sgn_drag_coeff and const_sgn_drag_coeff at the lower boundary.
+      If we're at a lower domain boundary, these are set to 0 and won't be used anyway. 
+    */
+    if (stencilLoc[sI] = [-1]) then (
+      for i : 1 thru numNodes do (
+        printf(fh, "  sgn_alpha_surf[~a] = 0.0;~%", i-1)
+      ),
+      printf(fh, "  int const_sgn_alpha_surf = 0; ~%")
+    )
+    else (
+      drag_coeff_surf_e : doExpand1(alpha_surf, bSurf),
+      calcAndWrite_sgn_drag_coeff(fh, surfVars, surfNodes, drag_coeff_surf_e)
+    ),
+    
+    printf(fh, "  *const_sgn_drag_coeff_surf = const_sgn_alpha_surf; ~%"),
+    printf(fh, "} ~%"),
+    close(fh) 
+  )
+)$

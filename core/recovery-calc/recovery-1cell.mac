@@ -46,21 +46,30 @@ calcRecov1CellFull(basisNm, recDir, dirs, polyOrder, C, numMomentMatch, dxlo, dx
   recDirPolyOrder : polyOrder,
 
   /* Get 1D basis in recovery direction. */
-  if basisNm="hyb" or basisNm="gkhyb" then (
-    /* Do things differently for hybrid because it may involve a p=2 direction. */
-    vdim : length(sublist(dirs,lambda([var],charat(string(var),1)="v" or var=vpar or var=mu))),
-    cdim : numDims - vdim,
-    if basisNm = "hyb" then
-      [jnk1,jnk2,pvars,pbasis] : loadPhaseBasis(basisNm, cdim, vdim, 1)
-    elseif basisNm = "gkhyb" then
-      [jnk1,jnk2,pvars,pbasis,vsub] : loadGkBasis(basisNm, cdim, vdim, 1),
+  /* Do things differently for hybrid because it may involve a p=2 direction. */
+  vdim : length(sublist(dirs,lambda([var],charat(string(var),1)="v" or var=vpar or var=mu))),
+  cdim : numDims - vdim,
+  if (basisNm = "hyb") then (
+    [jnk1,jnk2,pvars,pbasis] : loadPhaseBasis(basisNm, cdim, vdim, 1),
+    if (charat(string(recDir),1)="v") then (
+      [varsa,ba] : loadBasis("ser", 1, polyOrder+1),
+      recDirPolyOrder : polyOrder+1
+    )
+    else (
+      [varsa,ba] : loadBasis("ser", 1, 1)
+    ),
+    ba : subst(x=recDir, ba)
+  )
+  elseif (basisNm = "gkhyb") then (
+    [jnk1,jnk2,pvars,pbasis,vsub] : loadGkBasis(basisNm, cdim, vdim, 1),
     ba : sqrt(2)^(numDims-1)*sublist(pbasis, lambda([b], lfreeof(perpDirs,listofvars(b)))),
     /* MF 2022/07/15: I think this is only needed when perpDirs=[]. */
     ba : subst(listofvars(ba)[1]=recDir,ba),
 
     if charat(string(recDir),1)="v" then
       recDirPolyOrder : polyOrder+1
-  ) else (
+  )
+  else (
     [varsa,ba] : loadBasis(basisNm, 1, polyOrder),
     ba : subst(x=recDir, ba)
   ),
@@ -166,15 +175,20 @@ calcRecov1CellFull(basisNm, recDir, dirs, polyOrder, C, numMomentMatch, dxlo, dx
   rSol : linsolve(recEqList, makelist(r[i], i, 1, DoF)),
   rSub : fullratsimp(subst(rSol, rExp)),
 
-  /* Backsubstitute the non-recovered directtions if needed */
+  /* Backsubstitute the non-recovered directions if needed */
   if numDims > 1 then (
-    if basisNm="hyb" or basisNm="gkhyb" then
+    if (basisNm="hyb") then (
+      ba : basisFromVars(basisNm, dirs, polyOrder)
+    )
+    elseif (basisNm="gkhyb") then (
       ba : copylist(pbasis)
+    )
     else (
       [varsa,ba] : loadBasis(basisNm, numDims, polyOrder),
       baVars : listofvars(ba),
       ba : psubst(makelist(baVars[i]=dirs[i],i,1,numDims), ba)
     ),
+
     /* rescale basis */
     shiftList : makelist(0, i, 1, numDims),
     baLoND : eta(dirs, shiftList, dxlo, ba),

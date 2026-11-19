@@ -1,0 +1,61 @@
+/* Generate kernels that compute the moments of the distribution function
+   needed for making the Fokker-Planck operator conservative in the 
+   Vlasov-Maxwell system of equations. */
+
+load("vlasov/fpo/moments-vlasov-fpo.mac")$
+load(stringproc)$
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 2$ /* pure Serendipity p=1 is not supported for the FPO */
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 1$
+
+/* Tensor product basis. */
+/* Tensor p=1 IS the tensor hybrid basis: p=1 in configuration space and p=2 in
+   velocity space. */
+minPolyOrder_Tensor : 1$
+maxPolyOrder_Tensor : 1$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 2$
+
+/* ...... END OF USER INPUTS........ */
+
+bName        : ["ser","tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+for bInd : 1 thru length(bName) do (
+  for d : minCdim[bInd] thru maxCdim[bInd] do (
+    minPolyOrderB : minPolyOrder[bInd],
+    maxPolyOrderB : maxPolyOrder[bInd],
+    if (d>1 and bName[bInd] = "ser") then maxPolyOrderB : 1,
+
+    /* Vlasov moment calculators. */
+    for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+      disp(printf(false,sconcat("Creating Vlasov FPO Moments ~ax~av ", bName[bInd]), d, 3)),
+      fname : sconcat("~/max-out/mom_fpo_vlasov_", d, "x3v_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("mom_fpo_vlasov_", d, "x3v_", bName[bInd], "_p", polyOrder),
+
+      printf(fh, "#include <gkyl_mom_fpo_vlasov_kernels.h> ~%"),
+      calcFPOMoms(fh, funcName, d, 3, bName[bInd], polyOrder),
+      close(fh), 
+
+      disp(printf(false,sconcat("Creating Vlasov FPO Boundary Moments ~ax~av ", bName[bInd]), d, 3)),
+      fname : sconcat("~/max-out/mom_bcorr_fpo_vlasov_", d, "x3v_", bName[bInd], "_p", polyOrder, ".c"),
+      fh : openw(fname),
+      funcName : sconcat("mom_bcorr_fpo_vlasov_", d, "x3v_", bName[bInd], "_p", polyOrder),
+
+      printf(fh, "#include <gkyl_mom_fpo_vlasov_kernels.h> ~%"),
+      calcFPOBoundaryIntegral(fh, funcName, d, 3, bName[bInd], polyOrder),
+      close(fh),
+
+      disp(done)
+    )
+  )
+);
