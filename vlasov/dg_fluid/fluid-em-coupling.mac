@@ -19,9 +19,9 @@
    sum_s |M_s|^2/(2 rho_s) + eps0 |E|^2/2 node by node (the implicit midpoint rule
    preserves the quadratic invariant), which is what the copy kernel adds to the fluid energy.
 
-   Per cell the batched matrix is block diagonal: 2^cdim blocks of size 3 num_species + 3
-   (the same size nc (3 S + 3) as the modal system). This file emits the nodal/modal
-   helpers; the species loops of the set and copy kernels are written out as C. */
+   Per cell the batched matrix is block diagonal: 2^cdim blocks of size 3 num_species + 3.
+   This file emits the nodal/modal helpers; the species loops of the set and copy kernels
+   are written out as C. */
 
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$

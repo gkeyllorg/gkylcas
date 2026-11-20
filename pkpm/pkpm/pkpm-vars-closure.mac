@@ -6,8 +6,9 @@
 
      M0(F) = 1,   M1(F) = 0,   M2(F) + 2 M0(G) = 3,   I_perp int M0_perp dw = 0.
 
-   Stage A produces the partial right-hand sides rhs_A (streaming, known forces and sources; not
-   the closure terms). Stage B adds (pkpm-kinetic-vel-vol.mac)
+   The configuration-space pass produces the partial right-hand sides rhs_A (streaming, known
+   forces and sources; not the closure terms). The velocity-space pass adds
+   (pkpm-kinetic-vel-vol.mac)
 
      c_0 U                          normalization (c_0 = div u in the continuum), every block
      -d_w(alpha_0 U)                pressure force, alpha_0 = a_P/xi, every block
@@ -114,7 +115,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
   double* GKYL_RESTRICT cond) ~%{ ~%", funcNm),
   printf(fh, "  // w_lo, w_up:   Velocity domain edges; dv: velocity cell size. ~%"),
   printf(fh, "  // norm_moms:    Input [M0, M2, M0_G, M1, M3, M1_G, mu (x, y, z)] moments of the normalized distributions (stage state). ~%"),
-  printf(fh, "  // rhs_moms:     Input moments of the stage-A right-hand sides, same layout. ~%"),
+  printf(fh, "  // rhs_moms:     Input moments of the right-hand sides of the configuration-space pass, same layout. ~%"),
   printf(fh, "  // bvar:         Magnetic field unit vector [bx, by, bz]. ~%"),
   printf(fh, "  // wn:           Raw w-flux values at the ~a w-face nodes [node][PKPM_HS_W_END] (the build of the stored operator). ~%", NF),
   printf(fh, "  // theta:        T_perp/T. ~%"),
@@ -266,7 +267,7 @@ calcPKPMVarsClosure(fh, funcNm, cdim, basisFun, polyOrder) := block(
     printf(fh, "    // eliminated into the energy row, which carries 2 mu . a_perp (Schur complement) ~%"),
     printf(fh, "    const double fac = n0_q > 0.0 ? 2.0/n0_q : 0.0; ~%"),
     printf(fh, "    const double sQQ = pkpm_harm_dot(Q, Q), sQP = pkpm_harm_dot(Q, P), sQA = pkpm_harm_dot(Q, Aa), sQC = pkpm_harm_dot(Q, Ac); ~%"),
-    printf(fh, "    // 3x3 system A [c_0, alpha_0, c] = rhs: stage-A rates + interior stage-B rates + edge rates = 0 ~%"),
+    printf(fh, "    // 3x3 system A [c_0, alpha_0, c] = rhs: configuration-pass rates + interior velocity-pass rates + edge rates = 0 ~%"),
     printf(fh, "    const double A00 = n0_q, A01 = eF0, A02 = eF1; ~%"),
     printf(fh, "    const double A10 = n1_q, A11 = n0_q + eF1, A12 = n1_q + eF2; ~%"),
     printf(fh, "    const double A20 = n2_q + 2.0*nG_q - fac*sQQ, A21 = 2.0*n1_q + eF2 + 2.0*eG0 - fac*sQA, A22 = 2.0*(n2_q + 2.0*nG_q) + eF3 + 2.0*eG1 - fac*(sQQ + sQC); ~%"),

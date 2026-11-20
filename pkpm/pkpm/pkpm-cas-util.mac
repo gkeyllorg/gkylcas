@@ -1,5 +1,5 @@
 /* pkpm-cas-util.mac --------------------------------------------------------------
-   Shared writers of the refactored PKPM generators. */
+   Shared writers of the PKPM generators. */
 load("util_maxima/out-scripts.mac")$
 load(orthopoly)$
 

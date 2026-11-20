@@ -1,6 +1,6 @@
 /* This script generates the kernels for calculating the pressure for updating
    fluid equations. Pressure different for each equation system: 
-   Isothermal Euler -> p = vth*rho 
+   Isothermal Euler -> p = vt^2 rho 
    Euler -> p = (gas_gamma - 1)*(E - 1/2 rho u^2)*/
 
 load("core/modal-basis.mac")$
@@ -50,8 +50,7 @@ calcFluidPressure(fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
   if isIso then (
     printf(fh, "  // param:  Thermal velocity vt of isothermal Euler.~%")
   ) else (
-    printf(fh, "  // param:  Input parameter needed for pressure computation.~%"),
-    printf(fh, "  //         vth for isothermal Euler, gas_gamma for Euler ~%")
+    printf(fh, "  // param:  Adiabatic index gas_gamma.~%")
   ),
   printf(fh, "  // fluid:  [rho, rho ux, rho uy, rho uz...], Fluid input state vector.~%"),
   printf(fh, "  // u:      Input volume expansion of flow velocity: [ux, uy, uz]. ~%"),
@@ -61,7 +60,7 @@ calcFluidPressure(fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
   printf(fh, "~%"),
 
   /* Fetch pointers needed to compute pressure from other fluid variables
-     Either p = vth*rho or p = (gas_gamma - 1)*(E - 1/2 rho u^2) */
+     Either p = vt^2 rho or p = (gas_gamma - 1)*(E - 1/2 rho u^2) */
   printf(fh, "  const double *rho = &fluid[~a]; ~%", 0*NC),
   if isIso then (
     printf(fh, "~%"),

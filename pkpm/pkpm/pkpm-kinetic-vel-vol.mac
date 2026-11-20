@@ -1,5 +1,5 @@
 /* pkpm-kinetic-vel-vol.mac ---------------------------------------------------
-   Volume kernel of the velocity-space pass (stage B) of the factored, thermal-velocity
+   Volume kernel of the velocity-space pass of the factored, thermal-velocity
    normalized p=1 PKPM kinetic update, on the eight blocks [F, G, M0_perp (x, y, z),
    N_perp (x, y, z)]: the closure terms
 

@@ -1,7 +1,6 @@
 /* pkpm-vars-diag.mac --------------------------------------------------------------
-   Diagnostic kernels of the energy-constrained (p=1) PKPM solver. This is the ONLY place
-   where products of primitive factors are projected onto p=1, and the projections feed
-   the output, never the update.
+   Diagnostic kernels of the energy-constrained (p=1) PKPM solver. The products of
+   primitive factors are projected onto p=1 for output only.
 
    pkpm_vars_diag_<c>x_ser_p1(moms, bvar, grad_b, u, grad_u, theta, alpha_0, xi, c_h, pkpm_prim_io, pkpm_vars_io)
      with moms = [p_par, p_perp, q_par, q_perp, s (x, y, z), r (x, y, z)] the coupling moments:

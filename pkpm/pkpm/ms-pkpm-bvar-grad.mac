@@ -1,0 +1,16 @@
+load("pkpm/pkpm/pkpm-bvar-grad.mac")$
+load(stringproc)$
+/* This script generates the kernels pkpm_bvar_grad_{x,y,z}_<c>x_ser_p1, the weak gradient of
+   the magnetic field unit vector of the p=1 PKPM solver (see pkpm-bvar-grad.mac). */
+
+cvarsStr : ["x", "y", "z"]$
+
+for c : 1 thru 3 do (
+  for d : 1 thru c do (
+    funcName : sconcat("pkpm_bvar_grad_", cvarsStr[d], "_", c, "x_ser_p1"),
+    disp(printf(false, "Creating ~a", funcName)),
+    fh : openw(sconcat("~/max-out/", funcName, ".c")),
+    calcPKPMBvarGrad(d, fh, funcName, c),
+    close(fh)
+  )
+)$

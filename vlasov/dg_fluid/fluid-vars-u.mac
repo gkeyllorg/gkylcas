@@ -62,7 +62,6 @@ setFluidUVars_p1(fh, funcNm, cdim, basisFun, polyOrder) := block(
      at the corners. For p = 2, we use the positivity control points (-1, 0, 1) */
   nodesCorners : getNodes(basisFun, cdim, polyOrder),
   printf(fh, "  // Check if rho < 0 at control points. ~%"),
-  printf(fh, "  // *THIS IS ONLY A CHECK RIGHT NOW AND UNUSED* ~%"),
   rhoCorners : expand(float(evAtNodes(rho_e,nodesCorners,varsC))),
   for i : 1 thru length(nodesCorners) do (
     printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", rhoCorners[i])
@@ -150,7 +149,6 @@ setFluidUVars(fh, funcNm, cdim, basisFun, polyOrder) := block(
      at the corners. For p = 2, we use the positivity control points (-1, 0, 1) */
   nodesCorners : getNodes(basisFun, cdim, polyOrder),
   printf(fh, "  // Check if rho < 0 at control points. ~%"),
-  printf(fh, "  // *THIS IS ONLY A CHECK RIGHT NOW AND UNUSED* ~%"),
   rhoCorners : expand(float(evAtNodes(rho_e,nodesCorners,varsC))),
   for i : 1 thru length(nodesCorners) do (
     printf(fh, "  if (~a < 0.0) cell_avg = 1; ~%", rhoCorners[i])
@@ -173,7 +171,7 @@ setFluidUVars(fh, funcNm, cdim, basisFun, polyOrder) := block(
   eq_rho : calcInnerProdList(varsC,ue,bC,rho_e),
   E_rho : fullratsimp(coefmatrix(eq_rho,un)),
 
-  /* declare temp_rho and temp_p_perp since matrix entries in A are the same for all operations */
+  /* declare temp_rho since matrix entries in A are the same for all operations */
   printf(fh, "  double temp_rho = 0.0; ~%"),
   /* Matrix is dense so just do a simple write routine */
   for i : 1 thru NC do (

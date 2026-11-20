@@ -22,7 +22,7 @@ maxCdim      : [maxCdim_Ser]$
 
 printPKPMVarsPrototype(deco, ci, bStr, pi) := block([si, d],
   for d : 1 thru ci do
-    printf(fh, "~avoid pkpm_vars_grad_u_~a_~ax_~a_p~a(const double *dxv, const double *jacob_pos, const double *u_l, const double *u_c, const double *u_r, double* GKYL_RESTRICT grad_u); ~%", deco, cvars[d], ci, bStr, pi),
+    printf(fh, "~avoid pkpm_bvar_grad_~a_~ax_~a_p~a(const double *dxv, const double *jacob_pos, const double *b_l, const double *b_c, const double *b_r, double* GKYL_RESTRICT grad_b); ~%", deco, cvars[d], ci, bStr, pi),
   for d : 1 thru ci do
     printf(fh, "~avoid pkpm_vars_in_cell_grad_~a_~ax_~a_p~a(const double *dxv, const double *jacob_pos, double blend_lo, double blend_up, const double *q_l, const double *q_c, const double *q_r, double* GKYL_RESTRICT grad); ~%", deco, cvars[d], ci, bStr, pi),
   for n in [2, 4] do
@@ -38,7 +38,6 @@ printPKPMVarsPrototype(deco, ci, bStr, pi) := block([si, d],
   printf(fh, "~aint pkpm_vars_prim_~ax_~a_p~a(const double *fluid, double* GKYL_RESTRICT u, double* GKYL_RESTRICT xi); ~%", deco, ci, bStr, pi),
   printf(fh, "~aint pkpm_dtB_over_magB_~ax_~a_p~a(const double *em, const double *dt_em, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
   printf(fh, "~avoid pkpm_vars_int_~ax_~a_p~a(const double *fluid, const double *vlasov_pkpm_moms, const double *u, double* GKYL_RESTRICT int_pkpm_vars); ~%", deco, ci, bStr, pi),
-  printf(fh, "~avoid pkpm_vars_source_~ax_~a_p~a(const double *qmem, const double *fluid, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
   printf(fh, "~avoid pkpm_vars_diag_~ax_~a_p~a(const double *vlasov_pkpm_moms, const double *bvar, const double *grad_b,
   const double *u, const double *grad_u, const double *theta, const double *alpha_0, const double *xi,
   const double *c_h, double* GKYL_RESTRICT pkpm_prim_io, double* GKYL_RESTRICT pkpm_vars_io); ~%", deco, ci, bStr, pi),

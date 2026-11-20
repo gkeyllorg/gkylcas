@@ -92,8 +92,7 @@ for bInd : 1 thru length(bName) do (
       disp(printf(false,sconcat("Creating isothermal Euler kernels ", bName[bInd]," ~axp~a"),d,polyOrder)),
       suffix : sconcat("_", d, "x_", bName[bInd], "_p", polyOrder),
 
-      /* Volume term (dx1 is a list in the volume script and a C variable in the surface one). */
-      dx1 : [dx10, dx11, dx12],
+      /* Volume term. */
       fh : openw(sconcat("~/max-out/iso_euler_vol", suffix, ".c")),
       calcEulerVolUpdater(fh, sconcat("iso_euler_vol_", d, "x_", bName[bInd]), d, bName[bInd], polyOrder, true),
       close(fh),
@@ -123,7 +122,6 @@ for bInd : 1 thru length(bName) do (
         printf(fhH, "~aint fluid_vars_iso_positivity~a(double eps, double* GKYL_RESTRICT fluid); ~%", deco, suffix)
       ),
 
-      kill(dx1),
       for dir : 1 thru d do (
         /* Surface term. */
         fh : openw(sconcat("~/max-out/iso_euler_surf", clabels[dir], suffix, ".c")),

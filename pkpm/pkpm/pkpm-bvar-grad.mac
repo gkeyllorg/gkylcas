@@ -1,0 +1,58 @@
+/* pkpm-bvar-grad.mac -------------------------------------------------------------
+   Weak (surface-averaged) gradient of the magnetic field unit vector b of the p=1 PKPM solver.
+
+   pkpm_bvar_grad_<dir>_<c>x_ser_p1(dxv, jacob_pos, b_l, b_c, b_r, grad_b)
+     Writes the p=1 expansion of d_dir b_j, j = x, y, z, into the block
+     grad_b[(dir*3 + j) NC ...] (the full array holds cdim x 3 expansions) from the
+     weak form with the average of the two traces at each face,
+
+       <psi_k, d_dir b_j> = dx1 [ psi_k(+1) bbar_r - psi_k(-1) bbar_l - <d_xi psi_k, b_c> ],
+       bbar_r = (b_c(+1) + b_r(-1))/2,  bbar_l = (b_l(+1) + b_c(-1))/2. */
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("pkpm/pkpm/pkpm-cas-util.mac")$
+load(stringproc)$
+fpprec : 24$
+
+cvars : [x, y, z]$
+
+calcPKPMBvarGrad(dir, fh, funcNm, cdim) := block(
+  [varsC, bC, NC, cv, surfVars, j, k, bl_e, bc_e, br_e, bbar_r, bbar_l, vol, sl, sr, g],
+  kill(varsC, bC),
+  [varsC, bC] : loadBasis("ser", cdim, 1),
+  NC : length(bC),
+  cv : varsC[dir],
+  surfVars : delete(cv, varsC),
+  printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *dxv, const double *jacob_pos, const double *b_l, const double *b_c, const double *b_r, double* GKYL_RESTRICT grad_b) ~%{ ~%", funcNm),
+  printf(fh, "  // dxv[NDIM]: Cell spacing (computational). ~%"),
+  printf(fh, "  // jacob_pos: Position-map Jacobian per configuration direction (cdim blocks of 2 equal entries). ~%"),
+  printf(fh, "  // b_l/b_c/b_r: Magnetic field unit vector [bx, by, bz] in the left/current/right cell in direction ~a. ~%", cv),
+  printf(fh, "  // grad_b:    Output weak gradient of b, block of direction ~a: [d_~a bx, d_~a by, d_~a bz]. ~%", cv, cv, cv, cv),
+  printf(fh, "  const double dx1 = 2.0/(dxv[~a]*jacob_pos[~a]); ~%", dir-1, 2*(dir-1)),
+  for j : 1 thru 3 do (
+    printf(fh, "  const double *b~a_l = &b_l[~a]; ~%", cvars[j], (j-1)*NC),
+    printf(fh, "  const double *b~a_c = &b_c[~a]; ~%", cvars[j], (j-1)*NC),
+    printf(fh, "  const double *b~a_r = &b_r[~a]; ~%", cvars[j], (j-1)*NC),
+    printf(fh, "  double *grad_b~a = &grad_b[~a]; ~%", cvars[j], ((dir-1)*3 + (j-1))*NC)
+  ),
+  printf(fh, " ~%"),
+  for j : 1 thru 3 do (
+    bl_e : doExpand1(concat(b, cvars[j], "_l"), bC),
+    bc_e : doExpand1(concat(b, cvars[j], "_c"), bC),
+    br_e : doExpand1(concat(b, cvars[j], "_r"), bC),
+    bbar_r : (subst(cv = 1, bc_e) + subst(cv = -1, br_e))/2,
+    bbar_l : (subst(cv = 1, bl_e) + subst(cv = -1, bc_e))/2,
+    vol : calcInnerProdList(varsC, 1, diff(bC, cv), bc_e),
+    if cdim > 1 then (
+      sr : calcInnerProdList(surfVars, 1, subst(cv = 1, bC), bbar_r),
+      sl : calcInnerProdList(surfVars, 1, subst(cv = -1, bC), bbar_l)
+    ) else (
+      sr : makelist(subst(cv = 1, bC[k])*bbar_r, k, 1, NC),
+      sl : makelist(subst(cv = -1, bC[k])*bbar_l, k, 1, NC)
+    ),
+    g : dx1*(sr - sl - vol),
+    pkpmWriteDefExprs(fh, sconcat("grad_b", cvars[j]), g)
+  ),
+  printf(fh, "} ~%")
+)$

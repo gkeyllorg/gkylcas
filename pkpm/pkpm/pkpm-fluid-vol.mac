@@ -13,8 +13,7 @@
    from the modal factors (the evolved [rho, M, E], the nodal flow u, the kinetic coupling moments
    [p_par, p_perp, q_par, q_perp, s (3), r (3)] formed by the caller from the density, the thermal
    speed and the normalized moments, and the unit vector b, all p=1): no product is projected onto
-   p=1 before the contraction. The coupling moments
-   are the same information the original PKPM momentum update received. Returns the center-cell CFL estimate
+   p=1 before the contraction. Returns the center-cell CFL estimate
    sum_d (2p+1)/2 dx1_d |u_d| (the face kernels add the acoustic speed bound). */
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$

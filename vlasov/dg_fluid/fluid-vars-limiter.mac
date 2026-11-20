@@ -145,8 +145,7 @@ calcEulerLimiter(dir, fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
        component drops the higher coefficients of the global momentum components it projects onto. */
     /* A component counts as limited when the slopes of its waves changed by more than round-off:
        the summed change against the size of the component (its averages in the three cells) plus
-       the summed size of its slopes there. An exact test would let a wave of round-off amplitude
-       drop finite higher coefficients, in one cell and not in its mirror image. */
+       the summed size of its slopes there. */
     printf(fh, "  // Components (in the local frame) whose slope the limiter changed by more than round-off: ~%"),
     printf(fh, "  // the change summed over the waves against the size of the component and of its slopes in ~%"),
     printf(fh, "  // the three cells. ~%"),

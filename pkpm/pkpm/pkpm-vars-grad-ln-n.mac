@@ -1,8 +1,8 @@
 /* pkpm-vars-grad-ln-n.mac -------------------------------------------------------
    grad(ln n) = grad(rho)/rho of the factored (p=1) PKPM kinetic update, the
-   configuration-space factor of the source -v_par b.grad(ln n) Fbar. The weak
-   (face-averaged) gradient of rho is computed by the pkpm_vars_grad_u_* kernels applied
-   to the array [rho, 0, 0] (it occupies the first expansion of every direction block);
+   configuration-space factor of the source -v_par b.grad(ln n) Fbar. The
+   gradient of rho is that of the pkpm_vars_in_cell_grad_* kernels applied to the array
+   [rho, 0, 0] (it occupies the first expansion of every direction block);
    here each component is divided by rho at the 2^cdim Gauss-Legendre nodes and the
    quotient interpolated to the p=1 basis with the 2-point rule, as every quotient of the
    solver (pkpm-vars-prim.mac): for p=1 this is the weak division, int phi rho grad(ln n)
@@ -32,7 +32,7 @@ calcPKPMVarsGradLnN(fh, funcNm, cdim, basisFun, polyOrder) := block(
   printf(fh, "#include <gkyl_pkpm_vars_kernels.h> ~%"),
   printf(fh, "GKYL_CU_DH int ~a(const double *rho, const double *grad_rho, double* GKYL_RESTRICT grad_ln_n) ~%{ ~%", funcNm),
   printf(fh, "  // rho:       Input mass density. ~%"),
-  printf(fh, "  // grad_rho:  Input weak gradient of [rho, 0, 0] (pkpm_vars_grad_u_* layout, cdim x 3 expansions). ~%"),
+  printf(fh, "  // grad_rho:  Input gradient of [rho, 0, 0] (cdim x 3 expansions). ~%"),
   printf(fh, "  // grad_ln_n: Output [d_x ln n, ...] (cdim expansions): grad(rho)/rho at the ~a Gauss-Legendre nodes, ~%", NN),
   printf(fh, "  //            interpolated to the p=1 basis (the weak division at p=1). ~%"),
   printf(fh, "  // Returns the number of nodes where rho <= 0 (the quotient is zero there). ~%"),

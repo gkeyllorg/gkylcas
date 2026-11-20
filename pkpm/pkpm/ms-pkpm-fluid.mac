@@ -1,7 +1,7 @@
 load("pkpm/pkpm/pkpm-fluid-flux-surf.mac")$
 load("pkpm/pkpm/pkpm-fluid-vol.mac")$
 load(stringproc)$
-/* This script generates the fluid kernels of the refactored (p=1) PKPM solver for
+/* This script generates the fluid kernels of the p=1 PKPM solver for
    cdim = 1, 2, 3: the scatter kernels pkpm_fluid_surf{x,y,z}_<c>x_ser_p1 and the volume kernels pkpm_fluid_vol_<c>x_ser_p1,
    together with their header gkyl_pkpm_fluid_kernels.h. */
 

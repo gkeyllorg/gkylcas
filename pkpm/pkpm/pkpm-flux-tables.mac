@@ -43,7 +43,7 @@ loadPKPMPhaseBasis(cdim) := block([lt, pk, lh],
   /* Copy the tensor-hybrid lists before the second loader reassigns the basis names. */
   lt : loadVlasovBasis("tensor", cdim, 1, 1),
   pk : makelist(copylist(lt[i]), i, 1, 6),
-  /* loadVlasovBasis has no 3x1v variable substitution (Vlasov never used it):
+  /* loadVlasovBasis has no 3x1v variable substitution:
      normalize the velocity variable and basis to vx for every cdim. */
   pk[3] : [vx],
   pk[4] : subst(x = vx, pk[4]),

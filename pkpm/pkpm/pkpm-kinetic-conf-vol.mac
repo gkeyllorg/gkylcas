@@ -1,5 +1,5 @@
 /* pkpm-kinetic-conf-vol.mac --------------------------------------------------
-   Streaming volume kernel of the configuration-space pass (stage A) of the factored,
+   Streaming volume kernel of the configuration-space pass of the factored,
    thermal-velocity normalized p=1 PKPM kinetic update. The evolved array is the eight blocks
    [F, G, M0_perp, N_perp] on the grid of w = v_par/xi; with the weak form
    integral(phi dF/dt) = + integral(grad phi . flux) - surface terms, the kernel increments out by
@@ -12,7 +12,7 @@
    Every known velocity-space term of the eight blocks (the w forces, the mirror and coupling
    terms and the sources, F and G included) is in the stored operator of the configuration cell
    and its volume kernel (pkpm-harm-ops.mac, pkpm-harm-vol.mac); the terms that depend on the
-   closures belong to the velocity-space pass (stage B, pkpm-kinetic-vel-vol.mac). The streaming
+   closures belong to the velocity-space pass (pkpm-kinetic-vel-vol.mac). The streaming
    speeds are accumulated by the surface-flux updaters: the kernel returns 0. */
 
 load("core/modal-basis.mac")$

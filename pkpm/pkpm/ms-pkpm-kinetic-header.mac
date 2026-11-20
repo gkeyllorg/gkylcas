@@ -1,7 +1,7 @@
-/* Generate the header file for the phase-space kernels of the refactored (p=1)
-   PKPM solver: configuration-space HLL flux producers, the v_par flux producer, the
-   hyper_dg surface kernels scattering stored modal fluxes, the volume kernels of
-   the configuration-space (stage A) and velocity-space (stage B) passes, the normalization
+/* Generate the header file for the phase-space kernels of the p=1 PKPM solver:
+   the v_par flux producer, the hyper_dg surface kernels scattering stored modal
+   fluxes, the volume kernels of the configuration-space and velocity-space passes,
+   the normalization
    and transversality projection of the distributions, and the nodal transforms of the
    exponential update of the first-harmonic blocks. */
 

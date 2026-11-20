@@ -1,5 +1,3 @@
-/* This script generates the kernels for the volume term of Euler's equations */
-
 /* This script generates the kernels for the volume terms of Euler's equations */
 
 load("core/modal-basis.mac")$
@@ -7,18 +5,19 @@ load("util_maxima/out-scripts.mac")$
 fpprec : 24$
 
 lhs : [outrho, outrhoux, outrhouy, outrhouz, outenergy]$
-dx1 : [dx10, dx11, dx12]$
 
 /* isIso = false: Euler, [rho, rho ux, rho uy, rho uz, energy]. isIso = true: isothermal Euler,
    [rho, rho ux, rho uy, rho uz], with the pressure p = vt^2 rho of the pressure kernel and the
    sound speed vt. */
 calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
-  [numEq,varsC,bC,NC,cflPt,cid,
-   rho_e,rhoux_e,rhouy_e,rhouz_e,energy_e,
+  [numEq,varsC,bC,NC,cflPt,cid,dx1,
+   rho_e,rhoux_e,rhouy_e,rhouz_e,rhou_e,energy_e,
    ux_e,uy_e,uz_e,u_e,p_e, 
    umid,pmid,rhomid,t1,t2,t3,t4,t5,volTerms,vol,expr],
 
   kill(varsC, bC),
+
+  dx1 : [dx10, dx11, dx12],
 
   /* Load basis of dimensionality requested. */
   [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
@@ -91,7 +90,7 @@ calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
   rhou_e : [rhoux_e,rhouy_e,rhouz_e],
   energy_e : doExpand1(energy, bC),
 
-  /* Expand flow, u_i, and pressure tensor, P_ij, in configuration space basis */
+  /* Expand the flow u_i and the pressure p in the configuration space basis */
   ux_e : doExpand1(ux, bC),
   uy_e : doExpand1(uy, bC),
   uz_e : doExpand1(uz, bC),

@@ -1,5 +1,5 @@
 /* pkpm-harm-vol.mac ------------------------------------------------------------------
-   Volume terms of the known first-harmonic operator of the configuration-space pass (stage A)
+   Volume terms of the known first-harmonic operator of the configuration-space pass
    of the normalized p=1 PKPM kinetic update, from the stored operator of the configuration cell
    (pkpm-harm-ops.mac): for every entry [o, i, kind, j] with coefficient c (degree <= 2 per
    configuration direction)

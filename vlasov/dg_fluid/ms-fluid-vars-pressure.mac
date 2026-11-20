@@ -2,7 +2,7 @@ load("vlasov/dg_fluid/fluid-vars-pressure.mac")$
 load(stringproc)$
 /* This script calls the functions which generate the kernels for calculating the
    pressure via weak multiplication. Pressure different for each equation system: 
-   Isothermal Euler -> p = vth*rho 
+   Isothermal Euler -> p = vt^2 rho 
    Euler -> p = (gas_gamma - 1)*(E - 1/2 rho u^2)
    Computes both the volume expansion and the necessary surface expansions of p at
    the corresponding surfaces */

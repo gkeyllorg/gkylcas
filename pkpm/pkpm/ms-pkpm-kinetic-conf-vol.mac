@@ -1,6 +1,6 @@
 load("pkpm/pkpm/pkpm-kinetic-conf-vol.mac")$
 load(stringproc)$
-/* This script generates the volume kernels of the configuration-space pass (stage A)
+/* This script generates the volume kernels of the configuration-space pass
    of the p=1 PKPM kinetic update, pkpm_kinetic_conf_vol_<c>x1v_ser_p1, for
    cdim = minCdim .. maxCdim (see pkpm-kinetic-conf-vol.mac). */
 
