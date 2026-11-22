@@ -43,7 +43,7 @@ calcPKPMVarsDiag(fh, funcNm, cdim) := block(
   printf(fh, "  // grad_u:           Gradient of u of the sources (in-cell, plus the blended face lift), [d_i ux, d_i uy, d_i uz] per direction i. ~%"),
   printf(fh, "  // theta:            T_perp/T = M0(G). ~%"),
   printf(fh, "  // alpha_0:          Pressure force a_P/xi closing the first moment. ~%"),
-  printf(fh, "  // xi:               Thermal speed [xi, xi^2]. ~%"),
+  printf(fh, "  // xi:               Thermal speed and pressure [xi, xi^2, p]. ~%"),
   printf(fh, "  // c_h:              Heating rate closing the scalar second moment. ~%"),
   printf(fh, "  // pkpm_prim_io:     Output [P_xx, P_xy, P_xz, P_yy, P_yz, P_zz, q_x, q_y, q_z] (9 components): the pressure ~%"),
   printf(fh, "  //                   tensor and the heat flux of the fluid equations. ~%"),

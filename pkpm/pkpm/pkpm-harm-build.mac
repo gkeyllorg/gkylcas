@@ -95,7 +95,7 @@ calcPKPMHarmBuild(fh, funcNm, cdim) := block(
   printf(fh, "  // u:         Flow velocity [ux, uy, uz]. ~%"),
   printf(fh, "  // grad_u:    Gradient of u of the sources (in-cell, plus the blended face lift), [d_i ux, d_i uy, d_i uz] per direction i. ~%"),
   printf(fh, "  // xi:        Thermal speed [xi, xi^2, p] (the first expansion is used). ~%"),
-  printf(fh, "  // grad_xi:   Weak gradient of [xi, 0, 0] (the first expansion of each direction is used). ~%"),
+  printf(fh, "  // grad_xi:   Gradient of [xi, xi^2, p], in-cell with the blend lift (the first expansion of each direction is used). ~%"),
   printf(fh, "  // grad_ln_n: grad(ln n), cdim expansions. ~%"),
   printf(fh, "  // theta:     T_perp/T. ~%"),
   printf(fh, "  // dtb:       d_t B/|B|. ~%"),
