@@ -23,15 +23,16 @@ printf(fh, "#include <stdbool.h> ~%")$
 printf(fh, "#include <gkyl_mat.h> ~%")$
 printf(fh, "#include <gkyl_util.h> ~%")$
 printf(fh, "EXTERN_C_BEG ~%~%")$
+writeFluidEMCouplingLayerCoeffs(fh)$
 for c : 1 thru 3 do (
   writeFluidEMCouplingHelpers(fh, c),
   printf(fh, "GKYL_CU_DH void fluid_em_coupling_set_~ax_ser_p1(int count, int num_species, double qbym[GKYL_MAX_SPECIES],
   double epsilon0, bool is_field_static, double dt, struct gkyl_nmat *A_n, struct gkyl_nmat *rhs_n,
   const double *app_accel[GKYL_MAX_SPECIES], const double *ext_em, const double *app_current,
-  const double *fluid[GKYL_MAX_SPECIES], const double *em); ~%", c),
+  const double *sigma, const double *fluid[GKYL_MAX_SPECIES], const double *em); ~%", c),
   printf(fh, "GKYL_CU_DH void fluid_em_coupling_copy_~ax_ser_p1(int count, int num_species, double qbym[GKYL_MAX_SPECIES],
-  bool has_energy[GKYL_MAX_SPECIES], double epsilon0, struct gkyl_nmat *x,
-  double* GKYL_RESTRICT fluid[GKYL_MAX_SPECIES], double* GKYL_RESTRICT em); ~%~%", c)
+  bool has_energy[GKYL_MAX_SPECIES], double epsilon0, double dt, const double *sigma,
+  struct gkyl_nmat *x, double* GKYL_RESTRICT fluid[GKYL_MAX_SPECIES], double* GKYL_RESTRICT em); ~%~%", c)
 )$
 printf(fh, "EXTERN_C_END ~%")$
 close(fh)$
