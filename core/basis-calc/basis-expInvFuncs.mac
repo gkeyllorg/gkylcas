@@ -35,8 +35,11 @@ calcDGInverse(fh, funcNm, cdim, basisFun, polyOrder) := block([bC, NC,
 
   if (polyOrder = 0) then (
 
-      printf(fh, "  ~a = ~a; ~%", A_inv[0], 1.0/A[0]),
-      printf(fh, "~%")
+    /* Same weak equality A_inv*A = 1 as for p>0, with a single basis function. */
+    eq   : calcInnerProdList(varsC,A_inv_e,bC,A_e),
+    unit : calcInnerProdList(varsC,1,bC,1.0),
+    printf(fh, "  ~a = ~a; ~%", A_inv[0], float(rhs(linsolve([eq[1] = unit[1]], [A_inv[0]])[1]))),
+    printf(fh, "~%")
 
   ) else (
 
