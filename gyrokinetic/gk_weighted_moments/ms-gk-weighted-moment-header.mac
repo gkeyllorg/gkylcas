@@ -1,0 +1,84 @@
+if not boundp('gk_mom_output_dir) then gk_mom_output_dir : "~/max-out"$
+/* Generate the header file for the Gyrokinetic weighted moment and integrated moment kernels. */
+
+/* ...... USER INPUTS........ */
+
+/* Serendipity basis. */
+minPolyOrder_Ser : 1$
+maxPolyOrder_Ser : 2$
+minCdim_Ser : 1$
+maxCdim_Ser : 3$
+
+/* Tensor product basis. */
+/* Note that Serendipity, p = 1, is equivalent to Tensor */
+/* Thus no need to calculate p = 1 Tensor basis */
+minPolyOrder_Tensor : 2$
+maxPolyOrder_Tensor : 2$
+minCdim_Tensor : 1$
+maxCdim_Tensor : 0$
+
+/* Vdim possibilities for each of Cdim=[1,2,3]. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* ...... END OF USER INPUTS........ */
+
+/* To generate other bases, just add corresponding column to arrays below. */
+bName        : ["ser", "tensor"]$
+minPolyOrder : [minPolyOrder_Ser, minPolyOrder_Tensor]$
+maxPolyOrder : [maxPolyOrder_Ser, maxPolyOrder_Tensor]$
+minCdim      : [minCdim_Ser, minCdim_Tensor]$
+maxCdim      : [maxCdim_Ser, maxCdim_Tensor]$
+
+printPrototype(deco, ci, vi, bStr, pi) := block([si,wgt_label],
+  for wgt_label in ["WEIGHTX_", "WEIGHTV_"] do (
+
+  printf(fh, "~avoid mom_weighted_gyrokinetic_M0_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  printf(fh, "~avoid mom_weighted_gyrokinetic_M1_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  printf(fh, "~avoid mom_weighted_gyrokinetic_M2_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  printf(fh, "~avoid mom_weighted_gyrokinetic_M2PAR_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  printf(fh, "~avoid mom_weighted_gyrokinetic_M0M1M2_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  if vi > 1 then (
+    printf(fh, "~avoid mom_weighted_gyrokinetic_M2PERP_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+    printf(fh, "~avoid mom_weighted_gyrokinetic_M0M1M2PARM2PERP_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi)
+  ),
+  /* Integrated moments. */
+  printf(fh, "~avoid int_mom_weighted_gyrokinetic_M0_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  printf(fh, "~avoid int_mom_weighted_gyrokinetic_M1_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  printf(fh, "~avoid int_mom_weighted_gyrokinetic_M2_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  printf(fh, "~avoid int_mom_weighted_gyrokinetic_M2PAR_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  printf(fh, "~avoid int_mom_weighted_gyrokinetic_M0M1M2_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+  if vi > 1 then (
+    printf(fh, "~avoid int_mom_weighted_gyrokinetic_M2PERP_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi),
+    printf(fh, "~avoid int_mom_weighted_gyrokinetic_M0M1M2PARM2PERP_~a~ax~av_~a_p~a(const double *dxv, const double *vmap, double m_, double q_, const double *bmag, const double *phi, const double *f, const double *wgt, double* GKYL_RESTRICT out); ~%", deco, wgt_label, ci, vi, bStr, pi)
+  ),
+
+  printf(fh, "~%")
+  )
+)$
+
+fh : openw(sconcat(gk_mom_output_dir, "/gkyl_mom_weighted_gyrokinetic_kernels.h"))$
+printf(fh, "#pragma once ~%")$
+printf(fh, "#include <math.h> ~%")$
+printf(fh, "#include <gkyl_util.h> ~%")$
+printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+
+decorator : "GKYL_CU_DH "$
+for bInd : 1 thru length(bName) do (
+  for c : minCdim[bInd] thru maxCdim[bInd] do (
+    for gkV : 1 thru length(gkVdims[c]) do (
+      v : gkVdims[c][gkV],
+
+      minPolyOrderB : minPolyOrder[bInd],
+      maxPolyOrderB : maxPolyOrder[bInd],
+      if (c=3) then maxPolyOrderB : 1, /* Only generate p=1 kernels for 3x2v */
+
+      for polyOrder : minPolyOrderB thru maxPolyOrderB do (
+        printPrototype(decorator, c, v, bName[bInd], polyOrder)
+      )
+    )
+  )
+);
+printf(fh, "EXTERN_C_END ~%")$
+close(fh)$
+/* ............ Finished writing out the C header file ............ */
