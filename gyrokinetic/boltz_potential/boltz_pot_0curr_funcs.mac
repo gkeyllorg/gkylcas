@@ -1,0 +1,31 @@
+/* 0curr reference from surface values (F, K, m0_elc, phi_wall). */
+load("gyrokinetic/boltz_potential/boltz_potential_funcs.mac")$
+
+genBoltzReferenceKernel(fh, funcName, dim, basisNm, polyOrder) := block(
+  [nq],
+
+  nq : (polyOrder+1)^(dim-1),
+
+  printf(fh,"GKYL_CU_DH void ~a(double q_e, double T_e, double m_e, const double *lower, const double *upper, double *out)~%{~%",funcName),
+  printf(fh,"  const int nq = ~a;~%  double nref[~a], phiref[~a];~%",nq,nq,nq),
+  printf(fh,"  double Te_eV = -T_e/q_e;~%  double vte_sided = sqrt(T_e/(2.0*M_PI*m_e));~%"),
+  printf(fh,"  for (int q=0; q<nq; ++q) {~%"),
+  printf(fh,"    double density = 0.5*(lower[2*nq+q]+upper[2*nq+q]);~%"),
+  printf(fh,"    double flux = lower[q]+upper[q];~%"),
+  printf(fh,"    double area_lo = lower[nq+q], area_up = upper[nq+q];~%"),
+  printf(fh,"    double phi = 0.0;~%"),
+  printf(fh,"    if (!gkyl_is_dfinite(density)) density = 0.0;~%"),
+  printf(fh,"    if (density>0.0 && gkyl_is_dfinite(flux) && flux>0.0 && area_lo>0.0 && area_up>0.0) {~%"),
+  printf(fh,"      double lo = log(area_lo)+lower[3*nq+q]/Te_eV;~%"),
+  printf(fh,"      double hi = log(area_up)+upper[3*nq+q]/Te_eV;~%"),
+  printf(fh,"      double shift = fmax(lo,hi);~%"),
+  printf(fh,"      double log_denom = shift+log(exp(lo-shift)+exp(hi-shift));~%"),
+  printf(fh,"      phi = Te_eV*(log(density)+log(vte_sided)+log_denom-log(flux));~%"),
+  printf(fh,"      if (!gkyl_is_dfinite(phi)) phi = 0.0;~%"),
+  printf(fh,"    }~%"),
+  printf(fh,"    nref[q] = density;~%    phiref[q] = phi;~%  }~%"),
+
+  writeBoltzReference(fh,dim,basisNm,polyOrder),
+
+  printf(fh,"}~%~%")
+)$

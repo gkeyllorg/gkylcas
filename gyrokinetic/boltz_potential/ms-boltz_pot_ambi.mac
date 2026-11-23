@@ -1,0 +1,31 @@
+/* Generate boltz_pot_ambi kernels. Run from the gkylcas root. */
+load("gyrokinetic/boltz_potential/boltz_pot_ambi_funcs.mac")$
+
+/* ...... USER INPUTS........ */
+
+basisNm : "ser"$
+
+minDim : 1$
+maxDim : 3$
+
+minPolyOrder : 1$
+maxPolyOrder : 2$
+
+/* Set before loading this script to override the default output directory. */
+if not boundp('boltzPotentialOutDir) then boltzPotentialOutDir : "~/max-out"$
+
+/* ...... END OF USER INPUTS........ */
+
+for cdim : minDim thru maxDim do (
+  for polyOrder : minPolyOrder thru maxPolyOrder do (
+
+    suffix : sconcat(cdim, "x_", basisNm, "_p", polyOrder),
+
+    fh : openw(sconcat(boltzPotentialOutDir, "/boltz_pot_ambi_", suffix, ".c")),
+    printf(fh, "#include <gkyl_boltz_potential_kernels.h>~%~%"),
+
+    genBoltzReferenceKernel(fh, sconcat("boltz_pot_ambi_reference_", suffix), cdim, basisNm, polyOrder),
+
+    close(fh)
+  )
+)$
