@@ -1,5 +1,5 @@
 /* Run from the gkylcas root, as for ms-pkpm-accel-vars.mac.
- The destination directory must already exist. */
+   The destination directory must already exist. */
 load("pkpm/pkpm/pkpm-accel-dispatch.mac")$
 
 /* ...... USER INPUTS ........ */
@@ -12,8 +12,10 @@ pkpm_accel_dispatch_bases : [
   ["ser", [["NULL", "ser", "ser"], ["NULL", "ser", "NULL"], ["NULL", "ser", "NULL"]]],
   ["ten", [["NULL", "ser", "ser"], ["NULL", "ser", "tensor"], ["NULL", "ser", "NULL"]]]
 ]$
+
 /* ...... END OF USER INPUTS ........ */
 
+/* Generate all basis/direction tables and deduplicate their CUDA targets. */
 writeKernelDispatchHeader(
   sconcat(pkpm_accel_output_dir, "/gkyl_dg_calc_pkpm_accel_registry_priv.h"),
   "pkpm/pkpm/ms-pkpm-accel-dispatch.mac",
