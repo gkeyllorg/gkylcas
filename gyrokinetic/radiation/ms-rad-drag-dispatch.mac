@@ -1,0 +1,21 @@
+/* Run from the gkylcas root. The output directory must already exist. */
+load("gyrokinetic/radiation/rad-drag-dispatch.mac")$
+
+/* ...... USER INPUTS ........ */
+if not boundp('gk_rad_output_dir) then gk_rad_output_dir : "~/max-out"$
+
+/* [table suffix, kernel suffix, C table type, target macro]. */
+gk_rad_dispatch_callbacks : [
+  ["nu_vpar", "nuvpar", "gkyl_dg_rad_gyrokinetic_nu_kern_list", "GKYL_RAD_NU_VPAR_CALL_TARGETS"],
+  ["nu_mu", "numu", "gkyl_dg_rad_gyrokinetic_nu_kern_list", "GKYL_RAD_NU_MU_CALL_TARGETS"],
+  ["nI_nu", "nI_nu", "gkyl_dg_rad_gyrokinetic_nI_nu_kern_list", "GKYL_RAD_NI_NU_CALL_TARGETS"]
+]$
+
+/* [cdim, vdim, maximum order], in cv_index order. The 1x1v row is unavailable. */
+gk_rad_dispatch_shapes : [[1, 1, 0], [1, 2, 1], [2, 2, 1], [3, 2, 1]]$
+/* ...... END OF USER INPUTS ........ */
+
+writeKernelDispatchFamiliesHeader(
+  sconcat(gk_rad_output_dir, "/gkyl_dg_calc_gk_rad_vars_registry_priv.h"),
+  "gyrokinetic/radiation/ms-rad-drag-dispatch.mac",
+  radDragDispatchFamilies(gk_rad_dispatch_callbacks, gk_rad_dispatch_shapes))$
