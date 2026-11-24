@@ -1,0 +1,29 @@
+/* Supported ordinary/integrated gyrokinetic moment selections.
+   These describe the updater tables, including unavailable combinations;
+   they do not request regeneration of the algebraic kernels themselves. */
+load("util_maxima/kernel-dispatch.mac")$
+
+gkMomentDispatchTables(moments, shapes) := block(
+  [tables : [], integrated, moment, shape, order, prefix,
+   tablePrefix, rows, row, kernel],
+  for integrated in [false, true] do (
+    prefix : if integrated then "int_mom_gyrokinetic_" else "mom_gyrokinetic_",
+    tablePrefix : if integrated then "ser_int_" else "ser_",
+    for moment in moments do (
+      rows : [],
+      for shape in shapes do (
+        row : [],
+        for order : 0 thru 2 do (
+          kernel : "NULL",
+          if order > 0 and order <= shape[3] and shape[2] >= moment[3] then
+            kernel : sconcat(prefix, moment[2], "_", shape[1], "x", shape[2], "v_ser_p", order),
+          row : endcons(kernel, row)
+        ),
+        rows : endcons(row, rows)
+      ),
+      tables : endcons([sconcat(tablePrefix, moment[1], "_kernels"),
+        "gkyl_gyrokinetic_mom_kern_list", rows], tables)
+    )
+  ),
+  tables
+)$

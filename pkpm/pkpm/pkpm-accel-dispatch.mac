@@ -1,0 +1,28 @@
+/* Acceleration callback only; pressure-force and other PKPM callbacks have
+   separate interfaces and are not included in this target list. */
+load("util_maxima/kernel-dispatch.mac")$
+
+pkpmAccelDispatchTables(bases) := block(
+  [directions : ["x", "y", "z"], tables : [], basis, dir, cdim,
+   order, rows, row, kernelBasis, kernel],
+  for basis in bases do (
+    for dir : 1 thru length(directions) do (
+      rows : [],
+      for cdim : 1 thru 3 do (
+        row : [],
+        for order : 0 thru 2 do (
+          kernelBasis : basis[2][cdim][order+1],
+          kernel : "NULL",
+          if dir <= cdim and kernelBasis # "NULL" then
+            kernel : sconcat("pkpm_vars_accel_", directions[dir], "_", cdim,
+              "x_", kernelBasis, "_p", order),
+          row : endcons(kernel, row)
+        ),
+        rows : endcons(row, rows)
+      ),
+      tables : endcons([sconcat(basis[1], "_pkpm_accel_", directions[dir], "_kernels"),
+        "gkyl_dg_pkpm_accel_kern_list", rows], tables)
+    )
+  ),
+  tables
+)$

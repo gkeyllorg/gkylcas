@@ -1,0 +1,20 @@
+/* Run from the gkylcas root, as for ms-pkpm-accel-vars.mac.
+ The destination directory must already exist. */
+load("pkpm/pkpm/pkpm-accel-dispatch.mac")$
+
+/* ...... USER INPUTS ........ */
+if not boundp('pkpm_accel_output_dir) then pkpm_accel_output_dir : "~/max-out"$
+
+/* [table prefix, kernel basis for each cdim/order slot].
+   Tensor p1 and 1x tensor p2 reuse serendipity kernels. "NULL" marks
+   unsupported selections; order zero is unavailable for every row. */
+pkpm_accel_dispatch_bases : [
+  ["ser", [["NULL", "ser", "ser"], ["NULL", "ser", "NULL"], ["NULL", "ser", "NULL"]]],
+  ["ten", [["NULL", "ser", "ser"], ["NULL", "ser", "tensor"], ["NULL", "ser", "NULL"]]]
+]$
+/* ...... END OF USER INPUTS ........ */
+
+writeKernelDispatchHeader(
+  sconcat(pkpm_accel_output_dir, "/gkyl_dg_calc_pkpm_accel_registry_priv.h"),
+  "pkpm/pkpm/ms-pkpm-accel-dispatch.mac",
+  "GKYL_PKPM_ACCEL_CALL_TARGETS", pkpmAccelDispatchTables(pkpm_accel_dispatch_bases))$
