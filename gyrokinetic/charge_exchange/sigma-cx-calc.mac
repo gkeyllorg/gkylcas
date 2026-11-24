@@ -103,7 +103,7 @@ calcSigmaCXcellAv(fh, funcNm, cdim, basisFun, polyOrder) := block(
   declareWriteCExprsC(v_in_sq_av, v_in_sq_c),
   printf(fh, " ~%"),
     
-  printf(fh, "  double v_cx = ~a;~%",float(sqrt(4/%pi*vt_sq_ion_av + 4/%pi*vt_sq_neut_av + v_in_sq_av))),
+  printf(fh, "  double v_cx = ~a;~%",float(sqrt(8/%pi*vt_sq_ion_av + 8/%pi*vt_sq_neut_av + v_in_sq_av))),
   v_sigma_cx_c : calcInnerProdList(varsC,1.0,bC,v_cx*(a - b*ln(v_cx))),
   writeCExprsCs(v_sigma_cx, v_sigma_cx_c),
   printf(fh, " ~%"),
