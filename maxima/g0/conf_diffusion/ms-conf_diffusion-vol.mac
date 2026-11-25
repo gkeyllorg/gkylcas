@@ -1,0 +1,11 @@
+load("conf_diffusion/conf_diffusion-vol.mac")$
+
+/* Configuration-space targets: 1x-3x serendipity p1. */
+for cdim : 1 thru 3 do (
+  fname : sconcat("~/max-out/conf_diffusion_vol_",cdim,"x_ser_p1.c"),
+  fh : openw(fname),
+  printf(fh, "#include <gkyl_conf_diffusion_kernels.h>~%~%"),
+  funcName : sconcat("conf_diffusion_vol_",cdim,"x_ser_p1"),
+  conf_diffusion_gen_vol_ker(fh,funcName,cdim,"ser",1),
+  close(fh)
+)$
