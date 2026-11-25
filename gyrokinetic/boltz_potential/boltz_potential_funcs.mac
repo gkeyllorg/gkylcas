@@ -1,0 +1,132 @@
+/* Shared boundary traces, reference projection, and volume Boltzmann response. */
+load("core/modal-basis.mac")$
+load("util_maxima/out-scripts.mac")$
+load("core/nodal_operations/quadrature_functions.mac")$
+load(stringproc)$
+fpprec : 24$
+
+/* Transverse nodes and weights, including the zero-dimensional face in 1x. */
+boltzSurfQuad(dim, polyOrder) :=
+  if dim=1 then [[[]],[1]] else gaussOrdWeight(polyOrder+1, dim-1)$
+
+/* Project nodal reference fields, extended constantly in the parallel coordinate. */
+writeBoltzReference(fh, dim, basisNm, polyOrder) := block(
+  [vars,basis,numB,nodes,weights,proj,expr,nq,k,j,subs,d],
+
+  [vars,basis] : loadBasis(basisNm,dim,polyOrder), numB : length(basis),
+
+  [nodes,weights] : boltzSurfQuad(dim,polyOrder), nq : length(nodes),
+
+  for k:1 thru numB do (
+    proj : integrate(basis[k],vars[dim],-1,1),
+    expr : [0,0],
+
+    for j:1 thru nq do (
+      subs : makelist(vars[d]=nodes[j][d],d,1,dim-1),
+      expr[1] : expr[1]+weights[j]*subst(subs,proj)*nref[j-1],
+      expr[2] : expr[2]+weights[j]*subst(subs,proj)*phiref[j-1]
+    ),
+
+    printf(fh,"  out[~a] = ~a;~%",k-1,gcfac(float(expand(expr[1])))),
+    printf(fh,"  out[~a] = ~a;~%",numB+k-1,gcfac(float(expand(expr[2]))))
+  )
+)$
+
+genBoltzBoundaryKernel(fh, funcName, dim, basisNm, polyOrder) := block(
+  [vars,basis,nodes,weights,nq,numB,subs,m0_e,wall_e,m0_n,wall_n,side,j,edge,d],
+
+  [vars,basis] : loadBasis(basisNm,dim,polyOrder), numB : length(basis),
+
+  [nodes,weights] : boltzSurfQuad(dim,polyOrder), nq : length(nodes),
+
+  m0_e : doExpand1(m0_elc,basis),
+  wall_e : doExpand1(wall,basis),
+
+  for side:1 thru 2 do (
+    edge : if side=1 then -1 else 1,
+
+    printf(fh,"GKYL_CU_DH void ~a(const double *flux, const double *area, const double *m0_elc, const double *wall, double *out)~%{~%",funcName[side]),
+
+    for j:1 thru nq do (
+      subs : append(makelist(vars[d]=nodes[j][d],d,1,dim-1),[vars[dim]=edge]),
+
+      m0_n : float(expand(subst(subs,m0_e))), wall_n : float(expand(subst(subs,wall_e))),
+
+      printf(fh,"  out[~a] = flux[~a];~%  out[~a] = area[~a];~%",j-1,j-1,nq+j-1,j-1),
+      printf(fh,"  out[~a] = ~a;~%",2*nq+j-1,gcfac(m0_n)),
+      printf(fh,"  out[~a] = wall ? ~a : 0.0;~%",3*nq+j-1,gcfac(wall_n))
+    ),
+    printf(fh,"}~%~%")
+  )
+)$
+
+genBoltzPhiKernel(fh, funcNm, dim, basisNm, polyOrder) := block(
+  /* Compute the potential in the domain volume using Gaussian quadrature. */
+  [numQuad,vars,basis,numB,normOrds,weights,ordNum,
+  m0Elc_e,m0ElcRef_e,phiRef_e,m0Elc_n,m0ElcRef_n,
+  phiRef_n,nOrd,cSub,phi_n,phi_c,i,k,d],
+
+  numQuad : polyOrder+1, /* Number of quarature points in 1D. */
+
+  [vars, basis] : loadBasis(basisNm, dim, polyOrder),
+  numB : length(basis),
+
+  /* Get the Gaussian quadrature weights and ordinates (in [-1,1] space) */
+  [normOrds, weights] : gaussOrdWeight(numQuad,dim),
+  ordNum : length(normOrds),
+
+  printf(fh,sconcat("GKYL_CU_DH void ",funcNm,"(double q_e, double T_e, const double *m0Elc, const double *nphi_ref, double *phi) ~%{ ~%")),
+  printf(fh,"  // q_e: signed electron charge.~%"),
+  printf(fh,"  // T_e: electron temperature.~%"),
+  printf(fh,"  // m0Elc: electron number density without the configuration Jacobian.~%"),
+  printf(fh,"  // nphi_ref: reference density and potential in two volume-modal blocks.~%"),
+  printf(fh,"  // phi: electrostatic potential in domain volume.~%"),
+  printf(fh,"~%"),
+
+  m0Elc_e : doExpand1(m0Elc, basis),
+
+  m0ElcRef_e : doExpand(makelist(nphi_ref[i-1],i,1,numB), basis),
+  phiRef_e   : doExpand(makelist(nphi_ref[numB+i-1],i,1,numB), basis),
+
+  m0Elc_n  : makelist(0,i,1,ordNum),
+  m0ElcRef_n : makelist(0,i,1,ordNum),
+  phiRef_n   : makelist(0,i,1,ordNum),
+  for i : 1 thru ordNum do (
+    nOrd : normOrds[i],
+    cSub : makelist(vars[d]=normOrds[i][d],d,1,dim),
+
+    m0Elc_n[i]  : subst(cSub, m0Elc_e),
+    /* Reference fields are constant in the parallel coordinate. */
+    m0ElcRef_n[i] : subst(cSub, m0ElcRef_e),
+    phiRef_n[i]   : subst(cSub, phiRef_e)
+  ),
+
+  printf(fh,"  double phi_qp[~a];~%", ordNum),
+  printf(fh,"  double m0ElcRef_curr;~%"),
+  phi_n : makelist(0,i,1,ordNum),
+  for i : 1 thru ordNum do (
+    printf(fh,"  m0ElcRef_curr = ~a;~%",float(expand(m0ElcRef_n[i]))),
+
+    phi_n[i] : phiRef_n[i] - (T_e/q_e)*log(fmax(m0Elc_n[i],m0ElcRef_curr)/m0ElcRef_curr),
+
+    printf(fh,"  if ((gkyl_is_dfinite(~a)) && (~a>0.)) {~%",m0ElcRef_curr,m0ElcRef_curr),
+    printf(fh,"    phi_qp[~a] = ~a;~%",i-1,float(expand(phi_n[i]))),
+    printf(fh,"  } else {~%"),
+    printf(fh,"    phi_qp[~a] = 0.0;~%",i-1),
+    printf(fh,"  }~%")
+  ),
+  printf(fh,"~%"),
+
+  phi_c : makelist(0,i,1,numB),
+  for i : 1 thru ordNum do (
+    nOrd : normOrds[i],
+    /* Add contribution to each DG coefficient. */
+    for k : 1 thru numB do (
+      phi_c[k] : phi_c[k]+weights[i]*subst(makelist(vars[d]=nOrd[d],d,1,dim),basis[k])*phi_qp[i-1]
+    )
+  ),
+
+  writeCExprsNoExpand1(phi, phi_c),
+  printf(fh, "}~%"),
+  printf(fh, "~%")
+)$

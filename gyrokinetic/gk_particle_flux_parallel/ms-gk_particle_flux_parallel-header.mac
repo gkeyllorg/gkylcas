@@ -1,0 +1,42 @@
+/* Generate the header for parallel particle-flux velocity-integral kernels. */
+load(stringproc)$
+
+/* ...... USER INPUTS........ */
+
+minCdim : 1$
+maxCdim : 3$
+
+/* Number of velocity dimensions allowed for each configuration dimension. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* Set before loading this script to override the default output directory. */
+if not boundp('particleFluxParallelOutDir) then particleFluxParallelOutDir : "~/max-out"$
+
+/* ...... END OF USER INPUTS........ */
+
+/* Match the supported kernels in ms-gk_particle_flux_parallel.mac. */
+basisNm : "ser"$
+polyOrder : 1$
+
+fh : openw(sconcat(particleFluxParallelOutDir, "/gkyl_gk_particle_flux_parallel_kernels.h"))$
+
+printf(fh, "#pragma once~%")$
+printf(fh, "#include <gkyl_util.h>~%~%")$
+printf(fh, "EXTERN_C_BEG~%~%")$
+
+for c : minCdim thru maxCdim do (
+  for gkV : 1 thru length(gkVdims[c]) do (
+    v : gkVdims[c][gkV],
+    printf(fh, "/**~%"),
+    printf(fh, " * Integrate the surface nodal flux over reference velocity coordinates.~%"),
+    printf(fh, " *~%"),
+    printf(fh, " * @param factor Signed velocity-cell measure and gyroangle prefactor.~%"),
+    printf(fh, " * @param flux Surface nodal flux.~%"),
+    printf(fh, " * @param out Integrated flux at configuration-space surface nodes.~%"),
+    printf(fh, " */~%"),
+    printf(fh, "GKYL_CU_DH void gk_particle_flux_parallel_integral_~ax~av_~a_p~a(double factor, const double *flux, double *out);~%~%", c, v, basisNm, polyOrder)
+  )
+)$
+
+printf(fh, "EXTERN_C_END~%")$
+close(fh)$

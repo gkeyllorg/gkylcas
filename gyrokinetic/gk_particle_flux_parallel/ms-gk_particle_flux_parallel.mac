@@ -1,0 +1,34 @@
+/* Generate velocity-integral kernels for the parallel particle-flux updater.
+   The functions called here are in gk_particle_flux_parallel.mac. */
+load("gyrokinetic/gk_particle_flux_parallel/gk_particle_flux_parallel.mac")$
+load(stringproc)$
+
+/* ...... USER INPUTS........ */
+
+minCdim : 1$
+maxCdim : 3$
+
+/* Number of velocity dimensions allowed for each configuration dimension. */
+gkVdims : [[1,2], [2], [2]]$
+
+/* Set before loading this script to override the default output directory. */
+if not boundp('particleFluxParallelOutDir) then particleFluxParallelOutDir : "~/max-out"$
+
+/* ...... END OF USER INPUTS........ */
+
+/* Only p1 serendipity (hybrid in phase space) is supported. */
+basisNm : "ser"$
+polyOrder : 1$
+
+for c : minCdim thru maxCdim do (
+  for gkV : 1 thru length(gkVdims[c]) do (
+    v : gkVdims[c][gkV],
+    funcName : sconcat("gk_particle_flux_parallel_integral_", c, "x", v, "v_", basisNm, "_p", polyOrder),
+    fname : sconcat(particleFluxParallelOutDir, "/", funcName, ".c"),
+    disp(printf(false, "Creating velocity-integral file: ~a", fname)),
+
+    fh : openw(fname),
+    genParticleFluxParallelIntegral(fh, funcName, c, v),
+    close(fh)
+  )
+)$

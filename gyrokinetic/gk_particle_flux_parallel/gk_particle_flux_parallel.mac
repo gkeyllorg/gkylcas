@@ -1,0 +1,49 @@
+/* Reduce the existing collisionless surface nodal flux by exact integration
+   of its modal expansion over the reference velocity cell. */
+load("core/modal-basis.mac")$
+load("core/nodal_operations/nodal_functions.mac")$
+load("util_maxima/out-scripts.mac")$
+
+/* The output retains the configuration-space surface node ordering. */
+genParticleFluxParallelIntegral(fh, funcName, cdim, vdim) := block(
+  [varsC,bC,varsP,bP,vSub,surfVar,surfVars,surfCvars,velVars,
+   surfNodes,bSurf,bNodal,fluxNodal_e,flux_e,flux_c,integral_e,integralNodes,
+   confNodes,flux,out,factor,d],
+
+  [varsC,bC,varsP,bP,vSub] : loadGkBasis("ser",cdim,vdim,1),
+
+  surfVar : varsC[cdim],
+  surfVars : delete(surfVar,varsP),
+  surfCvars : delete(surfVar,varsC),
+  velVars : makelist(varsP[cdim+d],d,1,vdim),
+
+  /* These are interpolation nodes, shared with gk_collisionless_flux.
+     No quadrature weights are used to calculate the integral. */
+  surfNodes : gaussOrdGkHyb(2,surfCvars,velVars),
+
+  bNodal : getVarsNodalBasisWithNodesHyb("gkhyb",cdim-1,vdim,surfVars,surfNodes),
+  bSurf : basisFromVars("gkhyb",surfVars,1),
+
+  fluxNodal_e : doExpand1(flux,bNodal),
+  flux_c : fullratsimp(calcInnerProdList(surfVars,1,bSurf,fluxNodal_e)),
+
+  flux_e : doExpand(flux_c,bSurf),
+  integral_e : innerProd(velVars,1,1,expand(flux_e)),
+
+  if cdim = 1 then (
+    integralNodes : [fullratsimp(integral_e)]
+  ) else (
+    confNodes : gaussOrd(2,cdim-1),
+    integralNodes : fullratsimp(evAtNodes(integral_e,confNodes,surfCvars))
+  ),
+
+  printf(fh,"#include <gkyl_gk_particle_flux_parallel_kernels.h>~%~%"),
+  printf(fh,"GKYL_CU_DH void ~a(double factor, const double *flux, double *out)~%{~%",funcName),
+  printf(fh,"  // factor: signed velocity-cell measure, including 2*pi/m for 2v.~%"),
+  printf(fh,"  // flux: nodal numerical flux on the parallel configuration face.~%"),
+  printf(fh,"  // out: velocity integral at each configuration-space surface node.~%"),
+
+  writeCExprsNoExpand1(out,makelist(factor*integralNodes[d],d,1,length(integralNodes))),
+
+  printf(fh,"}~%")
+)$
