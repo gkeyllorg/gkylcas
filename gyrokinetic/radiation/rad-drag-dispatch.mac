@@ -1,0 +1,25 @@
+/* Build independent target families for the three radiation drag callbacks. */
+load("util_maxima/kernel-dispatch.mac")$
+
+radDragDispatchFamilies(callbacks, shapes) := block(
+  [families : [], callback, shape, order, rows, row, kernel, table],
+  for callback in callbacks do (
+    rows : [],
+    for shape in shapes do (
+      row : [],
+      for order : 0 thru 2 do (
+        kernel : "NULL",
+        if order > 0 and order <= shape[3] then
+          kernel : sconcat("rad_gyrokinetic_drag_", callback[2], "_",
+            shape[1], "x", shape[2], "v_ser_p", order),
+        row : endcons(kernel, row)
+      ),
+      rows : endcons(row, rows)
+    ),
+
+    /* Do not merge vpar and mu targets even though their signatures match. */
+    table : [sconcat("ser_rad_gyrokinetic_", callback[1], "_kernels"), callback[3], rows],
+    families : endcons([callback[4], [table]], families)
+  ),
+  families
+)$

@@ -1,0 +1,27 @@
+/* Run from the gkylcas root. The output directory must already exist. */
+load("vlasov/vlasov/sr-vars-dispatch.mac")$
+
+/* ...... USER INPUTS ........ */
+if not boundp('sr_vars_output_dir) then sr_vars_output_dir : "~/max-out"$
+
+/* [callback suffix, target macro, tensor p1 aliases ser p1]. */
+sr_vars_dispatch_callbacks : [
+  ["n_set", "GKYL_SR_VARS_N_SET_CALL_TARGETS", true],
+  ["n_copy", "GKYL_SR_VARS_N_COPY_CALL_TARGETS", true],
+  ["GammaV", "GKYL_SR_VARS_GAMMAV_CALL_TARGETS", true],
+  ["pressure", "GKYL_SR_VARS_PRESSURE_CALL_TARGETS", false]
+]$
+/* [cdim, vdim, maximum order], in cv_index order. */
+sr_vars_dispatch_shapes : [[1,1,3], [1,2,2], [1,3,2], [2,1,3], [2,2,2], [2,3,2], [3,3,1]]$
+sr_vars_dispatch_bases : ["ser", "tensor"]$
+/* [[basis, cdim, vdim, order], build flag]. */
+sr_vars_dispatch_optional : [
+  [["tensor", 2, 3, 2], "GKYL_BUILD_VLASOV_TEN_2X3V_P2"]
+]$
+/* ...... END OF USER INPUTS ........ */
+
+writeKernelDispatchFamiliesHeader(
+  sconcat(sr_vars_output_dir, "/gkyl_dg_calc_sr_vars_registry_priv.h"),
+  "vlasov/vlasov/ms-sr-vars-dispatch.mac",
+  srVarsDispatchFamilies(sr_vars_dispatch_callbacks, sr_vars_dispatch_shapes,
+    sr_vars_dispatch_bases, sr_vars_dispatch_optional))$

@@ -1,0 +1,33 @@
+/* Selection tables for ordinary/integrated moments with CONF or VEL weights. */
+load("util_maxima/kernel-dispatch.mac")$
+
+gkWeightedMomentDispatchTables(moments, shapes, weights) := block(
+  [tables : [], integrated, moment, shape, weight, order, prefix, tablePrefix,
+   rows, row, kernel],
+
+  /* Every weight and moment uses the same cv_index and polynomial-order layout. */
+  for integrated in [false, true] do (
+    prefix : if integrated then "int_mom_weighted_gyrokinetic_" else "mom_weighted_gyrokinetic_",
+    tablePrefix : if integrated then "ser_int_" else "ser_",
+    for moment in moments do (
+      for weight in weights do (
+        rows : [],
+        for shape in shapes do (
+          row : [],
+          for order : 0 thru 2 do (
+            kernel : "NULL",
+            if order > 0 and order <= shape[3] and shape[2] >= moment[3] then
+              kernel : sconcat(prefix, moment[2], "_", weight[2], "_",
+                shape[1], "x", shape[2], "v_ser_p", order),
+            row : endcons(kernel, row)
+          ),
+          rows : endcons(row, rows)
+        ),
+
+        tables : endcons([sconcat(tablePrefix, moment[1], "_", weight[1], "_kernels"),
+          "gkyl_gyrokinetic_mom_kern_list", rows], tables)
+      )
+    )
+  ),
+  tables
+)$

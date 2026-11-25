@@ -1,0 +1,29 @@
+/* Run from the gkylcas root, as for ms-gkMoments.mac.
+   The destination directory must already exist. */
+load("gyrokinetic/gk_moments/gk-moment-dispatch.mac")$
+
+/* ...... USER INPUTS ........ */
+if not boundp('gk_mom_output_dir) then gk_mom_output_dir : "~/max-out"$
+
+/* [table suffix, kernel suffix, minimum velocity dimension]. */
+gk_mom_dispatch_moments : [
+  ["m0", "M0", 1], ["m1", "M1", 1], ["m2", "M2", 1], ["m3", "M3", 1],
+  ["m2par", "M2PAR", 1], ["m2perp", "M2PERP", 2],
+  ["m3par", "M3PAR", 1], ["m3perp", "M3PERP", 2],
+  ["m0m1m2", "M0M1M2", 1], ["m0m1m2m3", "M0M1M2M3", 1],
+  ["m0m1m2parm2perp", "M0M1M2PARM2PERP", 2],
+  ["m0m1m2parm2perpm3parm3perp", "M0M1M2PARM2PERPM3PARM3PERP", 2],
+  ["hamiltonian", "HAMILTONIAN", 1]
+]$
+
+/* [cdim, vdim, maximum order], in Gkeyll's cv_index row order.
+   Each row has order slots 0, 1, 2. Only serendipity is currently supported. */
+gk_mom_dispatch_shapes : [[1, 1, 2], [1, 2, 2], [2, 2, 2], [3, 2, 1]]$
+
+/* ...... END OF USER INPUTS ........ */
+
+/* Generate the selection tables and their complete CUDA target list together. */
+writeKernelDispatchHeader(
+  sconcat(gk_mom_output_dir, "/gkyl_mom_gyrokinetic_registry_priv.h"),
+  "gyrokinetic/gk_moments/ms-gk-moment-dispatch.mac",
+  "GKYL_MOM_GK_CALL_TARGETS", gkMomentDispatchTables(gk_mom_dispatch_moments, gk_mom_dispatch_shapes))$

@@ -1,0 +1,34 @@
+/* Four callback families share basis/dimension/order metadata. */
+load("util_maxima/kernel-dispatch.mac")$
+
+srVarsDispatchFamilies(callbacks, shapes, bases, optionalBuilds) := block(
+  [families : [], callback, basis, shape, order, rows, row, kernel, kernelBasis,
+   tables, gate],
+  for callback in callbacks do (
+    tables : [],
+    for basis in bases do (
+      rows : [],
+      for shape in shapes do (
+        row : [],
+        for order : 0 thru 3 do (
+          kernel : "NULL",
+          if order > 0 and order <= shape[3] then (
+            /* Conf-space tensor p1 aliases ser; pressure uses phase-space kernels. */
+            kernelBasis : if order = 1 and callback[3] then "ser" else basis,
+            kernel : sconcat("sr_vars_", callback[1], "_", shape[1], "x",
+              shape[2], "v_", kernelBasis, "_p", order),
+            for gate in optionalBuilds do
+              if [basis, shape[1], shape[2], order] = first(gate) then
+                kernel : dispatchIf(second(gate), kernel)
+          ),
+          row : endcons(kernel, row)
+        ),
+        rows : endcons(row, rows)
+      ),
+      tables : endcons([sconcat(basis, "_sr_vars_", callback[1], "_kernels"),
+        sconcat("gkyl_dg_sr_vars_", callback[1], "_kern_list"), rows], tables)
+    ),
+    families : endcons([callback[2], tables], families)
+  ),
+  families
+)$

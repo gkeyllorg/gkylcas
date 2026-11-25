@@ -1,0 +1,25 @@
+/* Run from the gkylcas root. The output directory must already exist. */
+load("gyrokinetic/gk_weighted_moments/gk-weighted-moment-dispatch.mac")$
+
+/* ...... USER INPUTS ........ */
+if not boundp('gk_weighted_mom_output_dir) then gk_weighted_mom_output_dir : "~/max-out"$
+
+/* [table suffix, kernel suffix, minimum velocity dimension]. */
+gk_weighted_mom_dispatch_moments : [
+  ["m0", "M0", 1], ["m1", "M1", 1], ["m2", "M2", 1],
+  ["m2par", "M2PAR", 1], ["m2perp", "M2PERP", 2],
+  ["m0m1m2", "M0M1M2", 1], ["m0m1m2parm2perp", "M0M1M2PARM2PERP", 2]
+]$
+
+/* [cdim, vdim, maximum order], in Gkeyll's cv_index row order. */
+gk_weighted_mom_dispatch_shapes : [[1, 1, 2], [1, 2, 2], [2, 2, 2], [3, 2, 1]]$
+gk_weighted_mom_dispatch_weights : [["wgtx", "WEIGHTX"], ["wgtv", "WEIGHTV"]]$
+/* ...... END OF USER INPUTS ........ */
+
+/* One runtime callback selects across both weights and integration modes. */
+writeKernelDispatchHeader(
+  sconcat(gk_weighted_mom_output_dir, "/gkyl_mom_weighted_gyrokinetic_registry_priv.h"),
+  "gyrokinetic/gk_weighted_moments/ms-gk-weighted-moment-dispatch.mac",
+  "GKYL_MOM_WEIGHTED_GK_CALL_TARGETS",
+  gkWeightedMomentDispatchTables(gk_weighted_mom_dispatch_moments,
+    gk_weighted_mom_dispatch_shapes, gk_weighted_mom_dispatch_weights))$
