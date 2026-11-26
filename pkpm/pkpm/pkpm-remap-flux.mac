@@ -20,7 +20,47 @@
      Accumulate into the stored surface modes of one side of the face the Legendre projections
      proj[m*8 + c] of the eight blocks at one transverse node:
      flux[c*NK + k(a, m)] += wpsi[a] proj[m*8 + c]/coef_k, where wpsi[a] = (weight of the node)
-     psi_a(node) and coef_k the factor of the surface mode in the factorized basis. */
+     psi_a(node) and coef_k the factor of the surface mode in the factorized basis.
+
+   pkpm_remap_flux_interval_<dir>_1v_p2(fc, w_lo, w_up, side_l, side_r, cell_l, cell_r, Y_l, Y_r,
+                                        P_l, P_r, mom, share)
+     One interval [w_lo, w_up] of the velocity supermesh of a transverse node of a face of
+     direction dir, in the face-frame label wbar. On it each side s is in one velocity cell, where
+     its eight blocks in the face frame are X_s = Y_s[c] + Y_s[8 + c] eta_s + Y_s[16 + c] (3 eta_s^2 - 1),
+     eta_s = cell_s[0] + cell_s[1] wbar the cell coordinate of the side. The kernel adds the
+     3-point Gauss-Legendre quadrature over the interval (exact: the flux is at most cubic between
+     the kinks of its HLL weights, which are ends of intervals) of
+       P_s[m*8 + c]: the flux pkpm_harm_conf_flux (gkyl_pkpm_harm_coeffs.h) against the Legendre
+                     mode m of the cell of side s, int phi_m(eta_s) flux_c d eta_s;
+       mom:          the face-frame moments [M0, M1, M2 of F, M0 of G, M0 of M0_perp (3)] of the flux;
+       share:        the flux weighted for the blend, per receiving side: |w_s F| (momentum) and
+                     w_s^2 |F| + 2 |G| (energy) of the flux in the frame of side s, w_s = r wbar + c,
+                     in total and, times cell_s[2], outside the grid of the side.
+     A side outside its velocity grid passes Y_s = 0 and cell_s = [0, 0, 1] (with any P_s, which
+     then receives zero); a side inside passes cell_s[2] = 0. The kernel does not depend on the
+     configuration-space dimension: it sees one transverse node.
+
+   pkpm_remap_flux_to_face_<c>x1v_ser_p1(psi, fwd, G, X, Y)
+     One velocity cell of one side at a transverse node: the blocks of the modal traces G
+     (pkpm_remap_flux_trace_*) at the node as Legendre coefficients in w, X[m*8 + c] of
+     [1, eta, 3 eta^2 - 1], in the frame of the side, and the same in the face frame, Y, by the
+     change of frame with the factors fwd (pkpm_harm_frame_change, gkyl_pkpm_harm_coeffs.h).
+
+   pkpm_remap_flux_from_face_<dir>_<c>x1v_ser_p1(wpsi, bck, P, flux)
+     One velocity cell of one side at a transverse node: the projection P of the face-frame flux
+     (pkpm_remap_flux_interval_*) taken back to the frame of the side with the factors bck and
+     accumulated into the stored surface modes as pkpm_remap_flux_store_* does.
+
+   pkpm_remap_flux_label_<dir>_1v_p2(fc, w_center, dw, X_l, X_r, proj, mom_l, mom_r, speed)
+     The label-paired flux of one velocity cell at a transverse node of a face of direction dir:
+     the flux pkpm_harm_conf_flux of the two sides paired at equal w, each in its own frame (X_l,
+     X_r of pkpm_remap_flux_to_face_*), at the 3 Gauss-Legendre points of the cell. proj[m*8 + c]
+     is its projection on the Legendre modes of the cell (the same for both sides, overwritten)
+     and mom_l, mom_r accumulate the moments [M0, M1, M2 of F, M0 of G, M0 of M0_perp (3)] in w of
+     the contribution of each side. speed is raised to the speed bounds of the flux at the points
+     (the fastest signal in either direction and the spread of the two bounds), from which the
+     updater forms the rates of the face. The kernel does not depend on the configuration-space
+     dimension. */
 load("core/modal-basis.mac")$
 load("util_maxima/out-scripts.mac")$
 load("core/nodal_operations/nodal_functions.mac")$
@@ -98,6 +138,252 @@ calcPKPMRemapFluxStore(dir, fh, funcNm, cdim) := block(
        factorized surface basis (b_k = coef_k chi psi; laxFactorizeBasis), not the orthonormal
        coefficients, so the store divides by coef_k. */
     printf(fh, "    out[~a] += ~a*wpsi[~a]*proj[~a + c]; ~%", k-1, float(1/fact[3][k]), a, m*8)
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
+
+/* Slots of the per-side inputs and of the shares of the interval kernels, written into the
+   header by the driver: the single definition read by the kernels and by the updater. */
+pkpmRemapFluxSlots : [
+  ["PKPM_RF_SIDE_R", 0, "r: w_s = r wbar + c takes the face-frame label to the label of the side"],
+  ["PKPM_RF_SIDE_C", 1, "c, the part of the shift along the field direction of the face"],
+  ["PKPM_RF_SIDE_KINV", 2, "density factor of the map from the face frame back to the side"],
+  ["PKPM_RF_SIDE_EG", 3, "K_inv/r_inv^2, the factor of the block G mapped back to the side"],
+  ["PKPM_RF_SIDE_CC", 4, "|c_perp_inv|^2"],
+  ["PKPM_RF_SIDE_CPERP", 5, "first of the three components of c_perp_inv"],
+  ["PKPM_RF_SIDE_NUM", 8, "size of side_l/side_r"],
+  ["PKPM_RF_CELL_ETA0", 0, "eta_s = ETA0 + ETA1 wbar: cell coordinate of the side at the label wbar"],
+  ["PKPM_RF_CELL_ETA1", 1, "2 r/dw of the velocity cell"],
+  ["PKPM_RF_CELL_OUT", 2, "1 if the side is outside its velocity grid on the interval, else 0"],
+  ["PKPM_RF_CELL_NUM", 3, "size of cell_l/cell_r"],
+  ["PKPM_RF_SHARE_MOM_OUT", 0, "momentum share outside the grid of side s, at MOM_OUT + s"],
+  ["PKPM_RF_SHARE_MOM_TOT", 2, "total momentum share of side s, at MOM_TOT + s"],
+  ["PKPM_RF_SHARE_EN_OUT", 4, "energy share outside the grid of side s, at EN_OUT + s"],
+  ["PKPM_RF_SHARE_EN_TOT", 6, "total energy share of side s, at EN_TOT + s"],
+  ["PKPM_RF_SHARE_NUM", 8, "size of share"],
+  ["PKPM_RF_NUM_MOMS", 7, "face-frame moments of the flux: M0, M1, M2 of F, M0 of G, M0 of M0_perp (3)"]
+]$
+
+/* The body of the loop over the Gauss-Legendre points of the interval kernel: the blocks of both
+   sides at the point, the flux, its moments and shares, and its projection onto the cell of each
+   side. One call of the flux function, so that it is inlined. */
+pkpmRemapFluxIntervalPoint(fh, dir, n) := block([sd, s, k],
+  sd : ["l", "r"],
+  printf(fh, "    const double wb = mid+ord[g]*half, om = wgt[g]*half; ~%"),
+  for s : 1 thru 2 do (
+    printf(fh, "    const double eta_~a = cell_~a[0]+cell_~a[1]*wb, leg2_~a = 3.0*eta_~a*eta_~a-1.0; ~%",
+      sd[s], sd[s], sd[s], sd[s], sd[s], sd[s])
+  ),
+  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
+  for s : 1 thru 2 do
+    printf(fh, "      X_~a[c] = Y_~a[c]+Y_~a[8+c]*eta_~a+Y_~a[16+c]*leg2_~a; ~%",
+      sd[s], sd[s], sd[s], sd[s], sd[s], sd[s]),
+  printf(fh, "    } ~%"),
+  printf(fh, "    pkpm_harm_conf_flux(~a, X_l, X_r, wb, fc, 1, phi_l, phi_r, sb); ~%", dir - 1),
+  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "      flux[c] = phi_l[c]+phi_r[c]; ~%"),
+  printf(fh, "    } ~%"),
+  printf(fh, "    mom[0] += om*flux[0]; ~%"),
+  printf(fh, "    mom[1] += om*wb*flux[0]; ~%"),
+  printf(fh, "    mom[2] += om*wb*wb*flux[0]; ~%"),
+  printf(fh, "    mom[3] += om*flux[1]; ~%"),
+  for k : 0 thru 2 do printf(fh, "    mom[~a] += om*flux[~a]; ~%", 4 + k, 2 + k),
+  printf(fh, "    const double mass = om*fabs(flux[0]); ~%"),
+  for s : 1 thru 2 do (
+    printf(fh, "    const double w_~a = side_~a[0]*wb+side_~a[1]; ~%", sd[s], sd[s], sd[s]),
+    printf(fh, "    const double cm_~a = side_~a[5]*flux[2]+side_~a[6]*flux[3]+side_~a[7]*flux[4]; ~%",
+      sd[s], sd[s], sd[s], sd[s]),
+    printf(fh, "    const double yf_~a = side_~a[2]*flux[0]; ~%", sd[s], sd[s]),
+    printf(fh, "    const double yg_~a = side_~a[3]*(flux[1]-cm_~a+0.5*side_~a[4]*flux[0]); ~%",
+      sd[s], sd[s], sd[s], sd[s]),
+    printf(fh, "    const double mt_~a = mass*fabs(w_~a); ~%", sd[s], sd[s]),
+    printf(fh, "    const double en_~a = om*(fabs(yf_~a)*w_~a*w_~a+2.0*fabs(yg_~a)); ~%",
+      sd[s], sd[s], sd[s], sd[s], sd[s]),
+    printf(fh, "    share[~a] += cell_~a[2]*mt_~a; ~%", s - 1, sd[s], sd[s]),
+    printf(fh, "    share[~a] += mt_~a; ~%", 2 + s - 1, sd[s]),
+    printf(fh, "    share[~a] += cell_~a[2]*en_~a; ~%", 4 + s - 1, sd[s], sd[s]),
+    printf(fh, "    share[~a] += en_~a; ~%", 6 + s - 1, sd[s])
+  ),
+  for s : 1 thru 2 do (
+    printf(fh, "    const double wt_~a = om*cell_~a[1]; ~%", sd[s], sd[s]),
+    printf(fh, "    const double t0_~a = ~a*wt_~a, t1_~a = ~a*wt_~a*eta_~a, t2_~a = ~a*wt_~a*leg2_~a; ~%",
+      sd[s], float(n[1]), sd[s], sd[s], float(n[2]), sd[s], sd[s], sd[s], float(n[3]), sd[s], sd[s])
+  ),
+  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
+  for s : 1 thru 2 do (
+    printf(fh, "      P_~a[c] += t0_~a*flux[c]; ~%", sd[s], sd[s]),
+    printf(fh, "      P_~a[8+c] += t1_~a*flux[c]; ~%", sd[s], sd[s]),
+    printf(fh, "      P_~a[16+c] += t2_~a*flux[c]; ~%", sd[s], sd[s])
+  ),
+  printf(fh, "    } ~%")
+)$
+
+/* A list of numbers as the C initializer of a double array, each correctly rounded. */
+pkpmRemapFluxCList(lst) := block([str, i],
+  str : "{",
+  for i : 1 thru length(lst) do
+    str : sconcat(str, if i > 1 then ", " else "", float(bfloat(lst[i]))),
+  sconcat(str, "}")
+)$
+
+/* 3-point Gauss-Legendre rule on [-1, 1]. */
+pkpmRemapFluxOrds : [-sqrt(3/5), 0, sqrt(3/5)]$
+pkpmRemapFluxWgts : [5/9, 8/9, 5/9]$
+
+calcPKPMRemapFluxInterval(dir, fh, funcNm) := block([n],
+  /* The factors n of the Legendre modes of the velocity basis, phi_m = n_m [1, eta, 3 eta^2 - 1],
+     are printed as the basis constants of the other kernels; the rule correctly rounded, as the
+     tables of gkyl_gauss_quad_data.h. */
+  n : [1/sqrt(2), sqrt(3/2), sqrt(5/2)/2],
+  printf(fh, "#include <gkyl_pkpm_remap_flux_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *fc, double w_lo, double w_up,
+  const double *side_l, const double *side_r, const double *cell_l, const double *cell_r,
+  const double *Y_l, const double *Y_r, double* GKYL_RESTRICT P_l, double* GKYL_RESTRICT P_r,
+  double* GKYL_RESTRICT mom, double* GKYL_RESTRICT share) ~%{ ~%", funcNm),
+  printf(fh, "  // fc:          Face coefficients of the flux at the transverse node (PKPM_FC_*, stride 1). ~%"),
+  printf(fh, "  // w_lo/w_up:   Ends of the interval in the face-frame label. ~%"),
+  printf(fh, "  // side_l/r:    Map of the left/right side to the face frame (PKPM_RF_SIDE_*). ~%"),
+  printf(fh, "  // cell_l/r:    Velocity cell of the left/right side on the interval (PKPM_RF_CELL_*). ~%"),
+  printf(fh, "  // Y_l/Y_r:     Blocks of the left/right side in the face frame, Legendre coefficients in the ~%"),
+  printf(fh, "  //              cell coordinate of the side: Y[m*8 + c] of [1, eta, 3 eta^2 - 1]. ~%"),
+  printf(fh, "  // P_l/P_r:     Accumulated projection of the flux onto the Legendre modes of the cell of the ~%"),
+  printf(fh, "  //              left/right side, face frame: P[m*8 + c]. ~%"),
+  printf(fh, "  // mom:         Accumulated face-frame moments of the flux (PKPM_RF_NUM_MOMS). ~%"),
+  printf(fh, "  // share:       Accumulated shares of the flux for the blend (PKPM_RF_SHARE_*). ~%"),
+  printf(fh, "  // 3-point Gauss-Legendre rule on the interval. ~%"),
+  printf(fh, "  const double ord[3] = ~a; ~%", pkpmRemapFluxCList(pkpmRemapFluxOrds)),
+  printf(fh, "  const double wgt[3] = ~a; ~%", pkpmRemapFluxCList(pkpmRemapFluxWgts)),
+  printf(fh, "  const double mid = 0.5*(w_up+w_lo), half = 0.5*(w_up-w_lo); ~%"),
+  printf(fh, "  double X_l[8], X_r[8], phi_l[8], phi_r[8], flux[8], sb[2]; ~%"),
+  printf(fh, "  for (int g = 0; g < 3; ++g) { ~%"),
+  pkpmRemapFluxIntervalPoint(fh, dir, n),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
+
+/* The factors n of the Legendre modes of the velocity basis, phi_m = n_m [1, eta, 3 eta^2 - 1]. */
+pkpmRemapFluxVelNorm : [1/sqrt(2), sqrt(3/2), sqrt(5/2)/2]$
+
+calcPKPMRemapFluxToFace(fh, funcNm, cdim) := block([na, NT, n, m, a],
+  na : 2^(cdim - 1), NT : 3*na, n : pkpmRemapFluxVelNorm,
+  printf(fh, "#include <gkyl_pkpm_remap_flux_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *psi, const double *fwd, const double *G,
+  double* GKYL_RESTRICT X, double* GKYL_RESTRICT Y) ~%{ ~%", funcNm),
+  printf(fh, "  // psi:  Transverse modes at the node. ~%"),
+  printf(fh, "  // fwd:  Factors of the change of frame from the side to the face frame (PKPM_FRAME_*). ~%"),
+  printf(fh, "  // G:    Modal traces of the eight blocks of one velocity cell of the side: ~%"),
+  printf(fh, "  //       G[c*~a + a*3 + m], a transverse mode, m Legendre mode in w. ~%", NT),
+  printf(fh, "  // X:    Output blocks at the node in the frame of the side, Legendre coefficients in w: ~%"),
+  printf(fh, "  //       X[m*8 + c] of [1, eta, 3 eta^2 - 1]. ~%"),
+  printf(fh, "  // Y:    Output blocks at the node in the face frame, Y[m*8 + c]. ~%"),
+  printf(fh, "  for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "    const double *g = &G[c*~a]; ~%", NT),
+  for m : 0 thru 2 do (
+    printf(fh, "    X[~a] = ~a*(", if m = 0 then "c" else sconcat(8*m, "+c"), float(n[m + 1])),
+    for a : 0 thru na - 1 do
+      printf(fh, "~apsi[~a]*g[~a]", if a > 0 then "+" else "", a, 3*a + m),
+    printf(fh, "); ~%")
+  ),
+  printf(fh, "  } ~%"),
+  for m : 0 thru 2 do
+    printf(fh, "  pkpm_harm_frame_change(&X[~a], fwd, &Y[~a]); ~%", 8*m, 8*m),
+  printf(fh, "} ~%")
+)$
+
+calcPKPMRemapFluxFromFace(dir, fh, funcNm, cdim) := block(
+  [lb, pkC, pkV, pkP, cv, surfCVars, vv, md, tr, bSurf, NK, ipVars, ip, idx, k, a, m, fact],
+  lb : loadPKPMPhaseBasis(cdim),
+  pkC : copylist(lb[1]), pkV : copylist(lb[3]), pkP : copylist(lb[5]),
+  cv : pkC[dir], surfCVars : delete(cv, pkC), vv : pkV[1],
+  md : pkpmRemapFluxModes(surfCVars, vv), tr : md[3],
+  bSurf : basisFromVars("tenhyb", delete(cv, pkP), 1),
+  NK : length(bSurf),
+  if NK # length(tr) then error("calcPKPMRemapFluxFromFace: surface basis size mismatch"),
+  ipVars : append(surfCVars, [vv]),
+  fact : laxFactorizeBasis(bSurf, if cdim > 1 then surfCVars else [prjdummy], pkV),
+  printf(fh, "#include <gkyl_pkpm_remap_flux_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *wpsi, const double *bck, const double *P,
+  double* GKYL_RESTRICT flux) ~%{ ~%", funcNm),
+  printf(fh, "  // wpsi:  Weight of the transverse node times the transverse modes at the node. ~%"),
+  printf(fh, "  // bck:   Factors of the change of frame from the face frame to the side (PKPM_FRAME_*). ~%"),
+  printf(fh, "  // P:     Legendre projections in w of the face-frame flux of the eight blocks on the ~%"),
+  printf(fh, "  //        velocity cell of the side at the node: P[m*8 + c]. ~%"),
+  printf(fh, "  // flux:  Accumulated surface modes of the side of the face: flux[c*~a + k]. ~%", NK),
+  printf(fh, "  double Z[24]; ~%"),
+  for m : 0 thru 2 do
+    printf(fh, "  pkpm_harm_frame_change(&P[~a], bck, &Z[~a]); ~%", 8*m, 8*m),
+  printf(fh, "  for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "    double *out = &flux[c*~a]; ~%", NK),
+  for k : 1 thru NK do (
+    ip : calcInnerProdList(ipVars, 1, tr, bSurf[k]),
+    idx : sublist_indices(ip, lambda([z], is(abs(float(z) - 1.0) < 1.0e-12))),
+    if length(idx) # 1 then error("calcPKPMRemapFluxFromFace: surface mode is not a face mode"),
+    a : floor((idx[1] - 1)/3), m : (idx[1] - 1) - 3*a,
+    /* As in calcPKPMRemapFluxStore: the stored modes are integrals against the normalized
+       shapes of the factorized surface basis, so the store divides by coef_k. */
+    printf(fh, "    out[~a] += ~a*wpsi[~a]*Z[~a + c]; ~%", k-1, float(1/fact[3][k]), a, m*8)
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, "} ~%")
+)$
+
+calcPKPMRemapFluxLabel(dir, fh, funcNm) := block([ords, wgts, n, sd, s, k],
+  ords : pkpmRemapFluxOrds, wgts : pkpmRemapFluxWgts, n : pkpmRemapFluxVelNorm, sd : ["l", "r"],
+  printf(fh, "#include <gkyl_pkpm_remap_flux_kernels.h> ~%"),
+  printf(fh, "#include <gkyl_pkpm_harm_coeffs.h> ~%"),
+  printf(fh, "GKYL_CU_DH void ~a(const double *fc, double w_center, double dw,
+  const double *X_l, const double *X_r, double* GKYL_RESTRICT proj, double* GKYL_RESTRICT mom_l,
+  double* GKYL_RESTRICT mom_r, double* GKYL_RESTRICT speed) ~%{ ~%", funcNm),
+  printf(fh, "  // fc:          Face coefficients of the flux at the transverse node (PKPM_FC_*, stride 1). ~%"),
+  printf(fh, "  // w_center/dw: Center and width of the velocity cell. ~%"),
+  printf(fh, "  // X_l/X_r:     Blocks of the left/right side at the node, each in the frame of its side, ~%"),
+  printf(fh, "  //              Legendre coefficients in w: X[m*8 + c] of [1, eta, 3 eta^2 - 1]. ~%"),
+  printf(fh, "  // proj:        Output projection of the flux onto the Legendre modes of the cell: proj[m*8 + c]. ~%"),
+  printf(fh, "  // mom_l/r:     Accumulated moments in w of the contribution of the left/right side ~%"),
+  printf(fh, "  //              (PKPM_RF_NUM_MOMS). ~%"),
+  printf(fh, "  // speed:       Largest speeds of the flux so far, raised to those of this cell at the node: ~%"),
+  printf(fh, "  //              [fastest signal in either direction, largest spread of the two bounds]. ~%"),
+  printf(fh, "  // 3-point Gauss-Legendre rule on the cell: the ordinates eta, 3 eta^2 - 1 there, and the ~%"),
+  printf(fh, "  // weights times the Legendre modes of the cell. ~%"),
+  printf(fh, "  const double eta[3] = ~a; ~%", pkpmRemapFluxCList(ords)),
+  printf(fh, "  const double leg2[3] = ~a; ~%", pkpmRemapFluxCList(makelist(3*ords[k]^2 - 1, k, 1, 3))),
+  printf(fh, "  const double wgt[3] = ~a; ~%", pkpmRemapFluxCList(wgts)),
+  /* weight times the mode at the point: the basis constant n_m times the correctly rounded rest */
+  printf(fh, "  const double t0[3] = ~a; ~%",
+    pkpmRemapFluxCList(makelist(float(bfloat(wgts[k]))*float(n[1]), k, 1, 3))),
+  printf(fh, "  const double t1[3] = ~a; ~%",
+    pkpmRemapFluxCList(makelist(float(bfloat(wgts[k]*ords[k]))*float(n[2]), k, 1, 3))),
+  printf(fh, "  const double t2[3] = ~a; ~%",
+    pkpmRemapFluxCList(makelist(float(bfloat(wgts[k]*(3*ords[k]^2 - 1)))*float(n[3]), k, 1, 3))),
+  printf(fh, "  double x_l[8], x_r[8], phi_l[8], phi_r[8], sb[2]; ~%"),
+  printf(fh, "  for (int k = 0; k < 24; ++k) { ~%"),
+  printf(fh, "    proj[k] = 0.0; ~%"),
+  printf(fh, "  } ~%"),
+  printf(fh, "  for (int g = 0; g < 3; ++g) { ~%"),
+  printf(fh, "    const double wq = w_center+0.5*eta[g]*dw, om = 0.5*wgt[g]*dw; ~%"),
+  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
+  for s : 1 thru 2 do
+    printf(fh, "      x_~a[c] = X_~a[c]+eta[g]*X_~a[8+c]+leg2[g]*X_~a[16+c]; ~%", sd[s], sd[s], sd[s], sd[s]),
+  printf(fh, "    } ~%"),
+  printf(fh, "    pkpm_harm_conf_flux(~a, x_l, x_r, wq, fc, 1, phi_l, phi_r, sb); ~%", dir - 1),
+  printf(fh, "    speed[0] = fmax(speed[0], fmax(-sb[0], sb[1])); ~%"),
+  printf(fh, "    speed[1] = fmax(speed[1], sb[1]-sb[0]); ~%"),
+  printf(fh, "    for (int c = 0; c < 8; ++c) { ~%"),
+  printf(fh, "      const double flux = phi_l[c]+phi_r[c]; ~%"),
+  printf(fh, "      proj[c] += t0[g]*flux; ~%"),
+  printf(fh, "      proj[8+c] += t1[g]*flux; ~%"),
+  printf(fh, "      proj[16+c] += t2[g]*flux; ~%"),
+  printf(fh, "    } ~%"),
+  for s : 1 thru 2 do (
+    printf(fh, "    mom_~a[0] += om*phi_~a[0]; ~%", sd[s], sd[s]),
+    printf(fh, "    mom_~a[1] += om*wq*phi_~a[0]; ~%", sd[s], sd[s]),
+    printf(fh, "    mom_~a[2] += om*wq*wq*phi_~a[0]; ~%", sd[s], sd[s]),
+    printf(fh, "    mom_~a[3] += om*phi_~a[1]; ~%", sd[s], sd[s]),
+    for k : 0 thru 2 do printf(fh, "    mom_~a[~a] += om*phi_~a[~a]; ~%", sd[s], 4 + k, sd[s], 2 + k)
   ),
   printf(fh, "  } ~%"),
   printf(fh, "} ~%")

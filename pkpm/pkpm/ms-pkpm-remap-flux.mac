@@ -1,7 +1,8 @@
 load("pkpm/pkpm/pkpm-remap-flux.mac")$
 load(stringproc)$
 /* This script generates, for the p=1 PKPM solver and cdim = 1, 2, 3, the kernels of the
-   exact-remap configuration-space face flux (see pkpm-remap-flux.mac) and their header
+   exact-remap configuration-space face flux (see pkpm-remap-flux.mac), the interval and
+   label-paired kernels of a transverse node (one per direction, for every cdim) and their header
    gkyl_pkpm_remap_flux_kernels.h. */
 
 remapDirs : ["x", "y", "z"]$
@@ -10,9 +11,40 @@ fhH : openw("~/max-out/gkyl_pkpm_remap_flux_kernels.h")$
 printf(fhH, "#pragma once ~%")$
 printf(fhH, "#include <math.h> ~%")$
 printf(fhH, "#include <gkyl_util.h> ~%")$
-printf(fhH, "EXTERN_C_BEG ~%~%")$
+printf(fhH, "~%// Layouts of the inputs of the interval kernels pkpm_remap_flux_interval_* and of the moments. ~%")$
+for i : 1 thru length(pkpmRemapFluxSlots) do
+  printf(fhH, "#define ~a ~a // ~a ~%", pkpmRemapFluxSlots[i][1], pkpmRemapFluxSlots[i][2],
+    pkpmRemapFluxSlots[i][3])$
+printf(fhH, "~%EXTERN_C_BEG ~%~%")$
+for d : 1 thru 3 do (
+  funcName : sconcat("pkpm_remap_flux_interval_", remapDirs[d], "_1v_p2"),
+  disp(printf(false, "Creating ~a", funcName)),
+  printf(fhH, "GKYL_CU_DH void ~a(const double *fc, double w_lo, double w_up, const double *side_l, const double *side_r, const double *cell_l, const double *cell_r, const double *Y_l, const double *Y_r, double* GKYL_RESTRICT P_l, double* GKYL_RESTRICT P_r, double* GKYL_RESTRICT mom, double* GKYL_RESTRICT share); ~%", funcName),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMRemapFluxInterval(d, fh, funcName),
+  close(fh),
+  funcName : sconcat("pkpm_remap_flux_label_", remapDirs[d], "_1v_p2"),
+  disp(printf(false, "Creating ~a", funcName)),
+  printf(fhH, "GKYL_CU_DH void ~a(const double *fc, double w_center, double dw, const double *X_l, const double *X_r, double* GKYL_RESTRICT proj, double* GKYL_RESTRICT mom_l, double* GKYL_RESTRICT mom_r, double* GKYL_RESTRICT speed); ~%", funcName),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMRemapFluxLabel(d, fh, funcName),
+  close(fh)
+)$
+printf(fhH, "~%")$
 for c : 1 thru 3 do (
+  funcName : sconcat("pkpm_remap_flux_to_face_", c, "x1v_ser_p1"),
+  disp(printf(false, "Creating ~a", funcName)),
+  printf(fhH, "GKYL_CU_DH void ~a(const double *psi, const double *fwd, const double *G, double* GKYL_RESTRICT X, double* GKYL_RESTRICT Y); ~%", funcName),
+  fh : openw(sconcat("~/max-out/", funcName, ".c")),
+  calcPKPMRemapFluxToFace(fh, funcName, c),
+  close(fh),
   for d : 1 thru c do (
+    funcName : sconcat("pkpm_remap_flux_from_face_", remapDirs[d], "_", c, "x1v_ser_p1"),
+    disp(printf(false, "Creating ~a", funcName)),
+    printf(fhH, "GKYL_CU_DH void ~a(const double *wpsi, const double *bck, const double *P, double* GKYL_RESTRICT flux); ~%", funcName),
+    fh : openw(sconcat("~/max-out/", funcName, ".c")),
+    calcPKPMRemapFluxFromFace(d, fh, funcName, c),
+    close(fh),
     funcName : sconcat("pkpm_remap_flux_trace_", remapDirs[d], "_", c, "x1v_ser_p1"),
     disp(printf(false, "Creating ~a", funcName)),
     printf(fhH, "GKYL_CU_DH void ~a(double jdinv_l, double jdinv_r, const double *f_l, const double *f_r, double* GKYL_RESTRICT G_l, double* GKYL_RESTRICT G_r); ~%", funcName),
