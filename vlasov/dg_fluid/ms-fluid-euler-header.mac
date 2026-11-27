@@ -40,7 +40,13 @@ printPrototype(deco, ci, bStr, pi) := block([si],
 
     printf(fh, "~adouble euler_surf~a_~ax_~a_p~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn, 
     const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, 
-    const double *fluid_l, const double *fluid_c, const double *fluid_r, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, bStr, pi)
+    const double *fluid_l, const double *fluid_c, const double *fluid_r, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, bStr, pi),
+    /* Absorbing wall (ms-fluid-euler-boundary-surf.mac). */
+    printf(fh, "~avoid euler_wall_flux~a_~ax_~a_p~a(const struct gkyl_wv_eqn *wv_eqn, const struct gkyl_wave_cell_geom *geom, 
+    const int edge, const double *fluid_skin, double* GKYL_RESTRICT flux_wall); ~%", deco, cvars[si], ci, bStr, pi),
+    printf(fh, "~adouble euler_boundary_surf~a_~ax_~a_p~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn, 
+    const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, const int edge, 
+    const double *flux_wall, const double *fluid_edge, const double *fluid_skin, double* GKYL_RESTRICT out); ~%", deco, cvars[si], ci, bStr, pi)
   ),
   printf(fh, "~avoid fluid_vars_integrated_~ax_~a_p~a(const double *fluid, const double* u_i, const double* p_ij, double* GKYL_RESTRICT int_fluid_vars); ~%", deco, ci, bStr, pi),
   printf(fh, "~avoid fluid_vars_source_~ax_~a_p~a(const double* app_accel, const double* fluid, double* GKYL_RESTRICT out); ~%", deco, ci, bStr, pi),
@@ -62,6 +68,37 @@ printf(fh, "#include <gkyl_wv_eqn.h> ~%")$
 printf(fh, "#include <gkyl_wv_euler_priv.h> ~%")$
 printf(fh, "#include <gkyl_util.h> ~%")$
 printf(fh, "EXTERN_C_BEG ~%")$
+printf(fh, "~%")$
+/* Flux of an absorbing wall: the half-range moments of the local Maxwellian (the particles that
+   move toward the wall, none coming back). The normal translational degree of freedom is
+   kinetic; the rest of the internal energy, T/(gas_gamma - 1) - T/2 per particle, is carried at its
+   mean, so the flux is F(q) for a supersonic flow toward the wall at every gas_gamma. */
+printf(fh, "// Flux through an absorbing wall of the state q = [rho, rho un, rho ut1, rho ut2, E] in the frame ~%")$
+printf(fh, "// of the face: that of the particles of the Maxwellian with the density, flow and temperature ~%")$
+printf(fh, "// T/m = p/rho of q that move toward the wall (none come back). The normal translational degree ~%")$
+printf(fh, "// of freedom is kinetic (half-range moments of the Maxwellian); the rest of the internal energy, ~%")$
+printf(fh, "// T (1/(gas_gamma - 1) - 1/2) per particle, is carried at its mean. sgn = +1 if the wall is on ~%")$
+printf(fh, "// the side the normal points to, -1 if on the other side; the flux is along the normal. ~%")$
+printf(fh, "GKYL_CU_DH static inline void ~%")$
+printf(fh, "euler_wall_flux(double gas_gamma, double sgn, const double *q, double *flux) ~%")$
+printf(fh, "{ ~%")$
+printf(fh, "  const double rho = q[0]; ~%")$
+printf(fh, "  const double un = sgn*q[1]/rho, ut1 = q[2]/rho, ut2 = q[3]/rho; // un: toward the wall ~%")$
+printf(fh, "  const double vtsq = (gas_gamma - 1.0)*(q[4] - 0.5*(q[1]*q[1] + q[2]*q[2] + q[3]*q[3])/rho)/rho; ~%")$
+printf(fh, "  const double vt = sqrt(vtsq); ~%")$
+printf(fh, "  const double s = 0.7071067811865476*un/vt; ~%")$
+printf(fh, "  const double hf = 0.5*erfc(-s); // fraction of the particles moving toward the wall ~%")$
+printf(fh, "  const double ex = 0.3989422804014327*vt*exp(-s*s); ~%")$
+printf(fh, "  // half-range moments of the normal velocity per unit mass density ~%")$
+printf(fh, "  const double m1 = un*hf + ex; ~%")$
+printf(fh, "  const double m2 = (un*un + vtsq)*hf + un*ex; ~%")$
+printf(fh, "  const double m3 = un*(un*un + 3.0*vtsq)*hf + (un*un + 2.0*vtsq)*ex; ~%")$
+printf(fh, "  flux[0] = sgn*rho*m1; ~%")$
+printf(fh, "  flux[1] = rho*m2; ~%")$
+printf(fh, "  flux[2] = ut1*flux[0]; ~%")$
+printf(fh, "  flux[3] = ut2*flux[0]; ~%")$
+printf(fh, "  flux[4] = sgn*0.5*rho*m3 + flux[0]*(0.5*(ut1*ut1 + ut2*ut2) + vtsq*(1.0/(gas_gamma - 1.0) - 0.5)); ~%")$
+printf(fh, "} ~%")$
 printf(fh, "~%")$
 
 decorator : "GKYL_CU_DH "$

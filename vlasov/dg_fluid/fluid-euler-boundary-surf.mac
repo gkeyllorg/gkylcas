@@ -1,0 +1,294 @@
+/* This script generates the kernels of the absorbing-wall boundary flux of Euler's equations
+   (isIso = false) and of the isothermal Euler equations (isIso = true).
+
+   An absorbing wall takes every particle that reaches it and returns none. Its flux is that of
+   the particles of the local Maxwellian (the density, flow and temperature of the fluid in the
+   cell next to the wall) that move toward the wall: the half-range moments of the Maxwellian
+   (euler_wall_flux and iso_euler_wall_flux of the kernel headers). It is a function of the
+   state of the boundary cell alone and reads no ghost cell, as the kinetic flux of a PKPM or a
+   kinetic species against the empty ghost cells of an absorbing wall.
+
+   Two kernels per direction:
+   - euler_wall_flux: the surface expansion of the wall flux on the wall face of the boundary
+     cell, from its values at the polyOrder+1 Gauss-Legendre points per surface direction (the
+     quadrature points of the surface kernels). The wall losses of the species are its integral.
+   - euler_boundary_surf: the surface increments of the boundary cell, with the given wall flux
+     on its wall face and the flux of the Riemann solver (as in euler_surf) on its interior face.
+*/
+
+load("core/modal-basis.mac");
+load("util_maxima/out-scripts.mac");
+load(stringproc)$
+load("core/nodal_operations/nodal_functions.mac")$
+fpprec : 24$
+
+cvars : [x, y, z]$
+
+lhs : [outrho, outrhoux, outrhouy, outrhouz, outenergy]$
+eulerFlds : ["rho", "rhoux", "rhouy", "rhouz", "energy"]$
+
+/* Expression of field fld (a pointer name) at quadrature point i of the face at cv = side (-1 or 1). */
+evalOnFace(fld, cdim, basisFun, polyOrder, bC, cv, dir, i, side) := block([basisStr],
+  if cdim = 1 then
+    string(float(expand(subst(cv=side, doExpand1(eval_string(fld), bC)))))
+  else (
+    basisStr : sconcat(basisFun, "_", cdim, "x", "_p", polyOrder),
+    sconcat(basisStr, "_surfx", dir, "_eval_quad_node_", i-1, "_", if side = -1 then "l" else "r", "(", fld, ")")
+  )
+)$
+
+/* Wall flux on the wall face of the boundary cell (edge = -1: its lower face, edge = 1: its upper face). */
+calcEulerWallFluxInDir(dir, fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
+  [varsC,bC,NC,cv,surfVars,bSurf,NSurf,basisStr,numNodes,numEq,rotLocal,rotGlobal,wallFn,k,i,side],
+
+  numEq : if isIso then 4 else 5,
+  rotLocal : if isIso then "iso_euler_rot_to_local" else "rot_to_local",
+  rotGlobal : if isIso then "iso_euler_rot_to_global" else "rot_to_global",
+  wallFn : if isIso then "iso_euler_wall_flux(vt" else "euler_wall_flux(gas_gamma",
+
+  kill(varsC, bC),
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+  NC : length(bC),
+  cv : varsC[dir],
+  surfVars : delete(cv,varsC),
+  if cdim = 1 then (
+    bSurf : [1],
+    numNodes : 1
+  ) else (
+    bSurf : basisFromVars(basisFun,surfVars,polyOrder),
+    numNodes : length(gaussOrd(polyOrder+1, cdim-1))
+  ),
+  NSurf : length(bSurf),
+  basisStr : sconcat(basisFun, "_", cdim, "x", "_p", polyOrder),
+
+  printf(fh, "GKYL_CU_DH void ~a~a_~ax_~a_p~a(const struct gkyl_wv_eqn *wv_eqn, const struct gkyl_wave_cell_geom *geom,
+    const int edge, const double *fluid_skin, double* GKYL_RESTRICT flux_wall) ~%{ ~%", funcNm, cvars[dir], cdim, basisFun, polyOrder),
+  printf(fh, "  // wv_eqn:     Wave equation (its adiabatic index or thermal speed).~%"),
+  printf(fh, "  // geom:       Geometry of the wall face.~%"),
+  printf(fh, "  // edge:       -1 if the wall is the lower face of the boundary cell, +1 if its upper face.~%"),
+  if isIso then
+    printf(fh, "  // fluid_skin: [rho, rho ux, rho uy, rho uz], Fluid state of the boundary cell.~%")
+  else
+    printf(fh, "  // fluid_skin: [rho, rho ux, rho uy, rho uz, energy], Fluid state of the boundary cell.~%"),
+  printf(fh, "  // flux_wall:  Output surface expansion of the flux through the wall, along the coordinate~%"),
+  printf(fh, "  //             direction ([F_rho, F_rhoux, F_rhouy, F_rhouz~a], ~a modes each).~%", if isIso then "" else ", F_energy", NSurf),
+  printf(fh, "~%"),
+  if isIso then
+    printf(fh, "  const double vt = container_of(wv_eqn, struct wv_iso_euler, eqn)->vt; ~%")
+  else
+    printf(fh, "  const double gas_gamma = container_of(wv_eqn, struct wv_euler, eqn)->gas_gamma; ~%"),
+  printf(fh, "  const double sgn = edge; ~%"),
+  printf(fh, "~%"),
+  for k : 1 thru numEq do (
+    printf(fh, "  const double *~a_skin = &fluid_skin[~a]; ~%", eulerFlds[k], (k-1)*NC)
+  ),
+  printf(fh, "~%"),
+  printf(fh, "  double q[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double q_local[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double fhat_local[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double fhat[~a] = {0.0}; ~%", numEq),
+  if cdim > 1 then (
+    for k : 1 thru numEq do (
+      printf(fh, "  double flux_~a_quad[~a] = {0.0}; ~%", eulerFlds[k], numNodes)
+    )
+  ),
+  printf(fh, "~%"),
+
+  for i : 1 thru numNodes do (
+    /* State of the boundary cell at the quadrature point of its wall face. */
+    printf(fh, "  if (edge == -1) { ~%"),
+    for k : 1 thru numEq do (
+      printf(fh, "    q[~a] = ~a; ~%", k-1, evalOnFace(sconcat(eulerFlds[k], "_skin"), cdim, basisFun, polyOrder, bC, cv, dir, i, -1))
+    ),
+    printf(fh, "  } else { ~%"),
+    for k : 1 thru numEq do (
+      printf(fh, "    q[~a] = ~a; ~%", k-1, evalOnFace(sconcat(eulerFlds[k], "_skin"), cdim, basisFun, polyOrder, bC, cv, dir, i, 1))
+    ),
+    printf(fh, "  } ~%"),
+    printf(fh, "  ~a(wv_eqn, geom->tau1[~a], geom->tau2[~a], geom->norm[~a], q, q_local); ~%", rotLocal, dir-1, dir-1, dir-1),
+    printf(fh, "  ~a, sgn, q_local, fhat_local); ~%", wallFn),
+    printf(fh, "  ~a(wv_eqn, geom->tau1[~a], geom->tau2[~a], geom->norm[~a], fhat_local, fhat); ~%", rotGlobal, dir-1, dir-1, dir-1),
+    for k : 1 thru numEq do (
+      if cdim = 1 then
+        printf(fh, "  flux_wall[~a] = fhat[~a]; ~%", k-1, k-1)
+      else
+        printf(fh, "  flux_~a_quad[~a] = fhat[~a]; ~%", eulerFlds[k], i-1, k-1)
+    ),
+    printf(fh, "~%"),
+    flush_output(fh)
+  ),
+
+  if cdim > 1 then (
+    for k : 1 thru numEq do (
+      printf(fh, "  ~a_upwind_quad_to_modal(flux_~a_quad, &flux_wall[~a]); ~%", basisStr, eulerFlds[k], (k-1)*NSurf)
+    ),
+    printf(fh, "~%")
+  ),
+  printf(fh, "} ~%")
+);
+
+/* Riemann flux at the points of one interface between the states named sL (left cell) and sR
+   (right cell), with the geometry gm, into flux_<fld>_quad_<side> (or flux_<fld>_<side> in 1x). */
+printRiemannAtNode(fh, cdim, numEq, rotLocal, rotGlobal, fluxFn, dir, gm, side, i) := block([k],
+  printf(fh, "    ~a(wv_eqn, ~a->tau1[~a], ~a->tau2[~a], ~a->norm[~a], q_lft, q_lft_local); ~%", rotLocal, gm, dir-1, gm, dir-1, gm, dir-1),
+  printf(fh, "    ~a(wv_eqn, ~a->tau1[~a], ~a->tau2[~a], ~a->norm[~a], q_rgt, q_rgt_local); ~%", rotLocal, gm, dir-1, gm, dir-1, gm, dir-1),
+  printf(fh, "    for (int i = 0; i < ~a; ++i) { ~%", numEq),
+  printf(fh, "      delta[i] = q_rgt_local[i] - q_lft_local[i]; ~%"),
+  printf(fh, "    } ~%"),
+  printf(fh, "    gkyl_wv_eqn_waves(wv_eqn, GKYL_WV_HIGH_ORDER_FLUX, delta, q_lft_local, q_rgt_local, 1.0, 1.0, waves, speeds); ~%"),
+  printf(fh, "    for (int i = 0; i < 3; ++i) { ~%"),
+  printf(fh, "      speeds[i] *= ~a->lenr[~a]; ~%", gm, dir-1),
+  printf(fh, "    } ~%"),
+  printf(fh, "    gkyl_wv_eqn_qfluct(wv_eqn, GKYL_WV_HIGH_ORDER_FLUX, q_lft_local, q_rgt_local, 1.0, 1.0, waves, speeds, amdq_local, apdq_local); ~%"),
+  printf(fh, "    ~a, q_lft_local, fhat_local); ~%", fluxFn),
+  printf(fh, "    for (int i = 0; i < ~a; ++i) { ~%", numEq),
+  printf(fh, "      fhat_local[i] = ~a->lenr[~a]*fhat_local[i] + amdq_local[i]; ~%", gm, dir-1),
+  printf(fh, "    } ~%"),
+  printf(fh, "    ~a(wv_eqn, ~a->tau1[~a], ~a->tau2[~a], ~a->norm[~a], fhat_local, fhat); ~%", rotGlobal, gm, dir-1, gm, dir-1, gm, dir-1),
+  for k : 1 thru numEq do (
+    if cdim = 1 then
+      printf(fh, "    flux_~a_~a[0] = fhat[~a]; ~%", eulerFlds[k], side, k-1)
+    else
+      printf(fh, "    flux_~a_quad_~a[~a] = fhat[~a]; ~%", eulerFlds[k], side, i-1, k-1)
+  )
+)$
+
+/* Surface increments of the boundary cell: the wall flux on its wall face, the Riemann flux on
+   its interior face (with the interior neighbor, fluid_edge). */
+calcEulerBoundaryUpdateInDir(dir, fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
+  [varsC,bC,NC,cv,surfVars,bSurf,NSurf,basisStr,numNodes,numEq,rotLocal,rotGlobal,fluxFn,
+   fluxl_e,fluxr_e,incr_l,incr_r,k,m,i,s],
+
+  numEq : if isIso then 4 else 5,
+  rotLocal : if isIso then "iso_euler_rot_to_local" else "rot_to_local",
+  rotGlobal : if isIso then "iso_euler_rot_to_global" else "rot_to_global",
+  fluxFn : if isIso then "iso_euler_flux(vt" else "gkyl_euler_flux(gas_gamma",
+
+  kill(varsC, bC),
+  [varsC,bC] : loadBasis(basisFun, cdim, polyOrder),
+  NC : length(bC),
+  cv : varsC[dir],
+  surfVars : delete(cv,varsC),
+  if cdim = 1 then (
+    bSurf : [1],
+    numNodes : 1
+  ) else (
+    bSurf : basisFromVars(basisFun,surfVars,polyOrder),
+    numNodes : length(gaussOrd(polyOrder+1, cdim-1))
+  ),
+  NSurf : length(bSurf),
+  basisStr : sconcat(basisFun, "_", cdim, "x", "_p", polyOrder),
+
+  printf(fh, "GKYL_CU_DH double ~a~a_~ax_~a_p~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn,
+    const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, const int edge,
+    const double *flux_wall, const double *fluid_edge, const double *fluid_skin, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cvars[dir], cdim, basisFun, polyOrder),
+  printf(fh, "  // w[NDIM]:    Cell-center coordinates.~%"),
+  printf(fh, "  // dxv[NDIM]:  Cell spacing.~%"),
+  printf(fh, "  // wv_eqn:     Wave equation: the Riemann solver for the flux at the interior face.~%"),
+  printf(fh, "  // geom_l:     Geometry of the lower face of the boundary cell.~%"),
+  printf(fh, "  // geom_r:     Geometry of the upper face of the boundary cell.~%"),
+  printf(fh, "  // edge:       -1 if the wall is the lower face of the boundary cell, +1 if its upper face.~%"),
+  printf(fh, "  // flux_wall:  Surface expansion of the flux through the wall (~a_wall_flux).~%", if isIso then "iso_euler" else "euler"),
+  if isIso then
+    printf(fh, "  // fluid_edge/skin: [rho, rho ux, rho uy, rho uz], Fluid state of the interior neighbor/the boundary cell.~%")
+  else
+    printf(fh, "  // fluid_edge/skin: [rho, rho ux, rho uy, rho uz, energy], Fluid state of the interior neighbor/the boundary cell.~%"),
+  printf(fh, "  // out:        Incremented output of the boundary cell.~%"),
+  printf(fh, "~%"),
+
+  printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
+  if isIso then
+    printf(fh, "  const double vt = container_of(wv_eqn, struct wv_iso_euler, eqn)->vt; ~%")
+  else
+    printf(fh, "  const double gas_gamma = container_of(wv_eqn, struct wv_euler, eqn)->gas_gamma; ~%"),
+  printf(fh, "~%"),
+  for s in ["edge", "skin"] do (
+    for k : 1 thru numEq do (
+      printf(fh, "  const double *~a_~a = &fluid_~a[~a]; ~%", eulerFlds[k], s, s, (k-1)*NC)
+    ),
+    printf(fh, "~%")
+  ),
+  for k : 1 thru numEq do (
+    printf(fh, "  double *out~a = &out[~a]; ~%", eulerFlds[k], (k-1)*NC)
+  ),
+  printf(fh, "~%"),
+
+  printf(fh, "  double q_lft[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double q_lft_local[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double q_rgt[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double q_rgt_local[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double delta[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double waves[~a] = {0.0}; ~%", 3*numEq),
+  printf(fh, "  double speeds[3] = {0.0}; ~%"),
+  printf(fh, "  double amdq_local[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double apdq_local[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double fhat_local[~a] = {0.0}; ~%", numEq),
+  printf(fh, "  double fhat[~a] = {0.0}; ~%", numEq),
+  for k : 1 thru numEq do (
+    for s in ["l", "r"] do (
+      if cdim > 1 then printf(fh, "  double flux_~a_quad_~a[~a] = {0.0}; ~%", eulerFlds[k], s, numNodes),
+      printf(fh, "  double flux_~a_~a[~a] = {0.0}; ~%", eulerFlds[k], s, NSurf)
+    )
+  ),
+  printf(fh, "~%"),
+
+  /* Lower wall: the interior face is the upper face, between the boundary cell and its neighbor. */
+  printf(fh, "  if (edge == -1) { ~%"),
+  for i : 1 thru numNodes do (
+    for k : 1 thru numEq do (
+      printf(fh, "    q_lft[~a] = ~a; ~%", k-1, evalOnFace(sconcat(eulerFlds[k], "_skin"), cdim, basisFun, polyOrder, bC, cv, dir, i, 1)),
+      printf(fh, "    q_rgt[~a] = ~a; ~%", k-1, evalOnFace(sconcat(eulerFlds[k], "_edge"), cdim, basisFun, polyOrder, bC, cv, dir, i, -1))
+    ),
+    printRiemannAtNode(fh, cdim, numEq, rotLocal, rotGlobal, fluxFn, dir, "geom_r", "r", i),
+    printf(fh, "~%"),
+    flush_output(fh)
+  ),
+  if cdim > 1 then (
+    for k : 1 thru numEq do (
+      printf(fh, "    ~a_upwind_quad_to_modal(flux_~a_quad_r, flux_~a_r); ~%", basisStr, eulerFlds[k], eulerFlds[k])
+    )
+  ),
+  for k : 1 thru numEq do (
+    for m : 1 thru NSurf do (
+      printf(fh, "    flux_~a_l[~a] = flux_wall[~a]; ~%", eulerFlds[k], m-1, (k-1)*NSurf + m-1)
+    )
+  ),
+  /* Upper wall: the interior face is the lower face, between the neighbor and the boundary cell. */
+  printf(fh, "  } else { ~%"),
+  for i : 1 thru numNodes do (
+    for k : 1 thru numEq do (
+      printf(fh, "    q_lft[~a] = ~a; ~%", k-1, evalOnFace(sconcat(eulerFlds[k], "_edge"), cdim, basisFun, polyOrder, bC, cv, dir, i, 1)),
+      printf(fh, "    q_rgt[~a] = ~a; ~%", k-1, evalOnFace(sconcat(eulerFlds[k], "_skin"), cdim, basisFun, polyOrder, bC, cv, dir, i, -1))
+    ),
+    printRiemannAtNode(fh, cdim, numEq, rotLocal, rotGlobal, fluxFn, dir, "geom_l", "l", i),
+    printf(fh, "~%"),
+    flush_output(fh)
+  ),
+  if cdim > 1 then (
+    for k : 1 thru numEq do (
+      printf(fh, "    ~a_upwind_quad_to_modal(flux_~a_quad_l, flux_~a_l); ~%", basisStr, eulerFlds[k], eulerFlds[k])
+    )
+  ),
+  for k : 1 thru numEq do (
+    for m : 1 thru NSurf do (
+      printf(fh, "    flux_~a_r[~a] = flux_wall[~a]; ~%", eulerFlds[k], m-1, (k-1)*NSurf + m-1)
+    )
+  ),
+  printf(fh, "  } ~%"),
+  printf(fh, "~%"),
+
+  /* Increments of the cell from its lower and upper faces (as in euler_surf). */
+  for m : 1 thru numEq do (
+    fluxl_e : doExpand1(eval_string(sconcat("flux_", eulerFlds[m], "_l")), bSurf),
+    fluxr_e : doExpand1(eval_string(sconcat("flux_", eulerFlds[m], "_r")), bSurf),
+    incr_l : calcInnerProdList(surfVars, 1, subst(cv=-1, bC), fluxl_e),
+    incr_r : calcInnerProdList(surfVars, -1, subst(cv=1, bC), fluxr_e),
+    writeCIncrExprsCollect1lhsc(lhs[m], dx1*(incr_l + incr_r)),
+    printf(fh, "~%"),
+    flush_output(fh)
+  ),
+
+  printf(fh, "  return 0.;~%"),
+  printf(fh, "~%"),
+  printf(fh, "} ~%")
+);

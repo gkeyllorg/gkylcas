@@ -80,6 +80,29 @@ printf(fhH, "  flux[2] = q[2]*u; ~%")$
 printf(fhH, "  flux[3] = q[3]*u; ~%")$
 printf(fhH, "} ~%")$
 printf(fhH, "~%")$
+/* Flux of an absorbing wall: the half-range moments of the local Maxwellian at the thermal
+   speed vt (see euler_wall_flux in gkyl_euler_kernels.h). */
+printf(fhH, "// Flux through an absorbing wall of the state q = [rho, rho un, rho ut1, rho ut2] in the frame of ~%")$
+printf(fhH, "// the face: that of the particles of the Maxwellian with the density and flow of q and the ~%")$
+printf(fhH, "// thermal speed vt that move toward the wall (none come back). sgn = +1 if the wall is on the ~%")$
+printf(fhH, "// side the normal points to, -1 if on the other side; the flux is along the normal. ~%")$
+printf(fhH, "GKYL_CU_DH static inline void ~%")$
+printf(fhH, "iso_euler_wall_flux(double vt, double sgn, const double *q, double *flux) ~%")$
+printf(fhH, "{ ~%")$
+printf(fhH, "  const double rho = q[0]; ~%")$
+printf(fhH, "  const double un = sgn*q[1]/rho; // toward the wall ~%")$
+printf(fhH, "  const double s = 0.7071067811865476*un/vt; ~%")$
+printf(fhH, "  const double hf = 0.5*erfc(-s); // fraction of the particles moving toward the wall ~%")$
+printf(fhH, "  const double ex = 0.3989422804014327*vt*exp(-s*s); ~%")$
+printf(fhH, "  // half-range moments of the normal velocity per unit mass density ~%")$
+printf(fhH, "  const double m1 = un*hf + ex; ~%")$
+printf(fhH, "  const double m2 = (un*un + vt*vt)*hf + un*ex; ~%")$
+printf(fhH, "  flux[0] = sgn*rho*m1; ~%")$
+printf(fhH, "  flux[1] = rho*m2; ~%")$
+printf(fhH, "  flux[2] = q[2]/rho*flux[0]; ~%")$
+printf(fhH, "  flux[3] = q[3]/rho*flux[0]; ~%")$
+printf(fhH, "} ~%")$
+printf(fhH, "~%")$
 deco : "GKYL_CU_DH "$
 
 for bInd : 1 thru length(bName) do (
@@ -136,6 +159,12 @@ for bInd : 1 thru length(bName) do (
         printf(fhH, "~adouble iso_euler_surf~a~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn, 
     const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, 
     const double *fluid_l, const double *fluid_c, const double *fluid_r, double* GKYL_RESTRICT out); ~%", deco, clabels[dir], suffix),
+        /* Absorbing wall (ms-fluid-euler-boundary-surf.mac). */
+        printf(fhH, "~avoid iso_euler_wall_flux~a~a(const struct gkyl_wv_eqn *wv_eqn, const struct gkyl_wave_cell_geom *geom, 
+    const int edge, const double *fluid_skin, double* GKYL_RESTRICT flux_wall); ~%", deco, clabels[dir], suffix),
+        printf(fhH, "~adouble iso_euler_boundary_surf~a~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn, 
+    const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, const int edge, 
+    const double *flux_wall, const double *fluid_edge, const double *fluid_skin, double* GKYL_RESTRICT out); ~%", deco, clabels[dir], suffix),
 
         /* Slope limiter. */
         fh : openw(sconcat("~/max-out/fluid_vars_iso_limiter", clabels[dir], suffix, ".c")),
