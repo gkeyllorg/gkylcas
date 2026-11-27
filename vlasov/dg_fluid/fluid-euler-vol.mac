@@ -35,19 +35,23 @@ calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
   cflPt : makelist(varsC[d]=0, d, 1, length(varsC)),
 
   if isIso then (
-    printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, double vt, 
+    printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, const double *jacob_pos, double vt, 
     const double *u, const double *p, const double *fluid, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
     printf(fh, "  // w[NDIM]:   Cell-center coordinates.~%"),
-    printf(fh, "  // dxv[NDIM]: Cell spacing.~%"),
+    printf(fh, "  // dxv[NDIM]: Cell spacing (computational).~%"),
+    printf(fh, "  // jacob_pos: Position-map Jacobian per configuration direction (cdim blocks of ~a equal~%", polyOrder+1),
+    printf(fh, "  //            entries): the physical size of the cell in direction d is J_d dxv[d].~%"),
     printf(fh, "  // vt:        Thermal velocity.~%"),
     printf(fh, "  // u:         Input flow velocity [ux, uy, uz].~%"),
     printf(fh, "  // p:         Input pressure (vt^2 rho).~%"),
     printf(fh, "  // fluid:     [rho, rho ux, rho uy, rho uz], Fluid input state vector.~%")
   ) else (
-    printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, double gas_gamma, 
+    printf(fh, "GKYL_CU_DH double ~a_p~a(const double *w, const double *dxv, const double *jacob_pos, double gas_gamma, 
     const double *u, const double *p, const double *fluid, double* GKYL_RESTRICT out) ~%{ ~%", funcNm, polyOrder),
     printf(fh, "  // w[NDIM]:   Cell-center coordinates.~%"),
-    printf(fh, "  // dxv[NDIM]: Cell spacing.~%"),
+    printf(fh, "  // dxv[NDIM]: Cell spacing (computational).~%"),
+    printf(fh, "  // jacob_pos: Position-map Jacobian per configuration direction (cdim blocks of ~a equal~%", polyOrder+1),
+    printf(fh, "  //            entries): the physical size of the cell in direction d is J_d dxv[d].~%"),
     printf(fh, "  // gas_gamma: Adiabatic index.~%"),
     printf(fh, "  // u:         Input flow velocity [ux, uy, uz].~%"),
     printf(fh, "  // p:         Input pressure .~%"),
@@ -56,7 +60,7 @@ calcEulerVolUpdater(fh, funcNm, cdim, basisFun, polyOrder, isIso) := block(
   printf(fh, "  // out:       Incremented output.~%"),
   printf(fh, "~%"),
   for dir : 1 thru cdim do (
-    printf(fh, "  double dx1~a = 2./dxv[~a]; ~%", dir-1, dir-1)
+    printf(fh, "  double dx1~a = 2.0/(dxv[~a]*jacob_pos[~a]); ~%", dir-1, dir-1, (polyOrder+1)*(dir-1))
   ),
   printf(fh, "~%"),
 

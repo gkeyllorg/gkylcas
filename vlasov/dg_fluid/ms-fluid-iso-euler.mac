@@ -119,7 +119,7 @@ for bInd : 1 thru length(bName) do (
       fh : openw(sconcat("~/max-out/iso_euler_vol", suffix, ".c")),
       calcEulerVolUpdater(fh, sconcat("iso_euler_vol_", d, "x_", bName[bInd]), d, bName[bInd], polyOrder, true),
       close(fh),
-      printf(fhH, "~adouble iso_euler_vol~a(const double *w, const double *dxv, double vt, const double *u, const double *p, const double *fluid, double* GKYL_RESTRICT out); ~%", deco, suffix),
+      printf(fhH, "~adouble iso_euler_vol~a(const double *w, const double *dxv, const double *jacob_pos, double vt, const double *u, const double *p, const double *fluid, double* GKYL_RESTRICT out); ~%", deco, suffix),
 
       /* Pressure. */
       fh : openw(sconcat("~/max-out/fluid_vars_iso_pressure", suffix, ".c")),
@@ -156,13 +156,13 @@ for bInd : 1 thru length(bName) do (
         ),
         calcEulerUpdateInDir(dir, fh, "iso_euler_surf", d, bName[bInd], polyOrder, true),
         close(fh),
-        printf(fhH, "~adouble iso_euler_surf~a~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn, 
+        printf(fhH, "~adouble iso_euler_surf~a~a(const double *w, const double *dxv, const double *jacob_pos, const struct gkyl_wv_eqn *wv_eqn, 
     const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, 
     const double *fluid_l, const double *fluid_c, const double *fluid_r, double* GKYL_RESTRICT out); ~%", deco, clabels[dir], suffix),
         /* Absorbing wall (ms-fluid-euler-boundary-surf.mac). */
         printf(fhH, "~avoid iso_euler_wall_flux~a~a(const struct gkyl_wv_eqn *wv_eqn, const struct gkyl_wave_cell_geom *geom, 
     const int edge, const double *fluid_skin, double* GKYL_RESTRICT flux_wall); ~%", deco, clabels[dir], suffix),
-        printf(fhH, "~adouble iso_euler_boundary_surf~a~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn, 
+        printf(fhH, "~adouble iso_euler_boundary_surf~a~a(const double *w, const double *dxv, const double *jacob_pos, const struct gkyl_wv_eqn *wv_eqn, 
     const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r, const int edge, 
     const double *flux_wall, const double *fluid_edge, const double *fluid_skin, double* GKYL_RESTRICT out); ~%", deco, clabels[dir], suffix),
 

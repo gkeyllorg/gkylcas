@@ -57,12 +57,15 @@ calcEulerUpdateInDir(dir, fh, funcNm, cdim, basisFun, polyOrder, isIso) := block
   NSurf : length(bSurf),
   basisStr : sconcat(basisFun, "_", cdim, "x", "_p", polyOrder),
 
-  printf(fh, "GKYL_CU_DH double ~a~a_~ax_~a_p~a(const double *w, const double *dxv, const struct gkyl_wv_eqn *wv_eqn,
+  printf(fh, "GKYL_CU_DH double ~a~a_~ax_~a_p~a(const double *w, const double *dxv, const double *jacob_pos,
+    const struct gkyl_wv_eqn *wv_eqn,
     const struct gkyl_wave_cell_geom *geom_l, const struct gkyl_wave_cell_geom *geom_r,
     const double *fluid_l, const double *fluid_c, const double *fluid_r,
     double* GKYL_RESTRICT out) ~%{ ~%", funcNm, cvars[dir], cdim, basisFun, polyOrder),
   printf(fh, "  // w[NDIM]:      Cell-center coordinates.~%"),
-  printf(fh, "  // dxv[NDIM]:    Cell spacing.~%"),
+  printf(fh, "  // dxv[NDIM]:    Cell spacing (computational).~%"),
+  printf(fh, "  // jacob_pos:    Position-map Jacobian per configuration direction of the cell (cdim blocks of~%"),
+  printf(fh, "  //               ~a equal entries): its physical size in direction d is J_d dxv[d].~%", polyOrder+1),
   printf(fh, "  // wv_eqn:       Wave equation: the Riemann solver for the flux at the interfaces.~%"),
   printf(fh, "  // geom_l:       Geometry for the left surface update.~%"),
   printf(fh, "  // geom_r:       Geometry for the right surface update.~%"),
@@ -73,7 +76,7 @@ calcEulerUpdateInDir(dir, fh, funcNm, cdim, basisFun, polyOrder, isIso) := block
   printf(fh, "  // out:          Incremented output.~%"),
   printf(fh, "~%"),
 
-  printf(fh, "  const double dx1 = 2.0/dxv[~a]; ~%", dir-1),
+  printf(fh, "  const double dx1 = 2.0/(dxv[~a]*jacob_pos[~a]); ~%", dir-1, (polyOrder+1)*(dir-1)),
   if isIso then
     printf(fh, "  const double vt = container_of(wv_eqn, struct wv_iso_euler, eqn)->vt; ~%")
   else
